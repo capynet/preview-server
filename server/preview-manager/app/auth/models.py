@@ -104,3 +104,14 @@ class SetupBody(BaseModel):
 class LoginBody(BaseModel):
     email: str
     password: str
+
+
+class InviteBody(BaseModel):
+    email: str
+    role: Role
+
+
+class AcceptInviteBody(BaseModel):
+    token: str
+    name: str
+    password: str

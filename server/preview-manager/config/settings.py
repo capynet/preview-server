@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     session_max_age_seconds: int = 604800  # 7 days
     frontend_url: str = "https://app.preview-mr.com"
 
+    # Resend (email)
+    resend_api_key: str = ""
+    invitation_from_email: str = "Preview Manager <noreply@preview-mr.com>"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

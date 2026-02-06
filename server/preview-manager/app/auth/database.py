@@ -68,6 +68,17 @@ CREATE TABLE IF NOT EXISTS cli_auth_requests (
     token TEXT,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS invitations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL,
+    token TEXT UNIQUE NOT NULL,
+    invited_by INTEGER NOT NULL REFERENCES users(id),
+    status TEXT NOT NULL DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+);
 """
 
 
@@ -405,6 +416,90 @@ async def approve_cli_auth_request(code: str, user_id: int, token: str):
         await db.execute(
             "UPDATE cli_auth_requests SET status = 'approved', user_id = ?, token = ? WHERE code = ? AND status = 'pending'",
             (user_id, token, code),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# ---- Invitations ----
+
+async def create_invitation(email: str, role: str, invited_by: int) -> dict:
+    token = secrets.token_urlsafe(32)
+    now = _now()
+    expires = datetime.fromtimestamp(
+        time.time() + 7 * 24 * 3600, tz=timezone.utc
+    ).isoformat()
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "INSERT INTO invitations (email, role, token, invited_by, status, created_at, expires_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
+            (email, role, token, invited_by, now, expires),
+        )
+        await db.commit()
+        return {
+            "id": cur.lastrowid, "email": email, "role": role, "token": token,
+            "invited_by": invited_by, "status": "pending", "created_at": now, "expires_at": expires,
+        }
+    finally:
+        await db.close()
+
+
+async def get_invitation_by_token(token: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT * FROM invitations WHERE token = ? AND status = 'pending'", (token,))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        inv = dict(row)
+        if inv["expires_at"] < _now():
+            return None
+        return inv
+    finally:
+        await db.close()
+
+
+async def get_invitation_by_email(email: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT * FROM invitations WHERE email = ? AND status = 'pending'", (email,))
+        row = await cur.fetchone()
+        if not row:
+            return None
+        inv = dict(row)
+        if inv["expires_at"] < _now():
+            return None
+        return inv
+    finally:
+        await db.close()
+
+
+async def list_invitations() -> list[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT i.*, u.name as invited_by_name FROM invitations i JOIN users u ON i.invited_by = u.id WHERE i.status = 'pending' ORDER BY i.id DESC"
+        )
+        return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def delete_invitation(invitation_id: int):
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM invitations WHERE id = ?", (invitation_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def mark_invitation_accepted(invitation_id: int):
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE invitations SET status = 'accepted' WHERE id = ?", (invitation_id,)
         )
         await db.commit()
     finally:

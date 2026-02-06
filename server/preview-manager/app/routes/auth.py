@@ -11,9 +11,11 @@ from config.settings import settings
 from app.auth import database as db
 from app.auth.dependencies import SESSION_COOKIE, get_current_user, require_role
 from app.auth.models import (
+    AcceptInviteBody,
     CLIApproveBody,
     CLIRequestBody,
     CreateTokenRequest,
+    InviteBody,
     LoginBody,
     Role,
     SetupBody,
@@ -22,6 +24,7 @@ from app.auth.models import (
     UserWithRole,
     has_min_role,
 )
+from app.auth.email import send_invitation_email
 from app.auth.oauth import get_provider
 
 logger = logging.getLogger(__name__)
@@ -139,13 +142,17 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
             await db.create_oauth_account(user["id"], info.provider, info.provider_user_id, info.provider_username)
             logger.info(f"Linked {info.provider} account to existing user {info.email}")
         else:
-            # Check email domain
-            allowed = settings.allowed_email_domains.strip()
-            if allowed:
-                domain = info.email.split("@")[1] if "@" in info.email else ""
-                allowed_list = [d.strip() for d in allowed.split(",") if d.strip()]
-                if domain not in allowed_list:
-                    return RedirectResponse(f"{settings.frontend_url}/auth/login?error=domain_not_allowed")
+            # Check if there's a pending invitation for this email
+            invitation = await db.get_invitation_by_email(info.email)
+
+            if not invitation:
+                # No invitation — check email domain
+                allowed = settings.allowed_email_domains.strip()
+                if allowed:
+                    domain = info.email.split("@")[1] if "@" in info.email else ""
+                    allowed_list = [d.strip() for d in allowed.split(",") if d.strip()]
+                    if domain not in allowed_list:
+                        return RedirectResponse(f"{settings.frontend_url}/auth/login?error=domain_not_allowed")
 
             # Create new user
             user = await db.create_user(info.email, info.name, info.avatar_url)
@@ -157,6 +164,11 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
             if count == 1:
                 await db.set_role(user["id"], Role.admin.value)
                 logger.info(f"First user {info.email} assigned admin role")
+            elif invitation:
+                # Use the role from the invitation
+                await db.set_role(user["id"], invitation["role"])
+                await db.mark_invitation_accepted(invitation["id"])
+                logger.info(f"User {info.email} accepted invitation with role {invitation['role']}")
             else:
                 # Auto-assign member role if domain matches
                 await db.set_role(user["id"], Role.member.value)
@@ -302,3 +314,87 @@ async def update_auth_settings(
 ):
     settings.allowed_email_domains = body.allowed_email_domains
     return {"success": True}
+
+
+# ---- Invitations ----
+
+@router.post("/invitations")
+async def create_invitation(
+    body: InviteBody,
+    user: UserWithRole = Depends(require_role(Role.admin)),
+):
+    """Create an invitation and send email."""
+    existing_user = await db.get_user_by_email(body.email)
+    if existing_user:
+        raise HTTPException(status_code=400, detail="A user with this email already exists")
+
+    existing_inv = await db.get_invitation_by_email(body.email)
+    if existing_inv:
+        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
+
+    invitation = await db.create_invitation(body.email, body.role.value, user.id)
+
+    try:
+        send_invitation_email(body.email, invitation["token"], body.role.value, user.name)
+    except Exception:
+        pass  # logged in email module, don't fail the endpoint
+
+    return {
+        "id": invitation["id"],
+        "email": invitation["email"],
+        "role": invitation["role"],
+        "created_at": invitation["created_at"],
+        "expires_at": invitation["expires_at"],
+    }
+
+
+@router.get("/invitations")
+async def list_invitations(user: UserWithRole = Depends(require_role(Role.admin))):
+    invitations = await db.list_invitations()
+    return {"invitations": invitations}
+
+
+@router.delete("/invitations/{invitation_id}")
+async def cancel_invitation(
+    invitation_id: int,
+    user: UserWithRole = Depends(require_role(Role.admin)),
+):
+    await db.delete_invitation(invitation_id)
+    return {"success": True}
+
+
+@router.get("/invitations/validate")
+async def validate_invitation(token: str):
+    """Public: validate an invitation token."""
+    invitation = await db.get_invitation_by_token(token)
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Invalid or expired invitation")
+    return {"email": invitation["email"], "role": invitation["role"]}
+
+
+@router.post("/invitations/accept")
+async def accept_invitation(body: AcceptInviteBody):
+    """Public: accept an invitation with password."""
+    invitation = await db.get_invitation_by_token(body.token)
+    if not invitation:
+        raise HTTPException(status_code=404, detail="Invalid or expired invitation")
+
+    if len(body.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = await db.get_user_by_email(invitation["email"])
+    if existing:
+        raise HTTPException(status_code=400, detail="A user with this email already exists")
+
+    user = await db.create_user_with_password(invitation["email"], body.name, body.password)
+    await db.set_role(user["id"], invitation["role"])
+    await db.mark_invitation_accepted(invitation["id"])
+
+    session_id = await db.create_session(user["id"])
+
+    response = Response(
+        content='{"success": true}',
+        media_type="application/json",
+    )
+    _set_session_cookie(response, session_id)
+    return response
