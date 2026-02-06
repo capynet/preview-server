@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     gitlab_oauth_client_secret: str = ""
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
-    oauth_redirect_uri_base: str = "https://preview-mr.vercel.app/auth/callback"
+    oauth_redirect_uri_base: str = "https://api.preview-mr.com/api/auth/callback"
     allowed_email_domains: str = ""  # comma-separated
     session_max_age_seconds: int = 604800  # 7 days
-    frontend_url: str = "https://preview-mr.vercel.app"
+    frontend_url: str = "https://app.preview-mr.com"
 
     class Config:
         env_file = ".env"
