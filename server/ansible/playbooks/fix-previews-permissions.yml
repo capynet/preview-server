@@ -1,0 +1,22 @@
+---
+- name: Fix /var/www/previews permissions
+  hosts: preview-server
+  become: yes
+
+  tasks:
+    - name: Ensure /var/www/previews exists with correct ownership
+      file:
+        path: /var/www/previews
+        state: directory
+        mode: '0755'
+        owner: preview-user
+        group: preview-user
+
+    - name: Verify permissions
+      command: ls -ld /var/www/previews
+      register: dir_perms
+      changed_when: false
+
+    - name: Show directory permissions
+      debug:
+        msg: "{{ dir_perms.stdout }}"

@@ -1,0 +1,22 @@
+{
+	# Global options
+	email {{ letsencrypt_email }}
+}
+
+# API endpoint
+api.{{ domain }} {
+	reverse_proxy localhost:8000
+}
+
+# Wildcard for preview environments
+*.mr.{{ domain }} {
+	tls {
+		dns cloudflare {{ cloudflare_api_token }}
+	}
+
+	reverse_proxy https://localhost:8443 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+	}
+}

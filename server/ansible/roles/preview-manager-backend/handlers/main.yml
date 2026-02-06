@@ -1,0 +1,18 @@
+---
+# Handlers for preview-manager-backend
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Restart preview-manager
+  systemd:
+    name: preview-manager
+    state: restarted
+
+- name: Restart ddev-router
+  docker_container:
+    name: ddev-router
+    state: started
+    restart: yes
+  become_user: capy

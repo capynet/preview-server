@@ -1,0 +1,150 @@
+---
+- name: Instalar dependencias para PostgreSQL APT repository
+  apt:
+    name:
+      - wget
+      - ca-certificates
+      - gnupg
+    state: present
+    update_cache: yes
+
+- name: Crear directorio keyrings
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Descargar clave GPG de PostgreSQL
+  get_url:
+    url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    dest: /etc/apt/keyrings/postgresql.asc
+    mode: '0644'
+
+- name: Añadir repositorio PostgreSQL
+  apt_repository:
+    repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
+    state: present
+    filename: pgdg
+
+- name: Instalar PostgreSQL y dependencias
+  apt:
+    name:
+      - postgresql-{{ postgresql_version }}
+      - postgresql-contrib-{{ postgresql_version }}
+      - python3-psycopg2
+    state: present
+    update_cache: yes
+
+- name: Asegurar que PostgreSQL está corriendo
+  systemd:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Crear usuario de PostgreSQL
+  postgresql_user:
+    name: "{{ postgresql_user }}"
+    password: "{{ postgresql_password }}"
+    role_attr_flags: CREATEDB
+  become: yes
+  become_user: postgres
+
+- name: Crear base de datos
+  postgresql_db:
+    name: "{{ postgresql_database }}"
+    owner: "{{ postgresql_user }}"
+    encoding: UTF-8
+    lc_collate: en_US.UTF-8
+    lc_ctype: en_US.UTF-8
+    template: template0
+  become: yes
+  become_user: postgres
+
+- name: Configurar autenticación (pg_hba.conf)
+  template:
+    src: pg_hba.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+    owner: postgres
+    group: postgres
+    mode: '0640'
+  notify: restart postgresql
+
+- name: Configurar PostgreSQL (postgresql.conf)
+  template:
+    src: postgresql.conf.j2
+    dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+    owner: postgres
+    group: postgres
+    mode: '0644'
+  notify: restart postgresql
+
+- name: Crear directorio de backups
+  file:
+    path: "{{ postgresql_backup_dir }}"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0750'
+  when: postgresql_backup_enabled
+
+- name: Configurar backup diario con cron
+  cron:
+    name: "PostgreSQL backup {{ postgresql_database }}"
+    hour: "2"
+    minute: "0"
+    user: postgres
+    job: "pg_dump {{ postgresql_database }} | gzip > {{ postgresql_backup_dir }}/{{ postgresql_database }}_$(date +\\%Y\\%m\\%d).sql.gz"
+  when: postgresql_backup_enabled
+
+- name: Configurar limpieza de backups antiguos
+  cron:
+    name: "PostgreSQL backup cleanup"
+    hour: "3"
+    minute: "0"
+    user: postgres
+    job: "find {{ postgresql_backup_dir }} -name '*.sql.gz' -mtime +{{ postgresql_backup_retention_days }} -delete"
+  when: postgresql_backup_enabled
+
+- name: Verificar conexión a la base de datos
+  postgresql_query:
+    db: "{{ postgresql_database }}"
+    login_user: "{{ postgresql_user }}"
+    login_password: "{{ postgresql_password }}"
+    query: "SELECT version();"
+  become: yes
+  become_user: postgres
+  register: pg_version
+
+- name: Mostrar versión de PostgreSQL
+  debug:
+    msg: "PostgreSQL instalado correctamente: {{ pg_version.query_result[0].version }}"
+
+- name: Copiar schema SQL inicial
+  copy:
+    src: "{{ playbook_dir }}/../preview-manager/migrations/001_initial_schema.sql"
+    dest: /tmp/001_initial_schema.sql
+    mode: '0644'
+
+- name: Aplicar schema inicial de la base de datos
+  postgresql_query:
+    db: "{{ postgresql_database }}"
+    login_user: "{{ postgresql_user }}"
+    login_password: "{{ postgresql_password }}"
+    path_to_script: /tmp/001_initial_schema.sql
+  become: yes
+  become_user: postgres
+  register: schema_result
+  failed_when: false  # No fallar si las tablas ya existen
+
+- name: Limpiar archivo temporal de schema
+  file:
+    path: /tmp/001_initial_schema.sql
+    state: absent
+
+- name: Crear archivo .env para preview-manager
+  template:
+    src: preview-manager.env.j2
+    dest: /home/capy/www/previews/preview-manager/.env
+    owner: capy
+    group: capy
+    mode: '0600'

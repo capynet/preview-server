@@ -1,0 +1,23 @@
+---
+- name: Allow preview-user to run ddev-hostname without password
+  hosts: preview-server
+  become: yes
+
+  tasks:
+    - name: Create sudoers file for preview-user ddev-hostname
+      copy:
+        content: |
+          # Allow preview-user to run ddev-hostname without password
+          preview-user ALL=(ALL) NOPASSWD: /usr/bin/ddev-hostname
+        dest: /etc/sudoers.d/preview-user-ddev
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Verify sudoers file
+      command: cat /etc/sudoers.d/preview-user-ddev
+      register: sudoers_content
+      changed_when: false
+
+    - name: Show sudoers configuration
+      debug:
+        msg: "{{ sudoers_content.stdout_lines }}"

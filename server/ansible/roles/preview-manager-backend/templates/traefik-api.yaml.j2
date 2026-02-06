@@ -1,0 +1,26 @@
+#ddev-generated
+# Preview Manager API Backend Configuration
+
+http:
+  routers:
+    preview-manager-api-http:
+      entrypoints:
+        - http-80
+      rule: HostRegexp(`^api\.{{ domain | regex_replace('\.', '\\.') }}$`)
+      service: "preview-manager-api-service"
+      ruleSyntax: v3
+      tls: false
+
+    preview-manager-api-https:
+      entrypoints:
+        - http-443
+      rule: HostRegexp(`^api\.{{ domain | regex_replace('\.', '\\.') }}$`)
+      service: "preview-manager-api-service"
+      ruleSyntax: v3
+      tls: true
+
+  services:
+    preview-manager-api-service:
+      loadBalancer:
+        servers:
+          - url: "http://172.18.0.1:8000"

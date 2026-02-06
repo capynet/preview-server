@@ -1,0 +1,43 @@
+# PostgreSQL Configuration File
+# =============================
+# This file is managed by Ansible - changes will be overwritten
+
+# Connection Settings
+listen_addresses = '{{ postgresql_listen_addresses }}'
+port = {{ postgresql_port }}
+max_connections = {{ postgresql_max_connections }}
+
+# Memory Settings
+shared_buffers = {{ postgresql_shared_buffers }}
+effective_cache_size = {{ postgresql_effective_cache_size }}
+work_mem = {{ postgresql_work_mem }}
+
+# Write Ahead Log
+wal_level = replica
+max_wal_size = 1GB
+min_wal_size = 80MB
+
+# Query/Index Statistics
+shared_preload_libraries = 'pg_stat_statements'
+pg_stat_statements.track = all
+
+# Logging
+log_destination = 'stderr'
+logging_collector = on
+log_directory = 'log'
+log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
+log_rotation_age = 1d
+log_rotation_size = 100MB
+log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+log_timezone = 'UTC'
+
+# Locale
+datestyle = 'iso, mdy'
+timezone = 'UTC'
+lc_messages = 'en_US.UTF-8'
+lc_monetary = 'en_US.UTF-8'
+lc_numeric = 'en_US.UTF-8'
+lc_time = 'en_US.UTF-8'
+
+# Default encoding
+default_text_search_config = 'pg_catalog.english'

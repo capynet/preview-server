@@ -1,0 +1,21 @@
+---
+- name: Configure IS_PREVIEW_SERVER environment variable
+  hosts: preview-server
+  become: yes
+
+  tasks:
+    - name: Set IS_PREVIEW_SERVER environment variable globally
+      lineinfile:
+        path: /etc/environment
+        line: 'IS_PREVIEW_SERVER=true'
+        create: yes
+        state: present
+
+    - name: Verify environment variable
+      command: grep IS_PREVIEW_SERVER /etc/environment
+      register: env_check
+      changed_when: false
+
+    - name: Show configuration
+      debug:
+        msg: "{{ env_check.stdout }}"

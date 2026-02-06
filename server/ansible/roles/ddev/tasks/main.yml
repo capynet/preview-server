@@ -1,0 +1,38 @@
+---
+# Instalacion de DDEV via apt (metodo oficial para servidores)
+# https://ddev.readthedocs.io/en/stable/users/install/ddev-installation/#linux
+# Nota: DDEV no puede ejecutarse como root, pero si se instala correctamente
+
+- name: Verificar si DDEV esta instalado
+  stat:
+    path: /usr/bin/ddev
+  register: ddev_binary
+
+- name: Anadir clave GPG de DDEV
+  get_url:
+    url: https://pkg.ddev.com/apt/gpg.key
+    dest: /etc/apt/keyrings/ddev.asc
+    mode: '0644'
+  when: not ddev_binary.stat.exists
+
+- name: Anadir repositorio DDEV
+  apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/ddev.asc] https://pkg.ddev.com/apt/ * *"
+    state: present
+    filename: ddev
+  when: not ddev_binary.stat.exists
+
+- name: Instalar DDEV
+  apt:
+    name: ddev
+    state: present
+    update_cache: yes
+
+- name: Verificar que binario DDEV existe
+  stat:
+    path: /usr/bin/ddev
+  register: ddev_installed
+
+- name: Mostrar estado DDEV
+  debug:
+    msg: "DDEV {{ 'instalado correctamente' if ddev_installed.stat.exists else 'NO instalado' }} en /usr/bin/ddev (no puede verificar version como root)"

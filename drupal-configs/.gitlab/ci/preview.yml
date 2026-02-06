@@ -1,0 +1,58 @@
+stages:
+  - preview:build_php
+  - preview:build_assets
+  - preview:deploy
+
+build_php:
+  stage: preview:build_php
+  image: composer:latest
+  tags:
+    - preview
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - bash .gitlab/ci/scripts/job-build-php.sh
+  artifacts:
+    paths:
+      - .
+    exclude:
+      - .git/**
+    expire_in: 1 hour
+
+build_assets:
+  stage: preview:build_assets
+  image: node:22
+  tags:
+    - preview
+  needs:
+    - build_php
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+    - bash .gitlab/ci/scripts/job-build-assets.sh
+  artifacts:
+    paths:
+      - .
+    exclude:
+      - .git/**
+      - node_modules/**
+    expire_in: 1 hour
+
+deploy_preview:
+  stage: preview:deploy
+  image: alpine:latest
+  tags:
+    - preview
+  variables:
+    GIT_STRATEGY: none
+  needs:
+    - build_assets
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  before_script:
+    - apk add --no-cache bash openssh-client
+  script:
+    - bash .gitlab/ci/scripts/job-send-to-preview-server.sh
+  environment:
+    name: preview/mr-$CI_MERGE_REQUEST_IID
+    url: https://mr-${CI_MERGE_REQUEST_IID}-${CI_PROJECT_NAME}.mr.preview-mr.com

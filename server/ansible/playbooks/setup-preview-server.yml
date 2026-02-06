@@ -1,0 +1,96 @@
+---
+- name: Setup Preview Server
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - docker
+    - ddev
+    # Optional: Only needed for preview-manager dashboard/API
+    # - postgresql
+    # - preview-manager-backend
+
+  pre_tasks:
+    - name: Crear usuario preview-user
+      user:
+        name: preview-user
+        shell: /bin/bash
+        create_home: yes
+        groups: docker
+        append: yes
+
+  post_tasks:
+    - name: Crear directorios de trabajo
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { path: '/var/www/previews', mode: '0755', owner: 'preview-user', group: 'preview-user' }
+        - { path: '/backups', mode: '0755' }
+
+    - name: Set IS_PREVIEW_SERVER environment variable globally
+      lineinfile:
+        path: /etc/environment
+        line: 'IS_PREVIEW_SERVER=true'
+        create: yes
+        state: present
+
+    - name: Create preview server marker file
+      copy:
+        content: 'preview-server'
+        dest: /etc/preview-server-marker
+        mode: '0644'
+
+    - name: Install required packages (mkcert, jq)
+      apt:
+        name:
+          - mkcert
+          - jq
+        state: present
+        update_cache: yes
+
+    - name: Configure DDEV to bind router on all interfaces
+      become_user: preview-user
+      command: ddev config global --router-bind-all-interfaces
+      changed_when: false
+
+    - name: Install mkcert CA for preview-user
+      become_user: preview-user
+      shell: |
+        CAROOT=$HOME/.local/share/mkcert mkcert -install || true
+      args:
+        creates: /home/preview-user/.local/share/mkcert/rootCA.pem
+
+    - name: Resumen de instalacion
+      debug:
+        msg: |
+          ==========================================
+          SERVIDOR CONFIGURADO CORRECTAMENTE
+          ==========================================
+
+          Componentes instalados:
+            ✓ Docker y Docker Compose
+            ✓ DDEV (con ddev-router para HTTP/HTTPS)
+            ✓ mkcert (certificados SSL autofirmados)
+            ✓ jq (JSON parser para GitLab API)
+            ✓ GitLab Runner ejecuta en runner-server separado
+            ✓ PostgreSQL 15 (base de datos)
+            ✓ Preview Manager Service (API + Auto-sleep)
+
+          Preview Manager API:
+            - URL: https://api.preview-mr.com
+            - Docs: https://api.preview-mr.com/docs
+            - Local: http://localhost:8000
+            - Logs: journalctl -u preview-manager -f
+
+          Servicios activos:
+            - ddev-router: Puertos 80/443 (HTTP/HTTPS)
+            - API Backend: https://api.preview-mr.com
+
+          Nota: Los sitios usan certificados SSL autofirmados.
+          Los navegadores mostrarán advertencia de seguridad.
+
+          ==========================================

@@ -1,0 +1,20 @@
+[Unit]
+Description=Preview Manager API v2.0
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=capy
+Group=capy
+WorkingDirectory=/home/capy/www/previews/preview-manager
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/usr/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --workers 2
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

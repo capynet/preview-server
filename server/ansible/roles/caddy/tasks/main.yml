@@ -1,0 +1,88 @@
+---
+- name: Check if caddy binary exists
+  stat:
+    path: /usr/bin/caddy
+  register: caddy_binary
+
+- name: Download caddy with cloudflare DNS plugin from Caddy download API
+  get_url:
+    url: "https://caddyserver.com/api/download?os=linux&arch=amd64&p=github.com%2Fcaddy-dns%2Fcloudflare"
+    dest: /usr/bin/caddy
+    mode: '0755'
+  when: not caddy_binary.stat.exists
+
+- name: Set caddy binary capabilities (bind to 80/443 without root)
+  command: setcap 'cap_net_bind_service=+ep' /usr/bin/caddy
+  when: not caddy_binary.stat.exists
+
+- name: Create caddy user
+  user:
+    name: caddy
+    system: yes
+    shell: /usr/sbin/nologin
+    create_home: no
+
+- name: Create caddy directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: caddy
+    group: caddy
+    mode: '0755'
+  loop:
+    - /etc/caddy
+    - /var/lib/caddy
+    - /var/log/caddy
+
+- name: Deploy Caddyfile
+  template:
+    src: Caddyfile.j2
+    dest: /etc/caddy/Caddyfile
+    owner: caddy
+    group: caddy
+    mode: '0640'
+  notify: restart caddy
+
+- name: Deploy caddy systemd service
+  template:
+    src: caddy.service.j2
+    dest: /etc/systemd/system/caddy.service
+    mode: '0644'
+  notify:
+    - reload systemd
+    - restart caddy
+
+# Must reconfigure DDEV BEFORE starting Caddy to free ports 80/443
+- name: Reconfigure DDEV router to use non-standard ports
+  become_user: "{{ ddev_user | default('preview-user') }}"
+  shell: ddev config global --router-http-port=8080 --router-https-port=8443
+  changed_when: false
+
+- name: Stop DDEV router to free ports 80/443
+  become_user: "{{ ddev_user | default('preview-user') }}"
+  shell: ddev poweroff
+  changed_when: false
+  ignore_errors: yes
+
+- name: Wait for ports to be released
+  wait_for:
+    port: 80
+    state: stopped
+    timeout: 15
+  ignore_errors: yes
+
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+
+- name: Enable and start caddy
+  systemd:
+    name: caddy
+    enabled: yes
+    state: started
+
+- name: Start DDEV projects back up on new ports
+  become_user: "{{ ddev_user | default('preview-user') }}"
+  shell: ddev start --all || true
+  changed_when: false
+  ignore_errors: yes

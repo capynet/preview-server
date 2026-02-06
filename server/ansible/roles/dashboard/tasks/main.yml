@@ -1,0 +1,140 @@
+---
+# Deployment del Dashboard Next.js
+
+- name: Crear usuario para dashboard
+  user:
+    name: dashboard
+    comment: "Dashboard Next.js User"
+    shell: /bin/bash
+    create_home: yes
+    groups: docker
+    append: yes
+
+- name: Crear directorio del dashboard
+  file:
+    path: /var/www/dashboard
+    state: directory
+    mode: '0755'
+    owner: dashboard
+    group: dashboard
+
+- name: Copiar build standalone de Next.js (archivos visibles)
+  synchronize:
+    src: "{{ playbook_dir }}/../../dashboard/.next/standalone/"
+    dest: /var/www/dashboard/
+    delete: yes
+    owner: no
+    rsync_opts:
+      - "--exclude=.next"
+
+- name: Crear tarball del .next folder
+  local_action:
+    module: archive
+    path: "{{ playbook_dir }}/../../dashboard/.next/standalone/.next"
+    dest: "/tmp/nextjs-dot-next.tar.gz"
+    format: gz
+  become: no
+
+- name: Copiar tarball al servidor
+  copy:
+    src: "/tmp/nextjs-dot-next.tar.gz"
+    dest: "/tmp/nextjs-dot-next.tar.gz"
+    mode: '0644'
+
+- name: Extraer .next en el servidor
+  unarchive:
+    src: "/tmp/nextjs-dot-next.tar.gz"
+    dest: "/var/www/dashboard/"
+    remote_src: yes
+    owner: dashboard
+    group: dashboard
+
+- name: Limpiar tarball temporal
+  file:
+    path: "/tmp/nextjs-dot-next.tar.gz"
+    state: absent
+
+- name: Copiar archivos estáticos de Next.js (.next/static)
+  synchronize:
+    src: "{{ playbook_dir }}/../../dashboard/.next/static/"
+    dest: /var/www/dashboard/.next/static/
+    delete: no
+    owner: no
+
+- name: Copiar carpeta public
+  synchronize:
+    src: "{{ playbook_dir }}/../../dashboard/public/"
+    dest: /var/www/dashboard/public/
+    delete: yes
+    owner: no
+
+- name: Copiar configuración DDEV
+  synchronize:
+    src: "{{ playbook_dir }}/../../dashboard/.ddev/"
+    dest: /var/www/dashboard/.ddev/
+    delete: yes
+    owner: no
+
+- name: Copiar variables de entorno
+  template:
+    src: .env.local.j2
+    dest: /var/www/dashboard/.env.production
+    mode: '0644'
+
+- name: Ajustar permisos del dashboard
+  file:
+    path: /var/www/dashboard
+    owner: dashboard
+    group: dashboard
+    recurse: yes
+
+- name: Verificar configuracion DDEV del dashboard
+  stat:
+    path: /var/www/dashboard/.ddev/config.yaml
+  register: ddev_config
+
+- name: Inicializar proyecto DDEV si no existe
+  shell: |
+    cd /var/www/dashboard
+    ddev config --project-type=nodejs --nodejs-version=20 --docroot="" --webserver-type=nginx-fpm
+  become_user: dashboard
+  when: not ddev_config.stat.exists
+
+- name: Detener dashboard si esta corriendo
+  shell: cd /var/www/dashboard && ddev stop
+  become_user: dashboard
+  ignore_errors: yes
+  when: ddev_config.stat.exists
+
+- name: Iniciar DDEV del dashboard
+  shell: cd /var/www/dashboard && ddev start
+  become_user: dashboard
+  register: ddev_start
+
+- name: Reiniciar DDEV para aplicar cambios
+  shell: cd /var/www/dashboard && ddev restart
+  become_user: dashboard
+  when: ddev_start.rc == 0
+
+- name: Verificar estado del dashboard
+  shell: cd /var/www/dashboard && ddev describe
+  become_user: dashboard
+  register: dashboard_status
+
+- name: Mostrar estado del dashboard
+  debug:
+    msg: |
+      ==========================================
+      DASHBOARD NEXT.JS DESPLEGADO
+      ==========================================
+
+      Dashboard URL: https://preview-mr.com
+      Estado: {{ 'ACTIVO' if ddev_start.rc == 0 else 'ERROR' }}
+
+      Comandos utiles:
+        - Ver logs: ddev logs -f
+        - Reiniciar: ddev restart
+        - Detener: ddev stop
+        - Estado: ddev describe
+
+      ==========================================
