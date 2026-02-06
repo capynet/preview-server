@@ -97,7 +97,7 @@ class UpdateAllowedDomainsBody(BaseModel):
 
 class SetupBody(BaseModel):
     email: str
-    name: str
+    name: str = ""
     password: str
 
 

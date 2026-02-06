@@ -27,6 +27,21 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
+def _set_session_cookie(response: Response, session_id: str):
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=session_id,
+        max_age=settings.session_max_age_seconds,
+        httponly=True,
+        samesite="none",
+        secure=True,
+        domain=".preview-mr.com",
+    )
+
+
+def _delete_session_cookie(response: Response):
+    response.delete_cookie(SESSION_COOKIE, domain=".preview-mr.com")
+
 
 # ---- Setup & Password Login ----
 
@@ -56,15 +71,7 @@ async def initial_setup(body: SetupBody):
         content='{"success": true}',
         media_type="application/json",
     )
-    response.set_cookie(
-        key=SESSION_COOKIE,
-        value=session_id,
-        max_age=settings.session_max_age_seconds,
-        httponly=True,
-        samesite="none",
-        secure=True,
-        domain=".preview-mr.com",
-    )
+    _set_session_cookie(response, session_id)
     return response
 
 
@@ -85,15 +92,7 @@ async def password_login(body: LoginBody):
         content='{"success": true}',
         media_type="application/json",
     )
-    response.set_cookie(
-        key=SESSION_COOKIE,
-        value=session_id,
-        max_age=settings.session_max_age_seconds,
-        httponly=True,
-        samesite="none",
-        secure=True,
-        domain=".preview-mr.com",
-    )
+    _set_session_cookie(response, session_id)
     return response
 
 
@@ -172,15 +171,7 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
     session_id = await db.create_session(user["id"])
 
     response = RedirectResponse(settings.frontend_url)
-    response.set_cookie(
-        key=SESSION_COOKIE,
-        value=session_id,
-        max_age=settings.session_max_age_seconds,
-        httponly=True,
-        samesite="none",
-        secure=True,
-        domain=".preview-mr.com",
-    )
+    _set_session_cookie(response, session_id)
     return response
 
 
@@ -189,7 +180,7 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
 @router.post("/logout")
 async def logout(response: Response, user: UserWithRole = Depends(get_current_user)):
     # We need the session id to delete it. For simplicity, just clear cookie.
-    response.delete_cookie(SESSION_COOKIE, domain=".preview-mr.com")
+    _delete_session_cookie(response)
     return {"success": True}
 
 

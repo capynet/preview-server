@@ -17,10 +17,12 @@
         name: preview-manager
         state: started
       register: service_state
+      tags: [code]
 
     - name: Display service status
       debug:
         msg: "Preview Manager service is {{ service_state.status.ActiveState }}"
+      tags: [code]
 
     - name: Show API endpoints
       debug:

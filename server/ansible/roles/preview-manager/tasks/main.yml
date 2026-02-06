@@ -81,6 +81,7 @@
       - "--exclude=venv"
       - "--exclude=.git"
   notify: Restart preview-manager
+  tags: [code]
 
 - name: Set proper ownership on preview-manager files
   file:
@@ -89,6 +90,7 @@
     group: preview-manager
     mode: '0775'
     recurse: yes
+  tags: [code]
 
 - name: Create virtual environment
   shell: python3 -m venv venv
@@ -179,6 +181,7 @@
     port: 8000
     delay: 2
     timeout: 30
+  tags: [code]
 
 - name: Check service health
   uri:
@@ -187,7 +190,9 @@
     return_content: yes
   register: health_check
   failed_when: health_check.status != 200
+  tags: [code]
 
 - name: Display health check result
   debug:
     msg: "{{ health_check.json }}"
+  tags: [code]

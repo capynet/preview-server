@@ -92,3 +92,5 @@ Is the UI of preview manager ([server](server))
 - Soporte para env vars a nivel proyecto y MR.
 - Necesito que las imagenes hibernen cuando el tiempo congihurado a nivel proyecto o preview se cumpla
 - necesito extraer los tokens de clousflare, gitlab runner y el certificado ssh.
+- Las cookies tiene harcodeado domain=".preview-mr.com" y vamos a tenr que hacerlo generico o configurable para que funcione bien.
+- La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
