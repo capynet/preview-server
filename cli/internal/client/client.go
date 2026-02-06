@@ -10,6 +10,7 @@ import (
 
 type Client struct {
 	BaseURL    string
+	Token      string
 	HTTPClient *http.Client
 }
 
@@ -39,11 +40,26 @@ type Preview struct {
 	BasicAuthPass  *string `json:"basic_auth_pass"`
 }
 
-func New(baseURL string) *Client {
+func New(baseURL, token string) *Client {
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
+		Token:      token,
 		HTTPClient: &http.Client{},
 	}
+}
+
+func (c *Client) doRequest(method, url string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return nil, err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if method == "POST" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return c.HTTPClient.Do(req)
 }
 
 func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
@@ -53,7 +69,7 @@ func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
 	}
 	url := fmt.Sprintf("%s/api/previews?status=%s", c.BaseURL, statusParam)
 
-	resp, err := c.HTTPClient.Get(url)
+	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -74,7 +90,7 @@ func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
 func (c *Client) PostAction(project string, mrID int, action string) (*ActionResult, error) {
 	url := fmt.Sprintf("%s/api/previews/%s/mr-%d/%s", c.BaseURL, project, mrID, action)
 
-	resp, err := c.HTTPClient.Post(url, "application/json", nil)
+	resp, err := c.doRequest("POST", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -96,7 +112,7 @@ func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult
 	url := fmt.Sprintf("%s/api/previews/%s/mr-%d/drush", c.BaseURL, project, mrID)
 
 	payload := fmt.Sprintf(`{"args": %q}`, args)
-	resp, err := c.HTTPClient.Post(url, "application/json", strings.NewReader(payload))
+	resp, err := c.doRequest("POST", url, strings.NewReader(payload))
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
@@ -117,7 +133,7 @@ func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult
 func (c *Client) DownloadStream(project string, mrID int, kind string, w io.Writer) error {
 	url := fmt.Sprintf("%s/api/previews/%s/mr-%d/%s/download", c.BaseURL, project, mrID, kind)
 
-	resp, err := c.HTTPClient.Get(url)
+	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}

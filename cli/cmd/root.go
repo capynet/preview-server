@@ -17,18 +17,24 @@ var apiClient *client.Client
 var rootCmd = &cobra.Command{
 	Use:   "preview",
 	Short: "Preview Manager CLI",
-	Long:  "CLI tool to manage Drupal preview environments.\n\nRun 'preview setup <API_URL>' first to configure the API URL.",
+	Long:  "CLI tool to manage Drupal preview environments.\n\nRun 'preview login' to authenticate.",
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
-		// Allow setup and help without config
-		if cmd.Name() == "setup" || cmd.Name() == "help" || cmd.Name() == "completion" {
+		// Commands that don't require auth
+		name := cmd.Name()
+		if name == "setup" || name == "login" || name == "logout" || name == "help" || name == "completion" {
 			return
 		}
+
 		cfg := loadConfig()
 		if cfg.APIURL == "" {
-			fmt.Fprintln(os.Stderr, "API URL not configured. Run 'preview setup <API_URL>' first.")
+			fmt.Fprintln(os.Stderr, "API URL not configured. Run 'preview login' or 'preview setup <API_URL>' first.")
 			os.Exit(1)
 		}
-		apiClient = client.New(cfg.APIURL)
+		if cfg.Token == "" {
+			fmt.Fprintln(os.Stderr, "Not logged in. Run 'preview login' first.")
+			os.Exit(1)
+		}
+		apiClient = client.New(cfg.APIURL, cfg.Token)
 	},
 }
 
@@ -45,6 +51,7 @@ func configPath() string {
 
 type config struct {
 	APIURL string `json:"api_url"`
+	Token  string `json:"token,omitempty"`
 }
 
 func loadConfig() config {
@@ -62,7 +69,7 @@ func saveConfig(cfg config) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(configPath(), data, 0644)
+	return os.WriteFile(configPath(), data, 0600)
 }
 
 func init() {
