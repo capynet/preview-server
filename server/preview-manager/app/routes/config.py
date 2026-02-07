@@ -26,6 +26,10 @@ def load_config_from_file():
                 settings.gitlab_url = config.get("gitlab_url", settings.gitlab_url)
                 settings.gitlab_api_token = config.get("gitlab_api_token") or None
                 settings.gitlab_group_name = config.get("gitlab_group_name", settings.gitlab_group_name)
+                # Load OAuth tokens
+                settings.gitlab_oauth_access_token = config.get("gitlab_oauth_access_token") or None
+                settings.gitlab_oauth_refresh_token = config.get("gitlab_oauth_refresh_token") or None
+                settings.gitlab_oauth_token_expires_at = config.get("gitlab_oauth_token_expires_at") or None
                 logger.info(f"Loaded configuration from {CONFIG_FILE}")
     except Exception as e:
         logger.warning(f"Could not load config from file: {e}")
@@ -68,16 +72,23 @@ async def save_app_config(request: Request, user: UserWithRole = Depends(require
         gitlab_api_token = body.get("gitlab_api_token", "")
         gitlab_group_name = body.get("gitlab_group_name", settings.gitlab_group_name)
 
-        config = {
-            "gitlab_url": gitlab_url,
-            "gitlab_api_token": gitlab_api_token,
-            "gitlab_group_name": gitlab_group_name
-        }
+        # Read existing config to preserve OAuth tokens
+        existing_config = {}
+        try:
+            if CONFIG_FILE.exists():
+                with open(CONFIG_FILE, 'r') as f:
+                    existing_config = json.load(f)
+        except Exception:
+            pass
+
+        existing_config["gitlab_url"] = gitlab_url
+        existing_config["gitlab_api_token"] = gitlab_api_token
+        existing_config["gitlab_group_name"] = gitlab_group_name
 
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
         with open(CONFIG_FILE, 'w') as f:
-            json.dump(config, f, indent=2)
+            json.dump(existing_config, f, indent=2)
 
         settings.gitlab_url = gitlab_url
         settings.gitlab_api_token = gitlab_api_token if gitlab_api_token else None

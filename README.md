@@ -95,7 +95,7 @@ Is the UI of preview manager ([server](server))
 - Las cookies tiene harcodeado domain=".preview-mr.com" y vamos a tenr que hacerlo generico o configurable para que funcione bien.
 - La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
 - Para guiar al usuario hay documentar como conectar gitlab a la app de previews:
-   Ir a https://gitlab.com/-/user_settings/applications
+   Ir a https://gitlab.com/oauth/applications
    Añadir aplicacion
    
    "User login"

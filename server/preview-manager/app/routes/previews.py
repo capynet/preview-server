@@ -456,8 +456,16 @@ async def rebuild_preview(project: str, mr_id: int, user: UserWithRole = Depends
     # Verify preview exists
     _get_preview_dir(project, mr_id)
 
-    if not settings.gitlab_api_token:
+    # Prefer OAuth token, fall back to PAT
+    oauth_token = settings.gitlab_oauth_access_token
+    pat_token = settings.gitlab_api_token
+    if not oauth_token and not pat_token:
         raise HTTPException(status_code=400, detail="GitLab API token not configured")
+
+    if oauth_token:
+        headers = {"Authorization": f"Bearer {oauth_token}"}
+    else:
+        headers = {"PRIVATE-TOKEN": pat_token}
 
     # URL-encode the project path for GitLab API
     gitlab_project_path = f"{settings.gitlab_group_name}/{project}"
@@ -472,7 +480,7 @@ async def rebuild_preview(project: str, mr_id: int, user: UserWithRole = Depends
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{settings.gitlab_url}/api/v4/projects/{encoded_path}/pipeline",
-                headers={"PRIVATE-TOKEN": settings.gitlab_api_token},
+                headers=headers,
                 json={"ref": state.branch},
                 timeout=30,
             )

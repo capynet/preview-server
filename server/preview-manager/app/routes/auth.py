@@ -105,6 +105,8 @@ async def password_login(body: LoginBody):
 @router.get("/login/{provider}")
 async def oauth_login(provider: str):
     """Redirect to OAuth provider."""
+    if provider == "gitlab":
+        return RedirectResponse("/api/gitlab/auth/login")
     try:
         oauth = get_provider(provider)
     except ValueError:
@@ -117,6 +119,8 @@ async def oauth_login(provider: str):
 @router.get("/callback/{provider}")
 async def oauth_callback(provider: str, code: str, state: str = ""):
     """OAuth callback: upsert user, create session, redirect to frontend."""
+    if provider == "gitlab":
+        return RedirectResponse(f"/api/gitlab/auth/callback?code={code}&state={state}")
     try:
         oauth = get_provider(provider)
     except ValueError:
