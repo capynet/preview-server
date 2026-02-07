@@ -94,3 +94,30 @@ Is the UI of preview manager ([server](server))
 - necesito extraer los tokens de clousflare, gitlab runner y el certificado ssh.
 - Las cookies tiene harcodeado domain=".preview-mr.com" y vamos a tenr que hacerlo generico o configurable para que funcione bien.
 - La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
+- Para guiar al usuario hay documentar como conectar gitlab a la app de previews:
+   Ir a https://gitlab.com/-/user_settings/applications
+   Añadir aplicacion
+   
+   "User login"
+   Callback: https://api.preview-mr.com/api/gitlab/auth/callback
+   Scopes: read_user
+   
+   
+   Luego crear una nueva app para conectar la api:
+   "Previews API"
+   Callback: https://api.preview-mr.com/api/gitlab/connect/callback
+   Scopes: api
+   
+   
+   
+   "User login"
+   Application ID: 3a4c9a8e1626f825734902c265eda47787b56f1724f09d65419e88991ab228d4
+   Secret: gloas-85522b0b96f9a61bf169e10231a2422a6c59325dc324de1535cb0d4aecf8e0ee
+   Callback: https://api.preview-mr.com/api/gitlab/auth/callback
+   Scopes: read_user
+   
+   "Previews API"
+   Application ID: b05e4ef0609f8e02eec1bbe36770d1c847a155da9176b80bc568ba4b87dfe7e4
+   Secret: gloas-4361304ca401bddf62cddac1cc37b3062b9c8e981fdada089765f44836d1acc6
+   Callback: https://api.preview-mr.com/api/gitlab/connect/callback
+   Scopes: api

@@ -205,19 +205,19 @@ async def get_me(user: UserWithRole = Depends(get_current_user)):
 # ---- API Tokens ----
 
 @router.get("/tokens")
-async def list_tokens(user: UserWithRole = Depends(get_current_user)):
+async def list_tokens(user: UserWithRole = Depends(require_role(Role.manager))):
     tokens = await db.list_api_tokens(user.id)
     return {"tokens": tokens}
 
 
 @router.post("/tokens")
-async def create_token(body: CreateTokenRequest, user: UserWithRole = Depends(get_current_user)):
+async def create_token(body: CreateTokenRequest, user: UserWithRole = Depends(require_role(Role.manager))):
     token_id, raw_token = await db.create_api_token(user.id, body.name)
     return {"id": token_id, "token": raw_token, "name": body.name}
 
 
 @router.delete("/tokens/{token_id}")
-async def revoke_token(token_id: int, user: UserWithRole = Depends(get_current_user)):
+async def revoke_token(token_id: int, user: UserWithRole = Depends(require_role(Role.manager))):
     deleted = await db.delete_api_token(token_id, user.id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Token not found")
