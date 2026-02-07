@@ -403,6 +403,34 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
 
         # Load enabled project IDs from config
         enabled_ids = _load_enabled_project_ids()
+        webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/deploy"
+
+        # For enabled projects, check if webhook still exists in GitLab (in parallel)
+        webhook_status: dict[int, bool] = {}
+
+        async def check_webhook(project_id: int):
+            try:
+                async with httpx.AsyncClient() as c:
+                    resp = await c.get(
+                        f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=10,
+                    )
+                    if resp.status_code == 200:
+                        hooks = resp.json()
+                        webhook_status[project_id] = any(
+                            h.get("url") == webhook_url and h.get("merge_requests_events")
+                            for h in hooks
+                        )
+                    else:
+                        webhook_status[project_id] = False
+            except Exception:
+                # Network error — assume OK to avoid false alarms
+                webhook_status[project_id] = True
+
+        enabled_in_list = [p["id"] for p in all_projects if p["id"] in enabled_ids]
+        if enabled_in_list:
+            await asyncio.gather(*[check_webhook(pid) for pid in enabled_in_list])
 
         return {
             "projects": [
@@ -414,6 +442,7 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
                     "web_url": p["web_url"],
                     "default_branch": p.get("default_branch", "main"),
                     "previews_enabled": p["id"] in enabled_ids,
+                    "webhook_active": webhook_status.get(p["id"], True) if p["id"] in enabled_ids else None,
                 }
                 for p in all_projects
             ]
