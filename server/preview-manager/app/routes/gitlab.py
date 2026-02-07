@@ -84,6 +84,39 @@ def _remove_oauth_tokens_from_config():
         logger.warning(f"Error removing OAuth tokens from config: {e}")
 
 
+def _load_enabled_project_ids() -> set[int]:
+    """Load the set of enabled project IDs from app-config.json."""
+    import json
+    from app.routes.config import CONFIG_FILE
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+            return set(config.get("gitlab_enabled_project_ids", []))
+    except Exception:
+        pass
+    return set()
+
+
+def _save_enabled_project_id(project_id: int):
+    """Add a project ID to the enabled set in app-config.json."""
+    import json
+    from app.routes.config import CONFIG_FILE
+    config = {}
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+    except Exception:
+        pass
+    ids = set(config.get("gitlab_enabled_project_ids", []))
+    ids.add(project_id)
+    config["gitlab_enabled_project_ids"] = sorted(ids)
+    CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CONFIG_FILE, "w") as f:
+        json.dump(config, f, indent=2)
+
+
 async def _get_gitlab_token() -> str:
     """Get a valid GitLab access token, refreshing if needed."""
     async with _TOKEN_REFRESH_LOCK:
@@ -245,12 +278,30 @@ async def gitlab_auth_callback(code: str, state: str = ""):
 
 @router.get("/status")
 async def gitlab_status(user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Check if GitLab is connected (has OAuth access token)."""
-    connected = bool(settings.gitlab_oauth_access_token)
-    return {
-        "connected": connected,
-        "gitlab_url": settings.gitlab_url,
-    }
+    """Check if GitLab is connected by validating the token against GitLab API."""
+    token = settings.gitlab_oauth_access_token
+    if not token:
+        return {"connected": False, "gitlab_url": settings.gitlab_url}
+
+    # Verify token is still valid
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{settings.gitlab_url}/api/v4/user",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+        if resp.status_code == 200:
+            return {"connected": True, "gitlab_url": settings.gitlab_url}
+        else:
+            # Token revoked or expired — clean up
+            logger.info(f"GitLab token invalid (HTTP {resp.status_code}), removing stored tokens")
+            _remove_oauth_tokens_from_config()
+            return {"connected": False, "gitlab_url": settings.gitlab_url}
+    except Exception as e:
+        logger.warning(f"Could not verify GitLab token: {e}")
+        # Network error — don't remove tokens, just report as connected (optimistic)
+        return {"connected": True, "gitlab_url": settings.gitlab_url}
 
 
 @router.get("/connect")
@@ -332,6 +383,7 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
                     headers={"Authorization": f"Bearer {token}"},
                     params={
                         "membership": "true",
+                        "archived": "false",
                         "per_page": 100,
                         "page": page,
                         "order_by": "name",
@@ -349,6 +401,9 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
                     break
                 page += 1
 
+        # Load enabled project IDs from config
+        enabled_ids = _load_enabled_project_ids()
+
         return {
             "projects": [
                 {
@@ -358,6 +413,7 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
                     "description": p.get("description") or "",
                     "web_url": p["web_url"],
                     "default_branch": p.get("default_branch", "main"),
+                    "previews_enabled": p["id"] in enabled_ids,
                 }
                 for p in all_projects
             ]
@@ -392,6 +448,8 @@ async def enable_project_previews(project_id: int, user: UserWithRole = Depends(
             )
             resp.raise_for_status()
             hook = resp.json()
+
+        _save_enabled_project_id(project_id)
 
         return {
             "success": True,
