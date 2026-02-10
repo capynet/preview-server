@@ -403,7 +403,7 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
 
         # Load enabled project IDs from config
         enabled_ids = _load_enabled_project_ids()
-        webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/deploy"
+        webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/gitlab"
 
         # For enabled projects, check if webhook still exists in GitLab (in parallel)
         webhook_status: dict[int, bool] = {}
@@ -460,19 +460,22 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
 async def enable_project_previews(project_id: int, user: UserWithRole = Depends(require_role(Role.admin))):
     """Create a webhook in the GitLab project for merge request events."""
     token = await _get_gitlab_token()
-    webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/deploy"
+    webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/gitlab"
 
     try:
         async with httpx.AsyncClient() as client:
+            hook_payload = {
+                "url": webhook_url,
+                "merge_requests_events": True,
+                "push_events": False,
+                "enable_ssl_verification": True,
+            }
+            if settings.gitlab_webhook_secret:
+                hook_payload["token"] = settings.gitlab_webhook_secret
             resp = await client.post(
                 f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
                 headers={"Authorization": f"Bearer {token}"},
-                json={
-                    "url": webhook_url,
-                    "merge_requests_events": True,
-                    "push_events": False,
-                    "enable_ssl_verification": True,
-                },
+                json=hook_payload,
                 timeout=30,
             )
             resp.raise_for_status()

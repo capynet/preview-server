@@ -26,9 +26,8 @@ class Settings(BaseSettings):
 
     # GitLab Integration
     gitlab_url: str = "https://gitlab.com"
-    gitlab_api_token: Optional[str] = None
     gitlab_group_name: str = "preview-tests"
-    pipeline_check_interval_seconds: int = 5  # How often to check for active pipelines (WebSocket)
+    gitlab_webhook_secret: str = ""
 
     # Auth
     auth_db_path: str = "/var/www/preview-manager/auth.db"

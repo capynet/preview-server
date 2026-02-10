@@ -121,3 +121,6 @@ Is the UI of preview manager ([server](server))
    Secret: gloas-4361304ca401bddf62cddac1cc37b3062b9c8e981fdada089765f44836d1acc6
    Callback: https://api.preview-mr.com/api/gitlab/connect/callback
    Scopes: api
+- Cambiar el almacenamiento de configuraciones de /var/www/preview-manager/app-config.json a DB.
+- Un caso de uso que me gustaria tener cubierto: si alguien tiene una plataofrma custom como la de DXP de dropsolid, si quieren dar opciones de link, uli y demas, con el cli me basta verdad?
+- Necesitaria poder cambiar configuraciones de ddev.algo como config.override.yml e incluso la podibilidad de modificar la configuracion por acada Mr (por si la v de php es nueva).

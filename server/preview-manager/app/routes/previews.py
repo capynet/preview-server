@@ -8,8 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from config.settings import settings
@@ -298,6 +297,39 @@ async def get_preview_list_base(include_ddev_status: bool = True) -> dict:
 
 
 
+async def delete_preview_internal(project: str, mr_id: int):
+    """Core delete logic: stop DDEV, remove state, remove directory.
+
+    Raises on failure. Used by the REST endpoint and the webhook handler.
+    """
+    preview_path = PreviewStateManager.get_preview_path(project, mr_id)
+
+    if not preview_path.exists():
+        logger.info(f"Preview {project}/mr-{mr_id} already absent, nothing to delete")
+        return
+
+    # Stop DDEV if running
+    try:
+        result = subprocess.run(
+            ["ddev", "stop"],
+            cwd=str(preview_path),
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        logger.info(f"DDEV stopped for {project}/mr-{mr_id}")
+    except Exception as e:
+        logger.warning(f"Error stopping DDEV: {e}")
+
+    # Delete state file
+    PreviewStateManager.delete_state(project, mr_id)
+
+    # Delete directory
+    import shutil
+    shutil.rmtree(preview_path)
+    logger.info(f"Preview directory deleted: {preview_path}")
+
+
 @router.delete("/api/previews/{project}/mr-{mr_id}")
 async def delete_preview(project: str, mr_id: int, user: UserWithRole = Depends(require_role(Role.member))):
     """Delete a preview (DANGEROUS - removes directory)"""
@@ -310,33 +342,11 @@ async def delete_preview(project: str, mr_id: int, user: UserWithRole = Depends(
         )
 
     try:
-        # Stop DDEV if running
-        try:
-            result = subprocess.run(
-                ["ddev", "stop"],
-                cwd=str(preview_path),
-                capture_output=True,
-                text=True,
-                timeout=60
-            )
-            logger.info(f"DDEV stopped for {project}/mr-{mr_id}")
-        except Exception as e:
-            logger.warning(f"Error stopping DDEV: {e}")
-
-        # Delete state file
-        PreviewStateManager.delete_state(project, mr_id)
-
-        # Delete directory (DANGEROUS!)
-        # TODO: For safety, maybe just mark as deleted instead?
-        import shutil
-        shutil.rmtree(preview_path)
-        logger.info(f"Preview directory deleted: {preview_path}")
-
+        await delete_preview_internal(project, mr_id)
         return {
             "success": True,
             "message": f"Preview {project}/mr-{mr_id} deleted successfully"
         }
-
     except Exception as e:
         logger.error(f"Error deleting preview: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
@@ -451,58 +461,37 @@ async def drush_command(project: str, mr_id: int, request: Request, user: UserWi
 
 
 @router.post("/api/previews/{project}/mr-{mr_id}/rebuild")
-async def rebuild_preview(project: str, mr_id: int, user: UserWithRole = Depends(require_role(Role.member))):
-    """Trigger a GitLab pipeline to rebuild this preview."""
-    # Verify preview exists
+async def rebuild_preview(
+    project: str,
+    mr_id: int,
+    background_tasks: BackgroundTasks,
+    user: UserWithRole = Depends(require_role(Role.member)),
+):
+    """Re-clone the preview from GitLab (internal rebuild, no pipeline)."""
     _get_preview_dir(project, mr_id)
 
-    # Prefer OAuth token, fall back to PAT
-    oauth_token = settings.gitlab_oauth_access_token
-    pat_token = settings.gitlab_api_token
-    if not oauth_token and not pat_token:
-        raise HTTPException(status_code=400, detail="GitLab API token not configured")
-
-    if oauth_token:
-        headers = {"Authorization": f"Bearer {oauth_token}"}
-    else:
-        headers = {"PRIVATE-TOKEN": pat_token}
-
-    # URL-encode the project path for GitLab API
-    gitlab_project_path = f"{settings.gitlab_group_name}/{project}"
-    encoded_path = gitlab_project_path.replace("/", "%2F")
-
-    # Find the branch for this MR from state
     state = PreviewStateManager.load_state(project, mr_id)
     if not state or not state.branch:
         raise HTTPException(status_code=400, detail="Cannot determine branch for this preview")
 
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{settings.gitlab_url}/api/v4/projects/{encoded_path}/pipeline",
-                headers=headers,
-                json={"ref": state.branch},
-                timeout=30,
-            )
+    project_path = f"{settings.gitlab_group_name}/{project}"
 
-        if resp.status_code in (200, 201):
-            data = resp.json()
-            return {
-                "success": True,
-                "output": f"Pipeline #{data.get('id')} created for branch {state.branch}",
-                "error": "",
-                "pipeline_id": data.get("id"),
-                "pipeline_url": data.get("web_url", ""),
-            }
-        else:
-            return {
-                "success": False,
-                "output": "",
-                "error": f"GitLab API returned {resp.status_code}: {resp.text}",
-            }
-    except Exception as e:
-        logger.error(f"Error triggering pipeline: {e}", exc_info=True)
-        return {"success": False, "output": "", "error": str(e)}
+    from app.routes.webhooks import _clone_preview
+
+    background_tasks.add_task(
+        _clone_preview,
+        project_path,
+        project,
+        mr_id,
+        state.branch,
+        state.commit_sha or "",
+    )
+
+    return {
+        "success": True,
+        "output": f"Rebuild started for {project}/mr-{mr_id} (branch: {state.branch})",
+        "error": "",
+    }
 
 
 @router.get("/api/previews/{project}/mr-{mr_id}/db/download")

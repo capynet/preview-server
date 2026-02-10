@@ -24,7 +24,6 @@ def load_config_from_file():
             with open(CONFIG_FILE, 'r') as f:
                 config = json.load(f)
                 settings.gitlab_url = config.get("gitlab_url", settings.gitlab_url)
-                settings.gitlab_api_token = config.get("gitlab_api_token") or None
                 settings.gitlab_group_name = config.get("gitlab_group_name", settings.gitlab_group_name)
                 # Load OAuth tokens
                 settings.gitlab_oauth_access_token = config.get("gitlab_oauth_access_token") or None
@@ -48,13 +47,11 @@ async def get_app_config(user: UserWithRole = Depends(require_role(Role.admin)))
                 config = json.load(f)
                 return {
                     "gitlab_url": config.get("gitlab_url", settings.gitlab_url),
-                    "gitlab_api_token": config.get("gitlab_api_token", ""),
                     "gitlab_group_name": config.get("gitlab_group_name", settings.gitlab_group_name)
                 }
         else:
             return {
                 "gitlab_url": settings.gitlab_url,
-                "gitlab_api_token": "",
                 "gitlab_group_name": settings.gitlab_group_name
             }
     except Exception as e:
@@ -69,7 +66,6 @@ async def save_app_config(request: Request, user: UserWithRole = Depends(require
         body = await request.json()
 
         gitlab_url = body.get("gitlab_url", settings.gitlab_url)
-        gitlab_api_token = body.get("gitlab_api_token", "")
         gitlab_group_name = body.get("gitlab_group_name", settings.gitlab_group_name)
 
         # Read existing config to preserve OAuth tokens
@@ -82,7 +78,6 @@ async def save_app_config(request: Request, user: UserWithRole = Depends(require
             pass
 
         existing_config["gitlab_url"] = gitlab_url
-        existing_config["gitlab_api_token"] = gitlab_api_token
         existing_config["gitlab_group_name"] = gitlab_group_name
 
         CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -91,7 +86,6 @@ async def save_app_config(request: Request, user: UserWithRole = Depends(require
             json.dump(existing_config, f, indent=2)
 
         settings.gitlab_url = gitlab_url
-        settings.gitlab_api_token = gitlab_api_token if gitlab_api_token else None
         settings.gitlab_group_name = gitlab_group_name
 
         logger.info(f"App configuration saved to {CONFIG_FILE}")
@@ -120,14 +114,14 @@ async def root():
         "name": "Preview Manager",
         "version": "2.0",
         "endpoints": {
-            "deploy": "POST /api/deploy",
             "get_preview": "GET /api/previews/{project}/mr-{mr_id}",
             "list_previews": "WS /ws/previews",
             "delete_preview": "DELETE /api/previews/{project}/mr-{mr_id}",
-            "stop": "POST /api/previews/{preview_name}/stop",
-            "start": "POST /api/previews/{preview_name}/start",
-            "restart": "POST /api/previews/{preview_name}/restart",
-            "drush_uli": "GET /api/previews/{preview_name}/drush-uli",
+            "rebuild": "POST /api/previews/{project}/mr-{mr_id}/rebuild",
+            "stop": "POST /api/previews/{project}/mr-{mr_id}/stop",
+            "start": "POST /api/previews/{project}/mr-{mr_id}/start",
+            "restart": "POST /api/previews/{project}/mr-{mr_id}/restart",
+            "drush_uli": "POST /api/previews/{project}/mr-{mr_id}/drush-uli",
             "health": "GET /api/health"
         },
         "docs": "/docs"
