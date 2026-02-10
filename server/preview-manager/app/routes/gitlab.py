@@ -117,6 +117,21 @@ def _save_enabled_project_id(project_id: int):
         json.dump(config, f, indent=2)
 
 
+def _clear_enabled_project_ids():
+    """Remove all enabled project IDs from app-config.json."""
+    import json
+    from app.routes.config import CONFIG_FILE
+    try:
+        if CONFIG_FILE.exists():
+            with open(CONFIG_FILE, "r") as f:
+                config = json.load(f)
+            config.pop("gitlab_enabled_project_ids", None)
+            with open(CONFIG_FILE, "w") as f:
+                json.dump(config, f, indent=2)
+    except Exception as e:
+        logger.warning(f"Error clearing enabled project IDs: {e}")
+
+
 async def _get_gitlab_token() -> str:
     """Get a valid GitLab access token, refreshing if needed."""
     async with _TOKEN_REFRESH_LOCK:
@@ -501,6 +516,56 @@ async def enable_project_previews(project_id: int, user: UserWithRole = Depends(
 
 @router.post("/disconnect")
 async def gitlab_disconnect(user: UserWithRole = Depends(require_role(Role.admin))):
-    """Remove GitLab OAuth tokens (disconnect)."""
+    """Remove webhooks from enabled projects, clear config, and remove OAuth tokens."""
+    webhooks_deleted = 0
+    errors: list[str] = []
+
+    # Try to clean up webhooks before removing tokens
+    token = settings.gitlab_oauth_access_token
+    if token:
+        enabled_ids = _load_enabled_project_ids()
+        if enabled_ids:
+            webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/gitlab"
+
+            async def delete_project_webhooks(project_id: int) -> tuple[int, str | None]:
+                deleted = 0
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.get(
+                            f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
+                            headers={"Authorization": f"Bearer {token}"},
+                            timeout=10,
+                        )
+                        if resp.status_code != 200:
+                            return 0, f"Project {project_id}: failed to list hooks (HTTP {resp.status_code})"
+                        hooks = resp.json()
+                        for hook in hooks:
+                            if hook.get("url") == webhook_url:
+                                del_resp = await client.delete(
+                                    f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks/{hook['id']}",
+                                    headers={"Authorization": f"Bearer {token}"},
+                                    timeout=10,
+                                )
+                                if del_resp.status_code in (200, 204):
+                                    deleted += 1
+                                else:
+                                    return deleted, f"Project {project_id}: failed to delete hook {hook['id']} (HTTP {del_resp.status_code})"
+                except Exception as e:
+                    return deleted, f"Project {project_id}: {e}"
+                return deleted, None
+
+            results = await asyncio.gather(*[delete_project_webhooks(pid) for pid in enabled_ids])
+            for count, error in results:
+                webhooks_deleted += count
+                if error:
+                    errors.append(error)
+
+    _clear_enabled_project_ids()
     _remove_oauth_tokens_from_config()
-    return {"success": True, "message": "GitLab disconnected"}
+
+    return {
+        "success": True,
+        "message": "GitLab disconnected",
+        "webhooks_deleted": webhooks_deleted,
+        "errors": errors,
+    }
