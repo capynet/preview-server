@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"strings"
 )
@@ -128,6 +129,80 @@ func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult
 		return nil, fmt.Errorf("decode error: %w", err)
 	}
 	return &result, nil
+}
+
+type BaseFileInfo struct {
+	Exists    bool   `json:"exists"`
+	SizeBytes int64  `json:"size_bytes"`
+	ModifiedAt string `json:"modified_at"`
+}
+
+type BaseFilesStatus struct {
+	DB    *BaseFileInfo `json:"db"`
+	Files *BaseFileInfo `json:"files"`
+}
+
+func (c *Client) GetBaseFilesStatus(slug string) (*BaseFilesStatus, error) {
+	url := fmt.Sprintf("%s/api/projects/%s/base-files", c.BaseURL, slug)
+
+	resp, err := c.doRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result BaseFilesStatus
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode error: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *Client) UploadBaseFile(slug, kind string, reader io.Reader, filename string) error {
+	url := fmt.Sprintf("%s/api/projects/%s/base-files/%s", c.BaseURL, slug, kind)
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	go func() {
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, reader); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		writer.Close()
+		pw.Close()
+	}()
+
+	req, err := http.NewRequest("POST", url, pr)
+	if err != nil {
+		return err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 func (c *Client) DownloadStream(project string, mrID int, kind string, w io.Writer) error {

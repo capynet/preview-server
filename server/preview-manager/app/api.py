@@ -6,12 +6,13 @@ Router aggregator - imports all sub-routers and re-exports a single `router`.
 
 from fastapi import APIRouter
 
-from app.routes import auth, config, gitlab, previews, webhooks
+from app.routes import auth, base_files, config, gitlab, previews, webhooks
 from app import websockets
 
 router = APIRouter()
 
 router.include_router(auth.router)
+router.include_router(base_files.router)
 router.include_router(config.router)
 router.include_router(gitlab.router)
 router.include_router(previews.router)
