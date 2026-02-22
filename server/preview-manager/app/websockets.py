@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -10,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import psutil
+import ptyprocess
 from fastapi import APIRouter, WebSocket, WebSocketException, status
 
 from config.settings import settings
@@ -554,6 +556,131 @@ async def _stream_subprocess_with_action(
         running_action.logs.append(error_msg)
         await running_action.broadcast(error_msg)
         return False, str(e)
+
+
+@router.websocket("/ws/previews/{project_name}/{preview_name}/terminal")
+async def websocket_terminal(
+    websocket: WebSocket,
+    project_name: str,
+    preview_name: str,
+    container: str = "php",
+):
+    """
+    Interactive terminal WebSocket endpoint.
+    Spawns a PTY running 'docker exec -it <container> bash' and bridges I/O.
+
+    Query params:
+        container: service name suffix (default: "php")
+
+    Client → Server messages:
+        {"type": "input", "data": "..."}
+        {"type": "resize", "cols": N, "rows": N}
+
+    Server → Client messages:
+        {"type": "output", "data": "..."}
+        {"type": "exit", "code": N}
+        {"type": "error", "message": "..."}
+    """
+    await _authenticate_ws(websocket, Role.manager)
+    await websocket.accept()
+
+    container_name = f"{preview_name}-{project_name}-{container}"
+
+    # Verify container is running
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "inspect", "-f", "{{.State.Running}}", container_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        if proc.returncode != 0 or stdout.decode().strip() != "true":
+            await websocket.send_json({"type": "error", "message": f"Container '{container_name}' is not running"})
+            await websocket.close()
+            return
+    except Exception as e:
+        await websocket.send_json({"type": "error", "message": f"Failed to check container: {e}"})
+        await websocket.close()
+        return
+
+    # Spawn PTY with docker exec
+    pty = None
+    try:
+        pty = ptyprocess.PtyProcess.spawn(
+            ["docker", "exec", "-it", container_name, "bash"],
+            dimensions=(24, 80),
+        )
+
+        INACTIVITY_TIMEOUT = 15 * 60  # 15 minutes
+        last_input_time = time.monotonic()
+
+        async def read_pty():
+            """Read from PTY and send to WebSocket."""
+            loop = asyncio.get_event_loop()
+            while pty.isalive():
+                try:
+                    data = await asyncio.wait_for(
+                        loop.run_in_executor(None, lambda: pty.read(4096)),
+                        timeout=1.0,
+                    )
+                    if data:
+                        await websocket.send_json({"type": "output", "data": data})
+                except asyncio.TimeoutError:
+                    # Check inactivity timeout
+                    if time.monotonic() - last_input_time > INACTIVITY_TIMEOUT:
+                        await websocket.send_json({"type": "error", "message": "Session timed out due to inactivity"})
+                        return
+                    continue
+                except EOFError:
+                    break
+                except Exception:
+                    break
+
+            # Process exited
+            exit_code = pty.exitstatus if pty.exitstatus is not None else -1
+            try:
+                await websocket.send_json({"type": "exit", "code": exit_code})
+            except Exception:
+                pass
+
+        async def read_ws():
+            """Read from WebSocket and write to PTY."""
+            nonlocal last_input_time
+            while True:
+                try:
+                    raw = await websocket.receive_text()
+                    msg = json.loads(raw)
+                    if msg.get("type") == "input":
+                        last_input_time = time.monotonic()
+                        pty.write(msg["data"])
+                    elif msg.get("type") == "resize":
+                        cols = msg.get("cols", 80)
+                        rows = msg.get("rows", 24)
+                        pty.setwinsize(rows, cols)
+                except Exception:
+                    break
+
+        # Run both directions concurrently
+        done, pending = await asyncio.wait(
+            [asyncio.create_task(read_pty()), asyncio.create_task(read_ws())],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+
+    except Exception as e:
+        logger.error(f"Terminal WebSocket error: {e}", exc_info=True)
+        try:
+            await websocket.send_json({"type": "error", "message": str(e)})
+        except Exception:
+            pass
+    finally:
+        if pty and pty.isalive():
+            pty.terminate(force=True)
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @router.websocket("/ws/previews/{project_name}/{preview_name}/action")

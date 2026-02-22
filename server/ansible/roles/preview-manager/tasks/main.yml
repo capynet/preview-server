@@ -89,6 +89,7 @@
       - itsdangerous
       - bcrypt
       - psutil
+      - ptyprocess
     virtualenv: /home/preview-manager/www/previews/server/preview-manager/venv
     virtualenv_command: python3 -m venv
   become_user: preview-manager
