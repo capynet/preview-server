@@ -505,7 +505,7 @@ async def websocket_preview_action(
     Query params:
         action: "stop" | "start" | "restart" | "drush-uli"
     """
-    await _authenticate_ws(websocket, Role.member)
+    await _authenticate_ws(websocket, Role.viewer)
     await websocket.accept()
 
     try:

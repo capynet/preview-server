@@ -10,15 +10,13 @@ from pydantic import BaseModel
 class Role(str, Enum):
     admin = "admin"
     manager = "manager"
-    member = "member"
     viewer = "viewer"
 
 
-# Hierarchy: admin > manager > member > viewer
+# Hierarchy: admin > manager > viewer
 ROLE_HIERARCHY = {
-    Role.admin: 4,
-    Role.manager: 3,
-    Role.member: 2,
+    Role.admin: 3,
+    Role.manager: 2,
     Role.viewer: 1,
 }
 
