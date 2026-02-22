@@ -131,6 +131,26 @@
     group: preview-manager
     mode: '0755'
 
+- name: Create base-files directory for OverlayFS
+  file:
+    path: /var/www/previews/.base-files
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+
+- name: Install sudoers rule for overlay mounts
+  copy:
+    dest: /etc/sudoers.d/preview-overlay
+    content: |
+      # Allow preview-user to mount/unmount overlay filesystems for previews
+      preview-user ALL=(root) NOPASSWD: /usr/bin/mount -t overlay *
+      preview-user ALL=(root) NOPASSWD: /usr/bin/umount /var/www/previews/*
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
 - name: Ensure database directory has correct permissions
   file:
     path: "{{ db_path | default('/var/www/preview-manager/preview-manager.db') | dirname }}"

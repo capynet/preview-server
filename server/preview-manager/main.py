@@ -35,10 +35,17 @@ async def lifespan(app: FastAPI):
     from app.tasks.auto_erase import auto_erase_loop
     from app.tasks.docker_events import docker_events_loop
     from app.websockets import system_resources_loop
+    from app.overlay import remount_all
 
     logger.info("Starting Preview Manager Service")
     await init_db()
     await load_config_to_settings()
+
+    # Remount overlay filesystems (lost after server reboot)
+    try:
+        await remount_all()
+    except Exception as e:
+        logger.warning("Error remounting overlays on startup: %s", e)
 
     # Start background tasks
     auto_stop_task = asyncio.create_task(auto_stop_loop())

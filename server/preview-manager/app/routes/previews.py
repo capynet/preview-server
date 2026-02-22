@@ -24,6 +24,7 @@ from app.auth.dependencies import require_role
 from app.auth.models import Role, UserWithRole, has_min_role
 from app.auth import database as auth_db
 from app import config_store
+from app.overlay import umount_overlay, mount_overlay, get_overlay_dir
 
 logger = logging.getLogger(__name__)
 
@@ -348,6 +349,12 @@ async def delete_preview_internal(project: str, preview_name: str):
     """
     preview_path = PreviewStateManager.get_preview_path(project, preview_name)
 
+    # Unmount overlay filesystem if present
+    try:
+        await umount_overlay(preview_path)
+    except Exception as e:
+        logger.warning(f"Error unmounting overlay for {project}/{preview_name}: {e}")
+
     # Stop and remove Docker containers
     if preview_path.exists() and (preview_path / "docker-compose.yml").exists():
         try:
@@ -487,6 +494,12 @@ async def stop_preview(project: str, preview_name: str, user: UserWithRole = Dep
 async def start_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
     """Start a preview (docker compose up -d)."""
     preview_path = _get_preview_dir(project, preview_name)
+    # Ensure overlay is mounted (may have been lost after server reboot)
+    if get_overlay_dir(preview_path).exists():
+        try:
+            await mount_overlay(project, preview_path)
+        except Exception as e:
+            logger.warning(f"Failed to ensure overlay mount on start: {e}")
     return await _run_docker_command(["docker", "compose", "up", "-d"], preview_path, timeout=120)
 
 
