@@ -1,0 +1,62 @@
+---
+- name: Setup Preview Server
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - docker
+    - caddy
+
+  pre_tasks:
+    - name: Crear usuario preview-user
+      user:
+        name: preview-user
+        shell: /bin/bash
+        create_home: yes
+        groups: docker
+        append: yes
+
+  post_tasks:
+    - name: Crear directorios de trabajo
+      file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+        owner: "{{ item.owner | default('root') }}"
+        group: "{{ item.group | default('root') }}"
+      loop:
+        - { path: '/var/www/previews', mode: '0755', owner: 'preview-user', group: 'preview-user' }
+        - { path: '/backups', mode: '0775', owner: 'preview-user', group: 'preview-manager' }
+
+    - name: Set IS_PREVIEW_SERVER environment variable globally
+      lineinfile:
+        path: /etc/environment
+        line: 'IS_PREVIEW_SERVER=true'
+        create: yes
+        state: present
+
+    - name: Install required packages
+      apt:
+        name:
+          - jq
+        state: present
+        update_cache: yes
+
+    - name: Resumen de instalacion
+      debug:
+        msg: |
+          ==========================================
+          SERVIDOR CONFIGURADO CORRECTAMENTE
+          ==========================================
+
+          Componentes instalados:
+            - Docker y Docker Compose
+            - Caddy (caddy-docker-proxy + cloudflare DNS)
+            - preview-network (red Docker compartida)
+            - jq (JSON parser)
+
+          Preview Manager API:
+            - URL: https://api.preview-mr.com
+            - Local: http://localhost:8000
+
+          ==========================================

@@ -1,0 +1,53 @@
+---
+# Setup Docker infrastructure for preview environments
+#
+# Usage:
+#   ansible-playbook playbooks/setup-docker-preview.yml
+
+- name: Setup Docker Preview Infrastructure
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - caddy
+
+  tasks:
+    - name: Create Dockerfile directory
+      file:
+        path: /opt/preview-drupal
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Copy Drupal Dockerfile
+      copy:
+        src: "{{ playbook_dir }}/../../preview-manager/docker/Dockerfile.drupal"
+        dest: /opt/preview-drupal/Dockerfile
+        owner: root
+        group: root
+        mode: '0644'
+      register: dockerfile_changed
+
+    - name: Build Drupal base image (PHP 8.3)
+      command: docker build -t preview-drupal:php8.3 --build-arg PHP_VERSION=8.3 /opt/preview-drupal
+      when: dockerfile_changed.changed
+
+    - name: Build Drupal base image (PHP 8.2)
+      command: docker build -t preview-drupal:php8.2 --build-arg PHP_VERSION=8.2 /opt/preview-drupal
+      when: dockerfile_changed.changed
+
+    - name: Display results
+      debug:
+        msg: |
+          ================================================
+          DOCKER PREVIEW INFRASTRUCTURE READY
+          ================================================
+
+          Network: preview-network
+          Caddy: running as Docker container (preview-caddy)
+          Images:
+            - preview-drupal:php8.3
+            - preview-drupal:php8.2
+
+          ================================================

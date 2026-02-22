@@ -1,0 +1,12 @@
+deploy_preview:
+  stage: deploy
+  tags:
+    - preview-server
+  rules:
+    - if: $CI_MERGE_REQUEST_IID
+  script:
+    - >
+      curl -X POST http://localhost:8000/api/deploy
+      -H "Content-Type: application/json"
+      -d '{"project":"'$CI_PROJECT_NAME'","mr_id":'$CI_MERGE_REQUEST_IID',"commit_sha":"'$CI_COMMIT_SHA'","branch":"'$CI_COMMIT_REF_NAME'","repo_url":"'$CI_REPOSITORY_URL'","repo_path":"'$CI_PROJECT_DIR'","triggered_by":"'$GITLAB_USER_LOGIN'"}'
+      --fail-with-body

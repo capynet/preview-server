@@ -1,0 +1,194 @@
+---
+# Preview Manager - Deployment Tasks
+
+- name: Create preview-manager user if not exists
+  user:
+    name: preview-manager
+    shell: /bin/bash
+    create_home: yes
+    home: /home/preview-manager
+    groups: docker
+    append: yes
+    state: present
+
+- name: Install Python dependencies
+  apt:
+    name:
+      - python3
+      - python3-pip
+      - python3-venv
+    state: present
+    update_cache: yes
+
+- name: Ensure preview-user is in preview-manager and docker groups
+  user:
+    name: preview-user
+    groups: preview-manager,docker
+    append: yes
+
+- name: Create preview-manager directory structure
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+  loop:
+    - /home/preview-manager/www/previews/server/preview-manager
+    - /var/www/preview-manager
+
+- name: Copy preview-manager application files
+  synchronize:
+    src: "{{ playbook_dir }}/../../preview-manager/"
+    dest: /home/preview-manager/www/previews/server/preview-manager/
+    delete: no
+    rsync_opts:
+      - "--exclude=__pycache__"
+      - "--exclude=*.pyc"
+      - "--exclude=.env"
+      - "--exclude=venv"
+      - "--exclude=.git"
+  notify: Restart preview-manager
+  tags: [code]
+
+- name: Set proper ownership on preview-manager files
+  file:
+    path: /home/preview-manager/www/previews/server/preview-manager
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+    recurse: yes
+  tags: [code]
+
+- name: Create virtual environment
+  shell: python3 -m venv venv
+  args:
+    chdir: /home/preview-manager/www/previews/server/preview-manager
+    creates: /home/preview-manager/www/previews/server/preview-manager/venv/bin/python3
+  become_user: preview-manager
+
+- name: Upgrade pip in venv
+  shell: venv/bin/python3 -m pip install --upgrade pip
+  args:
+    chdir: /home/preview-manager/www/previews/server/preview-manager
+  become_user: preview-manager
+
+- name: Install requirements
+  pip:
+    name:
+      - fastapi
+      - uvicorn
+      - websockets
+      - pydantic
+      - pydantic-settings
+      - python-multipart
+      - pyyaml
+      - httpx
+      - aiosqlite
+      - python-jose[cryptography]
+      - itsdangerous
+      - bcrypt
+    virtualenv: /home/preview-manager/www/previews/server/preview-manager/venv
+    virtualenv_command: python3 -m venv
+  become_user: preview-manager
+
+- name: Create .env file file
+  template:
+    src: env.j2
+    dest: /home/preview-manager/www/previews/server/preview-manager/.env
+    owner: preview-manager
+    group: preview-manager
+    mode: '0640'
+
+- name: Create systemd service file
+  template:
+    src: preview-manager.service.j2
+    dest: /etc/systemd/system/preview-manager.service
+    owner: root
+    group: root
+    mode: '0644'
+    force: yes
+  become: yes
+  notify:
+    - Reload systemd
+    - Restart preview-manager
+
+- name: Ensure /var/www is writable by preview-manager
+  file:
+    path: /var/www
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0755'
+
+- name: Create previews base directory
+  file:
+    path: /var/www
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0755'
+
+- name: Ensure database directory has correct permissions
+  file:
+    path: "{{ db_path | default('/var/www/preview-manager/preview-manager.db') | dirname }}"
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+
+# CLI distribution tasks
+- name: Create CLI distribution directory
+  file:
+    path: /var/www/preview-manager/cli
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+  tags: [cli]
+
+- name: Copy CLI binaries
+  copy:
+    src: "{{ playbook_dir }}/../../../cli/dist/"
+    dest: /var/www/preview-manager/cli/
+    owner: preview-manager
+    group: preview-manager
+    mode: '0755'
+  tags: [cli]
+
+- name: Copy CLI install script
+  copy:
+    src: "{{ playbook_dir }}/../../../cli/install.sh"
+    dest: /var/www/preview-manager/cli/install.sh
+    owner: preview-manager
+    group: preview-manager
+    mode: '0644'
+  tags: [cli]
+
+- name: Enable and start preview-manager service
+  systemd:
+    name: preview-manager
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for service to be ready
+  wait_for:
+    port: 8000
+    delay: 2
+    timeout: 30
+  tags: [code]
+
+- name: Check service health
+  uri:
+    url: http://localhost:8000/api/health
+    method: GET
+    return_content: yes
+  register: health_check
+  failed_when: health_check.status != 200
+  tags: [code]
+
+- name: Display health check result
+  debug:
+    msg: "{{ health_check.json }}"
+  tags: [code]

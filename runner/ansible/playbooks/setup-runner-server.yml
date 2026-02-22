@@ -1,0 +1,25 @@
+---
+- name: Setup Runner Server
+  hosts: runner-server
+  become: yes
+
+  roles:
+    - docker
+    - gitlab-runner
+
+  post_tasks:
+    - name: Resumen de instalacion
+      debug:
+        msg: |
+          ==========================================
+          RUNNER SERVER CONFIGURADO
+          ==========================================
+
+          Componentes instalados:
+            ✓ Docker
+            ✓ GitLab Runner (executor: docker)
+
+          El runner ejecuta jobs en contenedores Docker
+          y despliega previews al preview-server via SSH.
+
+          ==========================================

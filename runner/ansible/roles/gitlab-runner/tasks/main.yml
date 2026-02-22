@@ -1,0 +1,123 @@
+---
+- name: Verificar si repositorio GitLab Runner existe
+  stat:
+    path: /etc/apt/sources.list.d/runner_gitlab-runner.list
+  register: gitlab_repo
+
+- name: Anadir repositorio GitLab Runner
+  shell: |
+    curl -L https://packages.gitlab.com/install/repositories/runner/gitlab-runner/script.deb.sh | bash
+  when: not gitlab_repo.stat.exists
+
+- name: Instalar GitLab Runner
+  apt:
+    name: gitlab-runner
+    state: present
+    update_cache: yes
+
+- name: Anadir gitlab-runner al grupo docker
+  user:
+    name: gitlab-runner
+    groups: docker
+    append: yes
+
+- name: Reiniciar GitLab Runner para aplicar grupo docker
+  systemd:
+    name: gitlab-runner
+    state: restarted
+    enabled: yes
+
+- name: Verificar si runner ya esta registrado
+  shell: gitlab-runner list 2>&1 | grep -q "{{ gitlab_runner_name }}"
+  register: runner_registered
+  failed_when: false
+  changed_when: false
+
+- name: Desregistrar runner existente (para re-registrar con tags)
+  shell: gitlab-runner unregister --all-runners
+  when:
+    - runner_registered.rc == 0
+    - gitlab_runner_force_reregister | default(false)
+
+- name: Registrar GitLab Runner
+  shell: |
+    gitlab-runner register \
+      --non-interactive \
+      --url "{{ gitlab_url }}" \
+      --token "{{ gitlab_runner_token }}" \
+      --executor "{{ gitlab_runner_executor }}" \
+      --name "{{ gitlab_runner_name }}" \
+      {% if gitlab_runner_executor == 'docker' %}
+      --docker-image "{{ gitlab_runner_docker_image }}" \
+      --docker-privileged \
+      {% endif %}
+
+  when:
+    - (runner_registered.rc != 0) or (gitlab_runner_force_reregister | default(false))
+    - gitlab_runner_token is defined
+    - gitlab_runner_token | length > 0
+
+- name: Verificar estado del runner
+  shell: gitlab-runner list
+  register: runner_status
+  changed_when: false
+
+- name: Mostrar runners registrados
+  debug:
+    msg: "{{ runner_status.stdout_lines }}"
+
+- name: Crear directorio de cache local
+  file:
+    path: "{{ gitlab_runner_cache_path | default('/var/cache/gitlab-runner') }}"
+    state: directory
+    owner: gitlab-runner
+    group: gitlab-runner
+    mode: '0755'
+
+- name: Crear directorio .ssh para jobs Docker
+  file:
+    path: /etc/gitlab-runner/.ssh
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Generar SSH keypair para conectar al preview-server
+  openssh_keypair:
+    path: /etc/gitlab-runner/.ssh/id_ed25519
+    type: ed25519
+    comment: "gitlab-runner@runner-server"
+  register: ssh_keypair
+
+- name: Obtener host key del preview-server
+  shell: ssh-keyscan -H {{ preview_server_host }} 2>/dev/null
+  register: preview_server_hostkey
+  changed_when: false
+
+- name: Crear known_hosts con host key del preview-server
+  copy:
+    content: "{{ preview_server_hostkey.stdout }}\n"
+    dest: /etc/gitlab-runner/.ssh/known_hosts
+    mode: '0644'
+
+- name: Mostrar clave publica SSH (copiar al preview-server)
+  debug:
+    msg: "{{ ssh_keypair.public_key }}"
+
+- name: Copiar clave publica al preview-server
+  authorized_key:
+    user: "{{ preview_server_user }}"
+    key: "{{ ssh_keypair.public_key }}"
+    state: present
+  delegate_to: "{{ preview_server_host }}"
+  vars:
+    ansible_user: root
+
+- name: Configurar cache local en config.toml
+  template:
+    src: config.toml.j2
+    dest: /etc/gitlab-runner/config.toml
+    owner: root
+    group: root
+    mode: '0600'
+  notify: reiniciar gitlab-runner

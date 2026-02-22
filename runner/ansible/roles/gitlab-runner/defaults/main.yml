@@ -1,0 +1,8 @@
+---
+# GitLab Runner Configuration
+gitlab_runner_cache_path: /var/cache/gitlab-runner
+gitlab_runner_concurrent: 1
+gitlab_runner_executor: shell
+gitlab_runner_name: "preview-server"
+gitlab_runner_docker_image: "alpine:latest"
+gitlab_runner_tags: []

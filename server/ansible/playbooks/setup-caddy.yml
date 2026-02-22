@@ -1,0 +1,7 @@
+---
+- name: Setup Caddy reverse proxy with TLS
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - caddy

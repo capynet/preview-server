@@ -1,0 +1,11 @@
+---
+- name: Reload systemd
+  systemd:
+    daemon_reload: yes
+  become: yes
+
+- name: Restart preview-manager
+  systemd:
+    name: preview-manager
+    state: restarted
+  become: yes

@@ -1,0 +1,5 @@
+---
+- name: reiniciar gitlab-runner
+  systemd:
+    name: gitlab-runner
+    state: restarted

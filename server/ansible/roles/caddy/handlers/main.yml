@@ -1,0 +1,2 @@
+---
+# No handlers needed — Caddy runs as a Docker container managed in tasks/main.yml

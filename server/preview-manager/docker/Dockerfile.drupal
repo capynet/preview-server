@@ -1,0 +1,245 @@
+ARG PHP_VERSION=8.3
+
+FROM composer:2 AS composer
+
+FROM ubuntu:22.04
+
+ARG PHP_VERSION
+ENV PHP_VERSION=${PHP_VERSION}
+ENV DOCUMENT_ROOT=/var/www/html/web
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Create www-data user (UID 33, same as Apache/Debian convention)
+RUN groupadd -g 33 www-data 2>/dev/null || true \
+    && useradd -u 33 -g 33 -s /usr/sbin/nologin -d /var/www www-data 2>/dev/null || true
+
+# Install OpenLiteSpeed and lsphp from official repo
+# Note: gd, mbstring, xml, zip, bcmath, bz2, sodium, gmp, exif, soap
+# are included in lsphp-common or the base lsphp package
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg2 ca-certificates lsb-release \
+    && echo "deb [trusted=yes] http://rpms.litespeedtech.com/debian/ $(lsb_release -sc) main" \
+        > /etc/apt/sources.list.d/lst_debian_repo.list \
+    && apt-get update \
+    && LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
+    && apt-get install -y --no-install-recommends \
+        openlitespeed \
+        lsphp${LSPHP_VER} \
+        lsphp${LSPHP_VER}-common \
+        lsphp${LSPHP_VER}-mysql \
+        lsphp${LSPHP_VER}-opcache \
+        lsphp${LSPHP_VER}-curl \
+        lsphp${LSPHP_VER}-intl \
+        lsphp${LSPHP_VER}-redis \
+        lsphp${LSPHP_VER}-imagick \
+        lsphp${LSPHP_VER}-apcu \
+        lsphp${LSPHP_VER}-pear \
+        lsphp${LSPHP_VER}-dev \
+        git \
+        unzip \
+        default-mysql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install PECL extension: uploadprogress (not available as apt package)
+RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+    && LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
+    && /usr/local/lsws/lsphp${LSPHP_VER}/bin/pecl install uploadprogress \
+    && PHP_CONF_DIR="/usr/local/lsws/lsphp${LSPHP_VER}/etc/php/${PHP_VERSION}/mods-available" \
+    && mkdir -p "${PHP_CONF_DIR}" \
+    && echo "extension=uploadprogress.so" > "${PHP_CONF_DIR}/20-uploadprogress.ini" \
+    && apt-get purge -y --auto-remove build-essential lsphp*-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
+
+# Symlink lsphp binary and php CLI
+RUN LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
+    && ln -sf /usr/local/lsws/lsphp${LSPHP_VER}/bin/lsphp /usr/local/lsws/fcgi-bin/lsphp \
+    && ln -sf /usr/local/lsws/lsphp${LSPHP_VER}/bin/php /usr/local/bin/php
+
+# Install Composer
+COPY --from=composer /usr/bin/composer /usr/bin/composer
+
+# PHP configuration for Drupal
+RUN LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
+    && PHP_CONF_DIR="/usr/local/lsws/lsphp${LSPHP_VER}/etc/php/${PHP_VERSION}/mods-available" \
+    && mkdir -p "${PHP_CONF_DIR}" \
+    && printf '%s\n' \
+        'memory_limit = 512M' \
+        'upload_max_filesize = 64M' \
+        'post_max_size = 64M' \
+        'max_execution_time = 300' \
+        'max_input_vars = 5000' \
+        'realpath_cache_size = 4096K' \
+        'realpath_cache_ttl = 600' \
+    > "${PHP_CONF_DIR}/90-drupal.ini" \
+    && printf '%s\n' \
+        'opcache.memory_consumption=256' \
+        'opcache.interned_strings_buffer=16' \
+        'opcache.max_accelerated_files=20000' \
+        'opcache.revalidate_freq=0' \
+        'opcache.validate_timestamps=1' \
+        'opcache.save_comments=1' \
+    > "${PHP_CONF_DIR}/90-opcache.ini"
+
+# OLS main server configuration
+RUN cat > /usr/local/lsws/conf/httpd_config.conf <<'HTTPD_EOF'
+serverName                preview-drupal
+user                      www-data
+group                     www-data
+priority                  0
+autoRestart               1
+chrootPath                /
+enableChroot              0
+inMemBufSize              60M
+swappingDir               /tmp/lshttpd/swap
+autoFix503                1
+gracefulRestartTimeout    300
+mime                      conf/mime.properties
+showVersionNumber         0
+
+errorlog /usr/local/lsws/logs/error.log {
+  logLevel                WARN
+  debugLevel              0
+  rollingSize             10M
+  enableStderrLog         1
+}
+
+accesslog /usr/local/lsws/logs/access.log {
+  rollingSize             10M
+  keepDays                30
+  compressArchive         0
+}
+
+extprocessor drupal {
+  type                    lsapi
+  address                 uds://tmp/lshttpd/lsphp.sock
+  maxConns                10
+  env                     PHP_LSAPI_CHILDREN=10
+  initTimeout             60
+  retryTimeout            0
+  persistConn             1
+  respBuffer              0
+  autoStart               0
+  path                    /usr/local/lsws/fcgi-bin/lsphp
+  backlog                 100
+  instances               1
+  extMaxIdleTime          300
+  memSoftLimit            2047M
+  memHardLimit            2047M
+  procSoftLimit           1400
+  procHardLimit           1500
+}
+
+listener Default {
+  address                 *:80
+  secure                  0
+  map                     drupal *
+}
+
+virtualhost drupal {
+  vhRoot                  /var/www/html
+  configFile              conf/vhosts/drupal/vhconf.conf
+  allowSymbolLink         1
+  enableScript            1
+  restrained              0
+}
+
+module cache {
+  ls_enabled              0
+}
+HTTPD_EOF
+
+# OLS vhost configuration template (DOCUMENT_ROOT substituted at runtime)
+RUN mkdir -p /usr/local/lsws/conf/vhosts/drupal \
+    && cat > /usr/local/lsws/conf/vhosts/drupal/vhconf.conf.tpl <<'VHOST_EOF'
+docRoot                   %%DOCUMENT_ROOT%%
+enableGzip                1
+enableBr                  1
+
+index {
+  useServer               0
+  indexFiles              index.php, index.html
+  autoIndex               0
+}
+
+context / {
+  location                %%DOCUMENT_ROOT%%
+  allowBrowse             1
+
+  rewrite {
+    enable                1
+    autoLoadHtaccess      1
+  }
+}
+
+scripthandler {
+  add                     lsapi:drupal php
+}
+
+rewrite {
+  enable                  1
+  autoLoadHtaccess        1
+}
+VHOST_EOF
+
+# Prepare directories and log symlinks for Docker logging
+RUN mkdir -p /tmp/lshttpd/swap /usr/local/lsws/logs \
+    && chown -R www-data:www-data /tmp/lshttpd \
+    && ln -sf /dev/stderr /usr/local/lsws/logs/error.log \
+    && ln -sf /dev/stdout /usr/local/lsws/logs/access.log
+
+# Entrypoint: remap UID/GID, substitute DOCUMENT_ROOT and start OLS
+RUN cat > /entrypoint.sh <<'ENTRY_EOF'
+#!/bin/bash
+set -e
+
+# Remap www-data UID/GID to match the host user (like DDEV does).
+# This ensures files created by PHP have the same ownership as the
+# host user, avoiding permission conflicts during rsync updates.
+if [ -n "${HOST_UID}" ] && [ "${HOST_UID}" != "33" ]; then
+    usermod -u "${HOST_UID}" www-data 2>/dev/null || true
+fi
+if [ -n "${HOST_GID}" ] && [ "${HOST_GID}" != "33" ]; then
+    groupmod -g "${HOST_GID}" www-data 2>/dev/null || true
+fi
+
+# Generate vhost config from template with current DOCUMENT_ROOT
+sed "s|%%DOCUMENT_ROOT%%|${DOCUMENT_ROOT}|g" \
+    /usr/local/lsws/conf/vhosts/drupal/vhconf.conf.tpl \
+    > /usr/local/lsws/conf/vhosts/drupal/vhconf.conf
+
+# Ensure runtime dirs exist
+mkdir -p /tmp/lshttpd/swap
+chown -R www-data:www-data /tmp/lshttpd
+
+# Start lsphp as a background LSAPI process (listening on the unix socket)
+# autoStart=0 in OLS config means we manage lsphp ourselves
+export PHP_LSAPI_CHILDREN=10
+su -s /bin/bash www-data -c '/usr/local/lsws/fcgi-bin/lsphp -b /tmp/lshttpd/lsphp.sock &'
+sleep 1
+
+# Start OpenLiteSpeed
+/usr/local/lsws/bin/lswsctrl start
+
+# Follow the PID to keep container alive — exit if OLS dies
+OLS_PID=$(cat /tmp/lshttpd/lshttpd.pid 2>/dev/null || echo "")
+if [ -z "$OLS_PID" ]; then
+    echo "ERROR: OpenLiteSpeed failed to start"
+    exit 1
+fi
+
+# Wait for OLS process
+while kill -0 "$OLS_PID" 2>/dev/null; do
+    sleep 5
+done
+
+echo "OpenLiteSpeed process exited"
+exit 1
+ENTRY_EOF
+RUN chmod +x /entrypoint.sh
+
+WORKDIR /var/www/html
+ENV PATH="/var/www/html/vendor/bin:${PATH}"
+EXPOSE 80
+
+CMD ["/entrypoint.sh"]

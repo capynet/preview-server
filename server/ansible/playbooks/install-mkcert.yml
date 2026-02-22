@@ -1,0 +1,28 @@
+---
+- name: Install mkcert for preview-user
+  hosts: preview-server
+  become: yes
+
+  tasks:
+    - name: Install mkcert
+      apt:
+        name: mkcert
+        state: present
+        update_cache: yes
+
+    - name: Install mkcert for preview-user user
+      become_user: preview-user
+      shell: |
+        mkcert -install
+      args:
+        creates: /home/preview-user/.local/share/mkcert
+
+    - name: Verify mkcert installation
+      become_user: preview-user
+      command: mkcert -CAROOT
+      register: mkcert_root
+      changed_when: false
+
+    - name: Show mkcert CA root
+      debug:
+        msg: "mkcert CA root: {{ mkcert_root.stdout }}"

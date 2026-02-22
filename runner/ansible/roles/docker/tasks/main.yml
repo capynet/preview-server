@@ -1,0 +1,57 @@
+---
+- name: Instalar dependencias
+  apt:
+    name:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg
+      - lsb-release
+    state: present
+    update_cache: yes
+
+- name: Crear directorio keyrings
+  file:
+    path: /etc/apt/keyrings
+    state: directory
+    mode: '0755'
+
+- name: Descargar clave GPG de Docker
+  get_url:
+    url: https://download.docker.com/linux/ubuntu/gpg
+    dest: /etc/apt/keyrings/docker.asc
+    mode: '0644'
+
+- name: Obtener arquitectura
+  command: dpkg --print-architecture
+  register: dpkg_arch
+  changed_when: false
+
+- name: Anadir repositorio Docker
+  apt_repository:
+    repo: "deb [arch={{ dpkg_arch.stdout }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+    state: present
+    filename: docker
+
+- name: Instalar Docker
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: yes
+
+- name: Iniciar servicio Docker
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Create preview-network
+  command: docker network create preview-network
+  register: network_result
+  changed_when: network_result.rc == 0
+  failed_when: network_result.rc != 0 and 'already exists' not in network_result.stderr

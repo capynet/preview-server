@@ -1,0 +1,18 @@
+---
+- name: Clean all deployment locks
+  hosts: preview-server
+  become: yes
+
+  tasks:
+    - name: Remove all deployment locks
+      shell: rm -rf /var/lock/preview-deployments/*
+
+    - name: Verify locks removed
+      command: ls -la /var/lock/preview-deployments/
+      register: locks_status
+      changed_when: false
+      failed_when: false
+
+    - name: Show locks directory status
+      debug:
+        msg: "{{ locks_status.stdout_lines }}"

@@ -1,0 +1,23 @@
+---
+# PostgreSQL version
+postgresql_version: "15"
+
+# Database configuration
+postgresql_database: "preview_manager"
+postgresql_user: "preview_user"
+postgresql_password: "{{ lookup('env', 'POSTGRESQL_PASSWORD') | default('CHANGE_ME_IN_PRODUCTION', true) }}"
+
+# Connection settings
+postgresql_listen_addresses: "127.0.0.1"
+postgresql_port: 5432
+
+# Performance tuning
+postgresql_max_connections: 100
+postgresql_shared_buffers: "256MB"
+postgresql_effective_cache_size: "1GB"
+postgresql_work_mem: "4MB"
+
+# Backup configuration
+postgresql_backup_enabled: true
+postgresql_backup_dir: "/var/backups/postgresql"
+postgresql_backup_retention_days: 7

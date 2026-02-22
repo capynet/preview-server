@@ -1,0 +1,46 @@
+---
+# Deploy Preview Manager
+#
+# Usage:
+#   ansible-playbook playbooks/deploy-preview-manager.yml
+
+- name: Deploy Preview Manager
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - preview-manager
+
+  post_tasks:
+    - name: Verify service is running
+      systemd:
+        name: preview-manager
+        state: started
+      register: service_state
+      tags: [code]
+
+    - name: Display service status
+      debug:
+        msg: "Preview Manager service is {{ service_state.status.ActiveState }}"
+      tags: [code]
+
+    - name: Show API endpoints
+      debug:
+        msg: |
+          ================================================
+          PREVIEW MANAGER DEPLOYED SUCCESSFULLY
+          ================================================
+
+          API Endpoints:
+            - Health:       http://localhost:8000/api/health
+            - Deploy:       POST http://localhost:8000/api/deploy
+            - List:         GET http://localhost:8000/api/previews
+            - Get Preview:  GET http://localhost:8000/api/previews/{project}/mr-{id}
+            - Delete:       DELETE http://localhost:8000/api/previews/{project}/mr-{id}
+            - Docs:         http://localhost:8000/docs
+
+          Logs:
+            - View logs:    sudo journalctl -u preview-manager -f
+            - Service:      sudo systemctl status preview-manager
+
+          ================================================

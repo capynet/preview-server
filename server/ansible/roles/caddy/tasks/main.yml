@@ -1,0 +1,81 @@
+---
+# Caddy as Docker container with caddy-docker-proxy + cloudflare DNS
+
+- name: Create Docker preview network
+  command: docker network create preview-network
+  register: network_result
+  changed_when: network_result.rc == 0
+  failed_when: network_result.rc != 0 and 'already exists' not in network_result.stderr
+
+- name: Stop and disable old systemd caddy (if exists)
+  systemd:
+    name: caddy
+    state: stopped
+    enabled: no
+  ignore_errors: yes
+
+- name: Remove old systemd Caddyfile
+  file:
+    path: /etc/caddy/Caddyfile
+    state: absent
+
+- name: Remove old systemd caddy service override
+  file:
+    path: /etc/systemd/system/caddy.service
+    state: absent
+  register: caddy_service_removed
+
+- name: Reload systemd if service file was removed
+  systemd:
+    daemon_reload: yes
+  when: caddy_service_removed.changed
+
+- name: Create caddy docker directory
+  file:
+    path: /opt/preview-caddy
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy Caddy Dockerfile
+  copy:
+    src: "{{ playbook_dir }}/../../preview-manager/docker/Dockerfile.caddy"
+    dest: /opt/preview-caddy/Dockerfile.caddy
+    owner: root
+    group: root
+    mode: '0644'
+  register: caddy_dockerfile
+
+- name: Copy Caddy docker-compose
+  template:
+    src: docker-compose.caddy.yml.j2
+    dest: /opt/preview-caddy/docker-compose.yml
+    owner: root
+    group: root
+    mode: '0640'
+  register: caddy_compose
+
+- name: Build Caddy image
+  command: docker compose build --no-cache
+  args:
+    chdir: /opt/preview-caddy
+  when: caddy_dockerfile.changed
+  register: caddy_build
+
+- name: Remove stale Caddy container (if exists outside compose)
+  command: docker rm -f preview-caddy
+  register: caddy_rm
+  changed_when: caddy_rm.rc == 0
+  failed_when: false
+
+- name: Start Caddy container
+  command: docker compose up -d --force-recreate
+  args:
+    chdir: /opt/preview-caddy
+
+- name: Wait for Caddy to be healthy
+  wait_for:
+    port: 443
+    delay: 3
+    timeout: 30

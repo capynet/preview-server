@@ -1,0 +1,39 @@
+services:
+  caddy:
+    build:
+      context: .
+      dockerfile: Dockerfile.caddy
+    image: preview-caddy:latest
+    container_name: preview-caddy
+    command: caddy docker-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - preview-network
+    environment:
+      CADDY_DOCKER_CADDYFILE_PATH: ""
+      CADDY_INGRESS_NETWORKS: preview-network
+      CLOUDFLARE_API_TOKEN: "{{ cloudflare_api_token }}"
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    labels:
+      caddy: api.{{ domain }}
+      caddy.reverse_proxy: "host.docker.internal:8000"
+      caddy_1: "*.mr.{{ domain }}"
+      caddy_1.tls.dns: "cloudflare {env.CLOUDFLARE_API_TOKEN}"
+      caddy_1.reverse_proxy: "host.docker.internal:8000"
+
+volumes:
+  caddy_data:
+  caddy_config:
+
+networks:
+  preview-network:
+    external: true
