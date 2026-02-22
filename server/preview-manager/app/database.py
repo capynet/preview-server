@@ -208,6 +208,13 @@ async def init_db():
             logger.info("Migrating previews table: adding auto_update column")
             await db.execute("ALTER TABLE previews ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 1")
 
+        # Migration: add project_slug column to invitations if missing
+        cur3 = await db.execute("PRAGMA table_info(invitations)")
+        inv_cols = {row[1] for row in await cur3.fetchall()}
+        if "project_slug" not in inv_cols:
+            logger.info("Migrating invitations table: adding project_slug column")
+            await db.execute("ALTER TABLE invitations ADD COLUMN project_slug TEXT")
+
         await db.commit()
         logger.info(f"Database initialized at {_db_path}")
     finally:

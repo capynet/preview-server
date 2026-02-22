@@ -170,6 +170,8 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
             else:
                 await db.set_role(user["id"], invitation["role"])
                 await db.mark_invitation_accepted(invitation["id"])
+                if invitation.get("project_slug"):
+                    await db.add_project_member(user["id"], invitation["project_slug"], invitation["invited_by"])
                 logger.info(f"User {info.email} accepted invitation with role {invitation['role']}")
 
     if not user:
@@ -379,7 +381,7 @@ async def create_invitation(
     if existing_inv:
         raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
 
-    invitation = await db.create_invitation(body.email, body.role.value, user.id)
+    invitation = await db.create_invitation(body.email, body.role.value, user.id, body.project_slug)
 
     try:
         send_invitation_email(body.email, invitation["token"], body.role.value, user.name)
@@ -390,6 +392,7 @@ async def create_invitation(
         "id": invitation["id"],
         "email": invitation["email"],
         "role": invitation["role"],
+        "project_slug": invitation.get("project_slug"),
         "created_at": invitation["created_at"],
         "expires_at": invitation["expires_at"],
     }
@@ -437,6 +440,10 @@ async def accept_invitation(body: AcceptInviteBody):
     await db.set_role(user["id"], invitation["role"])
     await db.mark_invitation_accepted(invitation["id"])
 
+    # Auto-add to project if invitation was for a specific project
+    if invitation.get("project_slug"):
+        await db.add_project_member(user["id"], invitation["project_slug"], invitation["invited_by"])
+
     session_id = await db.create_session(user["id"])
 
     response = Response(
@@ -455,7 +462,8 @@ async def list_project_members(
     user: UserWithRole = Depends(require_role(Role.manager)),
 ):
     members = await db.list_project_members(project_slug)
-    return {"members": members}
+    invitations = await db.list_invitations(project_slug=project_slug)
+    return {"members": members, "invitations": invitations}
 
 
 @router.post("/projects/{project_slug}/members")

@@ -337,7 +337,7 @@ async def approve_cli_auth_request(code: str, user_id: int, token: str):
 
 # ---- Invitations ----
 
-async def create_invitation(email: str, role: str, invited_by: int) -> dict:
+async def create_invitation(email: str, role: str, invited_by: int, project_slug: Optional[str] = None) -> dict:
     token = secrets.token_urlsafe(32)
     now = _now()
     expires = datetime.fromtimestamp(
@@ -346,13 +346,14 @@ async def create_invitation(email: str, role: str, invited_by: int) -> dict:
     db = await get_db()
     try:
         cur = await db.execute(
-            "INSERT INTO invitations (email, role, token, invited_by, status, created_at, expires_at) VALUES (?, ?, ?, ?, 'pending', ?, ?)",
-            (email, role, token, invited_by, now, expires),
+            "INSERT INTO invitations (email, role, token, invited_by, status, created_at, expires_at, project_slug) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)",
+            (email, role, token, invited_by, now, expires, project_slug),
         )
         await db.commit()
         return {
             "id": cur.lastrowid, "email": email, "role": role, "token": token,
             "invited_by": invited_by, "status": "pending", "created_at": now, "expires_at": expires,
+            "project_slug": project_slug,
         }
     finally:
         await db.close()
@@ -388,12 +389,18 @@ async def get_invitation_by_email(email: str) -> Optional[dict]:
         await db.close()
 
 
-async def list_invitations() -> list[dict]:
+async def list_invitations(project_slug: Optional[str] = None) -> list[dict]:
     db = await get_db()
     try:
-        cur = await db.execute(
-            "SELECT i.*, u.name as invited_by_name FROM invitations i JOIN users u ON i.invited_by = u.id WHERE i.status = 'pending' ORDER BY i.id DESC"
-        )
+        if project_slug:
+            cur = await db.execute(
+                "SELECT i.*, u.name as invited_by_name FROM invitations i JOIN users u ON i.invited_by = u.id WHERE i.status = 'pending' AND i.project_slug = ? ORDER BY i.id DESC",
+                (project_slug,),
+            )
+        else:
+            cur = await db.execute(
+                "SELECT i.*, u.name as invited_by_name FROM invitations i JOIN users u ON i.invited_by = u.id WHERE i.status = 'pending' ORDER BY i.id DESC"
+            )
         return [dict(r) for r in await cur.fetchall()]
     finally:
         await db.close()

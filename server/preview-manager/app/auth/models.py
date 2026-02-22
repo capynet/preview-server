@@ -105,6 +105,7 @@ class LoginBody(BaseModel):
 class InviteBody(BaseModel):
     email: str
     role: Role
+    project_slug: Optional[str] = None
 
 
 class AcceptInviteBody(BaseModel):
