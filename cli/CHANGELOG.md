@@ -5,6 +5,16 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-02-22
+
+### Improved
+
+- **Auth errors**: CLI now shows clear instructions when not authenticated or when the token is expired/revoked, guiding users to run `preview login`
+
+### Changed
+
+- **Push files**: Server now extracts uploaded files immediately and shares them across previews via OverlayFS (no tar.gz stored on disk)
+
 ## [1.0.5] - 2026-02-17
 
 ### Added

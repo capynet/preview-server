@@ -606,10 +606,12 @@ async def websocket_terminal(
     # Spawn PTY with docker exec
     pty = None
     try:
+        logger.info(f"Spawning terminal PTY for container {container_name}")
         pty = ptyprocess.PtyProcess.spawn(
             ["docker", "exec", "-it", container_name, "bash"],
             dimensions=(24, 80),
         )
+        logger.info(f"PTY spawned, pid={pty.pid}, alive={pty.isalive()}")
 
         INACTIVITY_TIMEOUT = 15 * 60  # 15 minutes
         last_input_time = time.monotonic()
@@ -617,27 +619,36 @@ async def websocket_terminal(
         async def read_pty():
             """Read from PTY and send to WebSocket."""
             loop = asyncio.get_event_loop()
-            while pty.isalive():
-                try:
-                    data = await asyncio.wait_for(
-                        loop.run_in_executor(None, lambda: pty.read(4096)),
-                        timeout=1.0,
-                    )
-                    if data:
-                        await websocket.send_json({"type": "output", "data": data})
-                except asyncio.TimeoutError:
-                    # Check inactivity timeout
-                    if time.monotonic() - last_input_time > INACTIVITY_TIMEOUT:
-                        await websocket.send_json({"type": "error", "message": "Session timed out due to inactivity"})
-                        return
-                    continue
-                except EOFError:
-                    break
-                except Exception:
-                    break
+            try:
+                while True:
+                    try:
+                        data = await asyncio.wait_for(
+                            loop.run_in_executor(None, lambda: pty.read(4096)),
+                            timeout=2.0,
+                        )
+                        if data:
+                            text = data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data
+                            await websocket.send_json({"type": "output", "data": text})
+                    except asyncio.TimeoutError:
+                        if not pty.isalive():
+                            logger.info(f"PTY process exited during timeout check")
+                            break
+                        if time.monotonic() - last_input_time > INACTIVITY_TIMEOUT:
+                            await websocket.send_json({"type": "error", "message": "Session timed out due to inactivity"})
+                            return
+                        continue
+                    except EOFError:
+                        logger.info("PTY EOF")
+                        break
+                    except OSError as e:
+                        logger.info(f"PTY OSError: {e}")
+                        break
+            except Exception as e:
+                logger.error(f"read_pty unexpected error: {e}", exc_info=True)
 
-            # Process exited
+            pty.wait()
             exit_code = pty.exitstatus if pty.exitstatus is not None else -1
+            logger.info(f"PTY exited with code {exit_code}")
             try:
                 await websocket.send_json({"type": "exit", "code": exit_code})
             except Exception:
@@ -652,12 +663,13 @@ async def websocket_terminal(
                     msg = json.loads(raw)
                     if msg.get("type") == "input":
                         last_input_time = time.monotonic()
-                        pty.write(msg["data"])
+                        pty.write(msg["data"].encode("utf-8"))
                     elif msg.get("type") == "resize":
                         cols = msg.get("cols", 80)
                         rows = msg.get("rows", 24)
                         pty.setwinsize(rows, cols)
-                except Exception:
+                except Exception as e:
+                    logger.info(f"read_ws ended: {e}")
                     break
 
         # Run both directions concurrently

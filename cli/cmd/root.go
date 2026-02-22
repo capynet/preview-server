@@ -45,7 +45,9 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 		if cfg.Token == "" {
-			fmt.Fprintln(os.Stderr, "Not logged in. Run 'preview login' first.")
+			fmt.Fprintln(os.Stderr, "Not authenticated. Register this CLI by running:\n")
+			fmt.Fprintln(os.Stderr, "  preview login\n")
+			fmt.Fprintln(os.Stderr, "This will open a browser to authorize the CLI with your preview server.")
 			os.Exit(1)
 		}
 		apiClient = client.New(cfg.APIURL, cfg.Token)

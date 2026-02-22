@@ -6,8 +6,12 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strings"
 )
+
+// ErrNotAuthenticated is returned when the server rejects the token.
+var ErrNotAuthenticated = fmt.Errorf("authentication failed")
 
 type Client struct {
 	BaseURL    string
@@ -60,7 +64,18 @@ func (c *Client) doRequest(method, url string, body io.Reader) (*http.Response, 
 	if method == "POST" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	return c.HTTPClient.Do(req)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode == 401 {
+		resp.Body.Close()
+		fmt.Fprintln(os.Stderr, "Authentication failed. Your token may be expired or revoked.")
+		fmt.Fprintln(os.Stderr, "Re-authenticate by running:\n")
+		fmt.Fprintln(os.Stderr, "  preview login\n")
+		os.Exit(1)
+	}
+	return resp, nil
 }
 
 func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
@@ -198,6 +213,12 @@ func (c *Client) UploadBaseFile(slug, kind string, reader io.Reader, filename st
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == 401 {
+		fmt.Fprintln(os.Stderr, "Authentication failed. Your token may be expired or revoked.")
+		fmt.Fprintln(os.Stderr, "Re-authenticate by running:\n")
+		fmt.Fprintln(os.Stderr, "  preview login\n")
+		os.Exit(1)
+	}
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
