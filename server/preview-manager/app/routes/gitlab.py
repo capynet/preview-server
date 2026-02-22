@@ -205,11 +205,15 @@ async def gitlab_status(user: UserWithRole = Depends(require_role(Role.viewer)))
             )
         if resp.status_code == 200:
             return {"connected": True, "gitlab_url": settings.gitlab_url}
-        else:
-            # Token revoked or expired — clean up
-            logger.info(f"GitLab token invalid (HTTP {resp.status_code}), removing stored tokens")
+        elif resp.status_code == 401:
+            # Token truly revoked or expired — clean up
+            logger.info(f"GitLab token invalid (HTTP 401), removing stored tokens")
             await config_store.remove_oauth_tokens()
             return {"connected": False, "gitlab_url": settings.gitlab_url}
+        else:
+            # Transient error (429, 500, 502, etc.) — don't remove tokens
+            logger.warning(f"GitLab API returned HTTP {resp.status_code}, treating as connected (transient error)")
+            return {"connected": True, "gitlab_url": settings.gitlab_url}
     except Exception as e:
         logger.warning(f"Could not verify GitLab token: {e}")
         # Network error — don't remove tokens, just report as connected (optimistic)

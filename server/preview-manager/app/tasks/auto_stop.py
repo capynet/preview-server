@@ -11,7 +11,7 @@ from app.routes.previews import get_docker_status
 
 logger = logging.getLogger(__name__)
 
-CHECK_INTERVAL_SECONDS = 300  # 5 minutes
+CHECK_INTERVAL_SECONDS = 60  # 1 minute
 
 
 async def auto_stop_loop():

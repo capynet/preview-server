@@ -199,7 +199,7 @@ class PreviewListManager:
     def __init__(self):
         self.active_connections: list[WebSocket] = []
         self.last_state: str = ""
-        self.check_interval = 10  # seconds
+        self.check_interval = 30  # seconds (fallback; docker_events provides real-time updates)
         self.background_task = None
 
     async def connect(self, websocket: WebSocket):

@@ -99,6 +99,27 @@ async def save_project_auto_stop_config(project: str, request: Request, user: Us
     return {"success": True}
 
 
+@router.get("/api/config/auto-erase")
+async def get_auto_erase_config(user: UserWithRole = Depends(require_role(Role.viewer))):
+    """Get global auto-erase configuration."""
+    enabled = await config_store.get_config("auto_erase_enabled")
+    days = await config_store.get_config("auto_erase_days")
+    return {
+        "enabled": enabled == "true",
+        "days": int(days) if days else 7,
+    }
+
+
+@router.put("/api/config/auto-erase")
+async def save_auto_erase_config(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
+    """Save global auto-erase configuration."""
+    body = await request.json()
+    await config_store.set_config("auto_erase_enabled", "true" if body.get("enabled") else "false")
+    if "days" in body:
+        await config_store.set_config("auto_erase_days", str(int(body["days"])))
+    return {"success": True}
+
+
 @router.get("/api/health")
 async def health_check():
     """Health check endpoint"""
