@@ -14,6 +14,7 @@ from app.docker_compose import (
 )
 from app.state import PreviewStateManager
 from app.database import get_preview, create_deployment, finish_deployment
+from app.overlay import get_base_files_dir, mount_overlay
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -208,12 +209,12 @@ class PreviewDeployer:
 
     def _verify_base_files(self):
         db = Path(f"/backups/{self.project_name}-base.sql.gz")
-        files = Path(f"/backups/{self.project_name}-files.tar.gz")
+        files_dir = get_base_files_dir(self.project_name)
         missing = []
         if not db.exists():
             missing.append(str(db))
-        if not files.exists():
-            missing.append(str(files))
+        if not files_dir.exists():
+            missing.append(f"base files directory ({files_dir})")
         if missing:
             raise RuntimeError(f"Base files missing: {', '.join(missing)}")
 
@@ -304,28 +305,26 @@ class PreviewDeployer:
         await self._run_shell(cmd, step="import-db", timeout=TIMEOUT_IMPORT_DB)
 
     async def _import_files(self):
-        """Extract files tar.gz into the public files directory."""
-        files_path = f"/backups/{self.project_name}-files.tar.gz"
+        """Mount overlay filesystem for shared base files."""
+        step = "import-files"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
         public_path = self._preview_config["env"].get(
             "PREV_FILE_PUBLIC_PATH", "sites/default/files"
         ) if self._preview_config else "sites/default/files"
         docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
-        files_dir = self.preview_path / docroot / public_path
-        files_dir.mkdir(parents=True, exist_ok=True)
 
-        await self._run(
-            "tar", "xzf", files_path, "-C", str(files_dir),
-            step="import-files",
-            timeout=TIMEOUT_IMPORT_FILES,
+        await mount_overlay(
+            self.project_name, self.preview_path,
+            docroot=docroot, public_path=public_path,
         )
 
-        # Drupal requires the files directory to be writable by www-data (UID 33)
-        # Run chown inside the container where the process has root privileges
-        container_files_path = f"/var/www/html/{docroot}/{public_path}"
-        await self._docker_exec(
-            "chown", "-R", "www-data:www-data", container_files_path,
-            step="fix-files-perms",
-            timeout=TIMEOUT_IMPORT_FILES,
+        elapsed = time.monotonic() - t0
+        base_dir = get_base_files_dir(self.project_name)
+        await self._log_step_end(
+            step, elapsed, True,
+            f"{DIM}Mounted overlay (base: {base_dir}){RESET}",
         )
 
     async def _drush(self, *args):
