@@ -2,6 +2,7 @@ Servidor preview server: 65.108.243.53
 
 Para el desarrollo en local, tener las cli de gitlab, github, cloudflare suele ser una buena idea. 
 
+El encriptado del vault pass: **preview-mr**
 
 ## Server [server](server)
 
