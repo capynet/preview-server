@@ -3,6 +3,12 @@ Servidor preview server: 65.108.243.53
 Para el desarrollo en local, tener las cli de gitlab, github, cloudflare suele ser una buena idea. 
 
 El encriptado del vault pass: **preview-mr**
+Para verlo:
+ansible-vault view inventory/group_vars/all/vault.yml
+
+Para editarlo:
+ansible-vault edit inventory/group_vars/all/vault.yml
+
 
 ## Server [server](server)
 
