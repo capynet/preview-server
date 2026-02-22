@@ -140,7 +140,7 @@ async def create_branch_preview(
         project, preview_name,
         branch=body.branch,
         commit_sha=commit_sha,
-        status="creating",
+        status="pending",
         url=f"https://{preview_name}-{project}.mr.preview-mr.com",
         path=str(Path(settings.previews_base_path) / project / preview_name),
         auto_update=0,

@@ -137,9 +137,18 @@ async def _clone_and_deploy(
     """Clone repo then run deployment (runs in background)."""
     from app.deployment import PreviewDeployer
 
+    logger.info(f"Starting clone+deploy for {project_name}/{preview_name} (branch={source_branch}, commit={commit_sha[:8]})")
+
     ok = await _clone_preview(project_path, project_name, preview_name, source_branch, commit_sha)
     if not ok:
         logger.error(f"Clone failed, skipping deploy for {project_name}/{preview_name}")
+        # Update preview status so it doesn't stay stuck in pending/creating
+        from app.state import PreviewStateManager
+        await PreviewStateManager.save_state(
+            project_name, preview_name,
+            status="failed",
+            last_deployment_error="Clone failed (git clone or rsync error, check logs)",
+        )
         return
 
     deployer = PreviewDeployer(
@@ -150,7 +159,11 @@ async def _clone_and_deploy(
         triggered_by=triggered_by,
         mr_iid=mr_iid,
     )
-    await deployer.deploy()
+    success = await deployer.deploy()
+    if not success:
+        logger.error(f"Deploy failed for {project_name}/{preview_name}")
+    else:
+        logger.info(f"Deploy completed successfully for {project_name}/{preview_name}")
 
 
 async def _delete_preview(project_name: str, preview_name: str):
