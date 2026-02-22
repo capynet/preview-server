@@ -138,3 +138,4 @@ Otro asunto para resolver:
 
 - Voy a necesitar que los drupal almacenen sus logs junto a los de apache, php etc en un lugar centralizado facil de revisar. elk o algo mas simple?
 - Voy a necesitar ram, cpu y disco stats simples para tener un overview facil.
+- ssh y stats.

@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import psutil
 from fastapi import APIRouter, WebSocket, WebSocketException, status
 
 from config.settings import settings
@@ -270,6 +271,70 @@ class PreviewListManager:
 
 # Global manager instance
 preview_list_manager = PreviewListManager()
+
+
+async def system_resources_loop():
+    """Background loop that broadcasts system resource metrics every 2 seconds."""
+    logger.info("Starting system resources broadcast loop")
+    while True:
+        try:
+            if not preview_list_manager.active_connections:
+                await asyncio.sleep(2)
+                continue
+
+            mem = psutil.virtual_memory()
+            cpu = psutil.cpu_percent(interval=None)
+            disk = psutil.disk_usage('/')
+
+            # Count previews by docker status using network filter
+            stats = {"total": 0, "running": 0, "paused": 0, "stopped": 0}
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "ps", "-a",
+                    "--filter", "network=preview-network",
+                    "--format", "{{.State}}",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                if proc.returncode == 0:
+                    states = stdout.decode().strip().split('\n') if stdout.decode().strip() else []
+                    stats["total"] = len(states)
+                    for s in states:
+                        s = s.strip().lower()
+                        if s == "running":
+                            stats["running"] += 1
+                        elif s == "paused":
+                            stats["paused"] += 1
+                        elif s in ("exited", "created", "dead"):
+                            stats["stopped"] += 1
+            except Exception as e:
+                logger.debug(f"Error getting docker stats: {e}")
+
+            message = {
+                "type": "system_resources",
+                "resources": {
+                    "memory_percent": mem.percent,
+                    "memory_available_gb": round(mem.available / (1024**3), 2),
+                    "memory_total_gb": round(mem.total / (1024**3), 2),
+                    "cpu_percent": cpu,
+                    "cpu_count": psutil.cpu_count(),
+                    "disk_percent": disk.percent,
+                    "disk_used_gb": round(disk.used / (1024**3), 2),
+                    "disk_total_gb": round(disk.total / (1024**3), 2),
+                },
+                "stats": stats,
+            }
+
+            await preview_list_manager.broadcast(message)
+            await asyncio.sleep(2)
+
+        except asyncio.CancelledError:
+            logger.info("System resources loop cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in system resources loop: {e}", exc_info=True)
+            await asyncio.sleep(5)
 
 
 async def stream_subprocess_output(
