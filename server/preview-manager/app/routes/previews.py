@@ -68,6 +68,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         last_deployed_at=state.get("last_deployed_at"),
         last_deployment=last_deployment,
         auto_update=bool(state.get("auto_update", 1)),
+        pinned=bool(state.get("pinned", 0)),
     )
 
 
@@ -188,6 +189,7 @@ async def get_preview_endpoint(project: str, preview_name: str, user: UserWithRo
 
 class UpdatePreviewRequest(BaseModel):
     auto_update: Optional[bool] = None
+    pinned: Optional[bool] = None
 
 
 @router.patch("/api/previews/{project}/{preview_name}")
@@ -205,6 +207,8 @@ async def update_preview_endpoint(
     updates = {}
     if body.auto_update is not None:
         updates["auto_update"] = int(body.auto_update)
+    if body.pinned is not None:
+        updates["pinned"] = int(body.pinned)
 
     if updates:
         await PreviewStateManager.save_state(project, preview_name, **updates)
@@ -303,6 +307,7 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
             "last_deployed_at": row.get("last_deployed_at"),
             "last_deployment": last_deployment,
             "auto_update": bool(row.get("auto_update", 1)),
+            "pinned": bool(row.get("pinned", 0)),
             "_path": row["path"],
         })
 

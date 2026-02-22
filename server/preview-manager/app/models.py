@@ -19,5 +19,6 @@ class PreviewInfo(BaseModel):
     last_deployed_at: Optional[str] = None
     last_deployment: Optional[dict] = None
     auto_update: bool = True
+    pinned: bool = False
     mr_title: Optional[str] = None
     mr_url: Optional[str] = None

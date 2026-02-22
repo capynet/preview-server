@@ -113,6 +113,7 @@ CREATE TABLE IF NOT EXISTS previews (
     last_deployment_completed_at TEXT,
     last_accessed_at TEXT,
     auto_update INTEGER NOT NULL DEFAULT 1,
+    pinned INTEGER NOT NULL DEFAULT 0,
     UNIQUE(project, preview_name)
 );
 """
@@ -208,6 +209,10 @@ async def init_db():
             logger.info("Migrating previews table: adding auto_update column")
             await db.execute("ALTER TABLE previews ADD COLUMN auto_update INTEGER NOT NULL DEFAULT 1")
 
+        if "pinned" not in col_names:
+            logger.info("Migrating previews table: adding pinned column")
+            await db.execute("ALTER TABLE previews ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+
         # Migration: add project_slug column to invitations if missing
         cur3 = await db.execute("PRAGMA table_info(invitations)")
         inv_cols = {row[1] for row in await cur3.fetchall()}
@@ -284,8 +289,8 @@ async def upsert_preview(project: str, preview_name: str, **fields) -> dict:
                    (project, preview_name, mr_id, branch, commit_sha, status, url, path,
                     created_at, last_deployed_at,
                     last_deployment_status, last_deployment_error,
-                    last_deployment_duration, last_deployment_completed_at, auto_update)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    last_deployment_duration, last_deployment_completed_at, auto_update, pinned)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     project,
                     preview_name,
@@ -302,6 +307,7 @@ async def upsert_preview(project: str, preview_name: str, **fields) -> dict:
                     fields.get("last_deployment_duration"),
                     fields.get("last_deployment_completed_at"),
                     fields.get("auto_update", 1),
+                    fields.get("pinned", 0),
                 ),
             )
             await db.commit()

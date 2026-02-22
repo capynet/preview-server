@@ -32,6 +32,7 @@ async def lifespan(app: FastAPI):
     from app.database import init_db
     from app.config_store import load_config_to_settings
     from app.tasks.auto_stop import auto_stop_loop
+    from app.tasks.auto_erase import auto_erase_loop
     from app.tasks.docker_events import docker_events_loop
 
     logger.info("Starting Preview Manager Service")
@@ -40,13 +41,14 @@ async def lifespan(app: FastAPI):
 
     # Start background tasks
     auto_stop_task = asyncio.create_task(auto_stop_loop())
+    auto_erase_task = asyncio.create_task(auto_erase_loop())
     docker_events_task = asyncio.create_task(docker_events_loop())
     logger.info("Preview Manager Service started successfully")
 
     yield
 
     # Cancel background tasks
-    for task in (auto_stop_task, docker_events_task):
+    for task in (auto_stop_task, auto_erase_task, docker_events_task):
         task.cancel()
         try:
             await task
