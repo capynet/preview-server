@@ -69,7 +69,7 @@ async def initial_setup(body: SetupBody):
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    user = await db.create_user_with_password(body.email, body.name, body.password)
+    user = await db.create_user_with_password(body.email, body.name or "Admin", body.password)
     await db.set_role(user["id"], Role.admin.value)
     logger.info(f"Initial setup: admin user {body.email} created")
 
