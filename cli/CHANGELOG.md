@@ -5,6 +5,20 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-02-22
+
+### Added
+
+- **Chunked uploads**: Files larger than 50MB are automatically split into chunks, enabling uploads of any size (no limit)
+- **Progress bar**: Upload progress is now displayed in real-time with percentage and transfer speed
+- **Retry per chunk**: Each chunk retries up to 3 times with exponential backoff on failure
+
+## [1.3.1] - 2026-02-22
+
+### Added
+
+- **`--yes`/`-y` flag**: Skip confirmation prompts on `preview push db` and `preview push files`
+
 ## [1.3.0] - 2026-02-22
 
 ### Improved

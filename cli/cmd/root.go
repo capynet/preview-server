@@ -17,7 +17,7 @@ import (
 
 var apiClient *client.Client
 
-// Version is set at build time via ldflags
+// Version is set by main.go from the embedded VERSION file.
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
@@ -52,6 +52,12 @@ var rootCmd = &cobra.Command{
 		}
 		apiClient = client.New(cfg.APIURL, cfg.Token)
 	},
+}
+
+// SetVersion sets the version for the CLI (called from main with embedded VERSION file).
+func SetVersion(v string) {
+	Version = v
+	rootCmd.Version = v
 }
 
 func Execute() {

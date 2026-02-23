@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 // ErrNotAuthenticated is returned when the server rejects the token.
@@ -224,6 +226,252 @@ func (c *Client) UploadBaseFile(slug, kind string, reader io.Reader, filename st
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+const chunkSize = 50 * 1024 * 1024 // 50MB
+
+// UploadBaseFileChunked copies the reader to a temp file, then uploads using
+// single request (if <50MB) or chunked upload (if >=50MB) with a progress bar.
+func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, filename string) error {
+	// 1. Copy stream to temp file to know size and allow chunking
+	tmpFile, err := os.CreateTemp("", "preview-upload-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	fmt.Fprintf(os.Stderr, "Buffering to temp file...\r")
+	written, err := io.Copy(tmpFile, reader)
+	if err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("failed to buffer upload: %w", err)
+	}
+	tmpFile.Close()
+	fmt.Fprintf(os.Stderr, "Buffered %s to temp file.  \n", formatBytes(written))
+
+	// 2. Decide: single or chunked
+	if written < chunkSize {
+		return c.uploadSingleWithProgress(slug, kind, tmpPath, filename, written)
+	}
+	return c.uploadChunked(slug, kind, tmpPath, filename, written)
+}
+
+func (c *Client) uploadSingleWithProgress(slug, kind, filePath, filename string, totalSize int64) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	go func() {
+		part, err := writer.CreateFormFile("file", filename)
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		progressReader := &progressWriter{total: totalSize, label: "Uploading"}
+		if _, err := io.Copy(part, io.TeeReader(f, progressReader)); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		fmt.Fprintln(os.Stderr)
+		writer.Close()
+		pw.Close()
+	}()
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/projects/%s/base-files/%s", c.BaseURL, slug, kind), pr)
+	if err != nil {
+		return err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 401 {
+		fmt.Fprintln(os.Stderr, "Authentication failed. Re-authenticate by running:\n\n  preview login\n")
+		os.Exit(1)
+	}
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+func (c *Client) uploadChunked(slug, kind, filePath, filename string, totalSize int64) error {
+	totalChunks := int((totalSize + chunkSize - 1) / chunkSize)
+
+	// Init
+	initBody, _ := json.Marshal(map[string]interface{}{
+		"total_chunks": totalChunks,
+		"total_size":   totalSize,
+	})
+	resp, err := c.doRequest("POST",
+		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/init", c.BaseURL, slug, kind),
+		bytes.NewReader(initBody))
+	if err != nil {
+		return fmt.Errorf("chunked init failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("chunked init HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var initResult struct {
+		UploadID string `json:"upload_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&initResult)
+	resp.Body.Close()
+
+	fmt.Fprintf(os.Stderr, "Uploading %s in %d chunks of %s...\n", formatBytes(totalSize), totalChunks, formatBytes(chunkSize))
+
+	// Upload chunks
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	var totalSent int64
+	buf := make([]byte, chunkSize)
+
+	for i := 0; i < totalChunks; i++ {
+		n, err := io.ReadFull(f, buf)
+		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
+			return fmt.Errorf("read chunk %d: %w", i, err)
+		}
+		chunkData := buf[:n]
+
+		// Retry logic per chunk
+		var uploadErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if attempt > 0 {
+				wait := time.Duration(1<<uint(attempt)) * 2 * time.Second
+				fmt.Fprintf(os.Stderr, "  Retrying chunk %d/%d in %v...\n", i+1, totalChunks, wait)
+				time.Sleep(wait)
+			}
+
+			uploadErr = c.uploadOneChunk(slug, kind, initResult.UploadID, i, chunkData)
+			if uploadErr == nil {
+				break
+			}
+		}
+		if uploadErr != nil {
+			return fmt.Errorf("chunk %d failed after 3 attempts: %w", i, uploadErr)
+		}
+
+		totalSent += int64(n)
+		pct := float64(totalSent) / float64(totalSize) * 100
+		bar := progressBar(pct, 30)
+		fmt.Fprintf(os.Stderr, "\r  %s / %s (%.0f%%) %s", formatBytes(totalSent), formatBytes(totalSize), pct, bar)
+	}
+	fmt.Fprintln(os.Stderr)
+
+	// Complete
+	fmt.Fprintf(os.Stderr, "Finalizing upload...\n")
+	completeBody, _ := json.Marshal(map[string]string{"upload_id": initResult.UploadID})
+	resp2, err := c.doRequest("POST",
+		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/complete", c.BaseURL, slug, kind),
+		bytes.NewReader(completeBody))
+	if err != nil {
+		return fmt.Errorf("chunked complete failed: %w", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != 200 {
+		body, _ := io.ReadAll(resp2.Body)
+		return fmt.Errorf("chunked complete HTTP %d: %s", resp2.StatusCode, string(body))
+	}
+
+	return nil
+}
+
+func (c *Client) uploadOneChunk(slug, kind, uploadID string, index int, data []byte) error {
+	pr, pw := io.Pipe()
+	writer := multipart.NewWriter(pw)
+
+	go func() {
+		writer.WriteField("upload_id", uploadID)
+		writer.WriteField("chunk_index", fmt.Sprintf("%d", index))
+		part, err := writer.CreateFormFile("file", fmt.Sprintf("chunk_%d", index))
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		part.Write(data)
+		writer.Close()
+		pw.Close()
+	}()
+
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/chunk", c.BaseURL, slug, kind),
+		pr)
+	if err != nil {
+		return err
+	}
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// progressWriter counts bytes written and prints a progress bar to stderr.
+type progressWriter struct {
+	total   int64
+	written int64
+	label   string
+}
+
+func (pw *progressWriter) Write(p []byte) (int, error) {
+	pw.written += int64(len(p))
+	pct := float64(pw.written) / float64(pw.total) * 100
+	bar := progressBar(pct, 30)
+	fmt.Fprintf(os.Stderr, "\r%s... %s / %s (%.0f%%) %s",
+		pw.label, formatBytes(pw.written), formatBytes(pw.total), pct, bar)
+	return len(p), nil
+}
+
+func progressBar(pct float64, width int) string {
+	filled := int(pct / 100 * float64(width))
+	if filled > width {
+		filled = width
+	}
+	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
+}
+
+func formatBytes(b int64) string {
+	switch {
+	case b >= 1024*1024*1024:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1024*1024*1024))
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
 }
 
 func (c *Client) DownloadStream(project string, mrID int, kind string, w io.Writer) error {

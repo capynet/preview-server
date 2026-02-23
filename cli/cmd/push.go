@@ -13,6 +13,7 @@ import (
 )
 
 var stripHeavyFiles string
+var autoYes bool
 
 var pushCmd = &cobra.Command{
 	Use:   "push",
@@ -142,6 +143,9 @@ func detectProjectSlug() (string, error) {
 }
 
 func confirm(prompt string) bool {
+	if autoYes {
+		return true
+	}
 	fmt.Fprintf(os.Stderr, "%s [Y/n] ", prompt)
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
@@ -165,7 +169,7 @@ func uploadExistingFile(slug, kind, filePath string) error {
 
 	fmt.Fprintf(os.Stderr, "Uploading %s (%d bytes)...\n", filePath, info.Size())
 
-	if err := apiClient.UploadBaseFile(slug, kind, f, filepath.Base(filePath)); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, kind, f, filepath.Base(filePath)); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
@@ -204,7 +208,7 @@ func generateAndUploadDB(slug string) error {
 	fmt.Fprintln(os.Stderr, "Uploading database dump...")
 
 	filename := fmt.Sprintf("%s-base.sql.gz", slug)
-	if err := apiClient.UploadBaseFile(slug, "db", gzipOut, filename); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, "db", gzipOut, filename); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
@@ -295,7 +299,7 @@ func generateAndUploadFiles(slug string) error {
 	fmt.Fprintln(os.Stderr, "Uploading files archive...")
 
 	filename := fmt.Sprintf("%s-files.tar.gz", slug)
-	if err := apiClient.UploadBaseFile(slug, "files", tarOut, filename); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, "files", tarOut, filename); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
@@ -308,7 +312,8 @@ func generateAndUploadFiles(slug string) error {
 }
 
 func init() {
-	pushFilesCmd.Flags().StringVar(&stripHeavyFiles, "strip-heavy-files", "", "Exclude files larger than this size (e.g. '10mb', '5mb')")
+	pushCmd.PersistentFlags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
+	pushFilesCmd.Flags().StringVar(&stripHeavyFiles, "strip-heavy-files", "", "Exclude files larger than this size, e.g. --strip-heavy-files 10mb")
 	pushCmd.AddCommand(pushDBCmd)
 	pushCmd.AddCommand(pushFilesCmd)
 	rootCmd.AddCommand(pushCmd)
