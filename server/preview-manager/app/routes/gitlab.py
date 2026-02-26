@@ -191,11 +191,15 @@ async def gitlab_auth_callback(code: str, state: str = ""):
 @router.get("/status")
 async def gitlab_status(user: UserWithRole = Depends(require_role(Role.viewer))):
     """Check if GitLab is connected by validating the token against GitLab API."""
-    token = settings.gitlab_oauth_access_token
-    if not token:
+    if not settings.gitlab_oauth_access_token:
         return {"connected": False, "gitlab_url": settings.gitlab_url}
 
-    # Verify token is still valid
+    # Get token (refreshing if needed) and verify it
+    try:
+        token = await _get_gitlab_token()
+    except HTTPException:
+        return {"connected": False, "gitlab_url": settings.gitlab_url}
+
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -206,8 +210,8 @@ async def gitlab_status(user: UserWithRole = Depends(require_role(Role.viewer)))
         if resp.status_code == 200:
             return {"connected": True, "gitlab_url": settings.gitlab_url}
         elif resp.status_code == 401:
-            # Token truly revoked or expired — clean up
-            logger.info(f"GitLab token invalid (HTTP 401), removing stored tokens")
+            # Token truly revoked (refresh didn't help) — clean up
+            logger.info("GitLab token invalid after refresh attempt (HTTP 401), removing stored tokens")
             await config_store.remove_oauth_tokens()
             return {"connected": False, "gitlab_url": settings.gitlab_url}
         else:
