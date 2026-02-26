@@ -286,7 +286,7 @@ async def system_resources_loop():
 
             mem = psutil.virtual_memory()
             cpu = psutil.cpu_percent(interval=None)
-            disk = psutil.disk_usage('/')
+            disk = psutil.disk_usage(str(Path(settings.previews_base_path).resolve()))
 
             # Count previews by docker status using network filter
             stats = {"total": 0, "running": 0, "paused": 0, "stopped": 0}

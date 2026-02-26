@@ -35,13 +35,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
-- en lugar de comprimir el dir files a lo mejor es buena idea usar un rzync con este layer especial que usa docker para solo mopdificar por encima (overlay layer o asi).
-- Si decido seguir creando un tar me gustaria comprimir con multiples core.
 - Cuando este todo estable hay que quitar el debug "set -x"
-- Necesito separar la logica de db y files de [deploy-preview.sh](../drupal-test-2/scripts/ci/deploy-preview.sh) porque esto es algo que deberia hacer el server de previews y no dejarlo en las manos del desarrollador. Este archivo solo deberia permitir lanzar acciones dentro del conteneidor como un drush deploy, cr, etc.
-- Revisar cuidadosamente cada proceso. Necesito asegurarme que todo se ejecuta en el orden necesario y llamando a los scripts que yo creo .
-
-## Futuras mejoras
 - El cron para limpieza en lugar de ser configurado desde gitlab que sea gestionado por el preview manager
 - push-to-preview-server toma la db y files de la instalacion local y tiene harcodeados varios valores como el server o el project name. Idealmente me gustaria que esto pueda ser gestionado desde la ui. configurar un env desde el cual tomar la info usando drush sync o poder especificar una ruta en un server de backups del cual tomar los backup ya generados (ya seria la bomba listar los posibles backups y tener una opcion "tomar el mas reciente").
 - Como cada proyecto puede llegar a ser muy pesado, idealmente me gustaria tener algo como el preview manager en un servidor y los gitlab runners en servidores individuales conectados en una red interna cosa que el preview manager solo coordine los gitlab runner que a su vez tendrian el runner y los sitios ddev correspondientes solo a su proyecto.
@@ -139,3 +133,7 @@ Otro asunto para resolver:
 - Voy a necesitar que los drupal almacenen sus logs junto a los de apache, php etc en un lugar centralizado facil de revisar. elk o algo mas simple?
 - Voy a necesitar ram, cpu y disco stats simples para tener un overview facil.
 - ssh y stats.
+necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada preview (hay casos en lls que los email necesitan ser cofirmados). 
+- . Soporte Drupal decoupled (container Node.js adicional) — para competir con Upsun en ese nicho  
+- el cache estilo varnish que tiene el servidor web que reemplaza a apache en los preview se puede activar y desactivar? hace falta algun modulo en drupal? (so voy para adelante con esto deberia poder activarlo y desactivarlo desde la ui mas que desde drupal)
+- - Si quiero qeu esto funcione. Los usuarios freelance deberiantener esto gratis o por lo menos la opcion de hostearselo ellos mismos o un tier que sea 0€

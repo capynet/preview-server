@@ -1,0 +1,5 @@
+---
+- name: Restart preview-manager
+  systemd:
+    name: preview-manager
+    state: restarted

@@ -1,0 +1,39 @@
+---
+# Setup Storage Volume
+#
+# Creates previews and backups directories on the external volume
+# and symlinks from the standard paths.
+#
+# Usage:
+#   ansible-playbook playbooks/setup-storage.yml
+
+- name: Setup Storage Volume
+  hosts: preview-server
+  become: yes
+
+  pre_tasks:
+    - name: Stop preview-manager
+      systemd:
+        name: preview-manager
+        state: stopped
+      ignore_errors: yes
+
+  roles:
+    - storage
+
+  post_tasks:
+    - name: Start preview-manager
+      systemd:
+        name: preview-manager
+        state: started
+
+    - name: Verify setup
+      shell: |
+        echo "previews -> $(readlink /var/www/previews)"
+        echo "backups  -> $(readlink /backups)"
+        df -h {{ storage_volume_mount }} | tail -1
+      register: result
+
+    - name: Display result
+      debug:
+        msg: "{{ result.stdout_lines }}"

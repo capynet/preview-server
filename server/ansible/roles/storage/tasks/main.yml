@@ -1,0 +1,106 @@
+---
+# Storage Volume Setup
+#
+# Configures an external volume for previews data, backups, and Docker.
+# The volume must already be attached and mounted by Hetzner (or manually).
+#
+# Required variable:
+#   storage_volume_mount: mount point of the volume (e.g. /mnt/HC_Volume_104801015)
+#
+# After running:
+#   /var/www/previews → {{ storage_volume_mount }}/previews
+#   /backups          → {{ storage_volume_mount }}/backups
+#   Docker root       → {{ storage_volume_mount }}/docker
+
+- name: Validate storage_volume_mount is defined
+  assert:
+    that:
+      - storage_volume_mount is defined
+      - storage_volume_mount | length > 0
+    fail_msg: "storage_volume_mount must be defined in inventory (e.g. /mnt/HC_Volume_104801015)"
+
+- name: Check volume is mounted
+  command: mountpoint -q {{ storage_volume_mount }}
+  changed_when: false
+
+# --- Previews & Backups ---
+
+- name: Create directory structure on volume
+  file:
+    path: "{{ storage_volume_mount }}/{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: '0775'
+  loop:
+    - { path: previews,             owner: preview-manager, group: preview-manager }
+    - { path: previews/.base-files, owner: preview-manager, group: preview-manager }
+    - { path: backups,              owner: preview-user,    group: preview-user }
+
+- name: Remove existing directories (not symlinks)
+  file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/www/previews
+    - /backups
+
+- name: Create symlinks
+  file:
+    src: "{{ storage_volume_mount }}/{{ item.name }}"
+    dest: "{{ item.dest }}"
+    state: link
+  loop:
+    - { name: previews, dest: /var/www/previews }
+    - { name: backups,  dest: /backups }
+
+# --- Docker data root ---
+
+- name: Check current Docker root dir
+  command: docker info --format '{{ '{{' }} .DockerRootDir {{ '}}' }}'
+  register: docker_root
+  changed_when: false
+
+- name: Move Docker data to volume
+  when: docker_root.stdout != storage_volume_mount + '/docker'
+  block:
+    - name: Stop Docker
+      systemd:
+        name: docker
+        state: stopped
+
+    - name: Stop Docker socket
+      systemd:
+        name: docker.socket
+        state: stopped
+
+    - name: Configure Docker data-root
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "data-root": "{{ storage_volume_mount }}/docker"
+          }
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Copy existing Docker data to volume
+      command: rsync -a /var/lib/docker/ {{ storage_volume_mount }}/docker/
+      args:
+        creates: "{{ storage_volume_mount }}/docker/image"
+
+    - name: Remove old Docker data
+      file:
+        path: /var/lib/docker
+        state: absent
+
+    - name: Start Docker
+      systemd:
+        name: docker
+        state: started
+
+    - name: Verify Docker is working
+      command: docker info --format '{{ '{{' }} .DockerRootDir {{ '}}' }}'
+      register: docker_root_after
+      failed_when: docker_root_after.stdout != storage_volume_mount + '/docker'
