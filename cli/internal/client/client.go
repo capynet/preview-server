@@ -474,8 +474,8 @@ func formatBytes(b int64) string {
 	}
 }
 
-func (c *Client) DownloadStream(project string, mrID int, kind string, w io.Writer) error {
-	url := fmt.Sprintf("%s/api/previews/%s/mr-%d/%s/download", c.BaseURL, project, mrID, kind)
+func (c *Client) DownloadStream(project string, previewName string, kind string, w io.Writer) error {
+	url := fmt.Sprintf("%s/api/previews/%s/%s/%s/download", c.BaseURL, project, previewName, kind)
 
 	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {

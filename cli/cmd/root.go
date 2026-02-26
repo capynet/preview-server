@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -143,6 +144,48 @@ func saveConfig(cfg config) error {
 }
 
 func init() {
+}
+
+// detectGitBranch returns the current git branch name.
+func detectGitBranch() (string, error) {
+	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return "", fmt.Errorf("could not detect git branch: %w\nMake sure you are in a git repository", err)
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" || branch == "HEAD" {
+		return "", fmt.Errorf("could not detect git branch (detached HEAD?)")
+	}
+	return branch, nil
+}
+
+// findPreviewByBranch searches for a preview matching the given project and branch.
+func findPreviewByBranch(project, branch string) (*client.Preview, error) {
+	result, err := apiClient.ListPreviews(false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list previews: %w", err)
+	}
+
+	for _, p := range result.Previews {
+		if p.Project == project && p.Branch == branch {
+			return &p, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no preview found for project %q with branch %q", project, branch)
+}
+
+// parsePreviewName parses "project/preview-name" into (project, previewName).
+// Accepts any preview name format (mr-123, branch-develop, etc.)
+func parsePreviewName(arg string) (string, string, error) {
+	arg = strings.TrimSuffix(arg, "/")
+
+	parts := strings.SplitN(arg, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("expected format: PROJECT/PREVIEW-NAME (e.g. drupal-test/mr-5 or drupal-test/branch-develop)")
+	}
+
+	return parts[0], parts[1], nil
 }
 
 // parsePreviewArg parses "project/mr-ID" into (project, mrID).

@@ -35,28 +35,18 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
-- Cuando este todo estable hay que quitar el debug "set -x"
-- El cron para limpieza en lugar de ser configurado desde gitlab que sea gestionado por el preview manager
-- push-to-preview-server toma la db y files de la instalacion local y tiene harcodeados varios valores como el server o el project name. Idealmente me gustaria que esto pueda ser gestionado desde la ui. configurar un env desde el cual tomar la info usando drush sync o poder especificar una ruta en un server de backups del cual tomar los backup ya generados (ya seria la bomba listar los posibles backups y tener una opcion "tomar el mas reciente").
-- Como cada proyecto puede llegar a ser muy pesado, idealmente me gustaria tener algo como el preview manager en un servidor y los gitlab runners en servidores individuales conectados en una red interna cosa que el preview manager solo coordine los gitlab runner que a su vez tendrian el runner y los sitios ddev correspondientes solo a su proyecto.
-- soporte multisite.
-- Posibilidad de descargar la db
+- Habra que poder limitar el acceso en base al dominio (por empresa)
+- Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace carlo el desarrolladdor?
+- Cambiar el almacenamiento de configuraciones de /var/www/preview-manager/app-config.json a DB.
+- La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
+- necesito extraer los tokens de clousflare, gitlab runner y el certificado ssh.
+- Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
 - Acceso por consola via ui y posibilidad de configurar pu key para acceder a los ddev? (creo que no porque se puede acceder sin mas)
 - posibilidad de definir variables de entorno exclusivas para el preview. va a haber veces que se este trabajando en una modificacion especifica que necesite sobreescribir o crear nuevas env vars.
-- separar el gitlab runner del server de previews usando alguna arquitectura que me permita usar github action ademas.
-- Proteger las URL con autj.js
-- Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
-- Necesito una página para listar proyectos y la posibilidad de cambiarlo desde el header
-- añadir la posibilidad de sobreescribir la configuración de Ddev config.yml onda config.preview.yml
-- personalizar la URL  para cada proyecto o cada cliente?
-- Agregar la posibilidad de ejecutar un script de despliegue automático o personalizar un script de despliegue específico para la rama actual o para el proyecto en general. Permitir vars configuración vía ui a nivel proyecto
-- Si hay multisites necesito darles soporte
-- NEcesito una cli en go que permita descargar la db y lanzar drush uli, restart, rebuild, stop, start, download db, download files (posibilidad de hacer esto de forma masiva a nivel proyecto tambien)
-- Soporte para env vars a nivel proyecto y MR.
-- Necesito que las imagenes hibernen cuando el tiempo congihurado a nivel proyecto o preview se cumpla
-- necesito extraer los tokens de clousflare, gitlab runner y el certificado ssh.
-- Las cookies tiene harcodeado domain=".preview-mr.com" y vamos a tenr que hacerlo generico o configurable para que funcione bien.
-- La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
+- IDEA cuando un preview acabe de generarse necesitamos proporcionar la url del preview en el MR de gitlab.
+- 
+- Cuando este todo estable hay que quitar el debug "set -x"
+- soporte multisite.
 - Para guiar al usuario hay documentar como conectar gitlab a la app de previews:
    Ir a https://gitlab.com/oauth/applications
    Añadir aplicacion
@@ -84,13 +74,9 @@ Is the UI of preview manager ([server](server))
    Secret: gloas-4361304ca401bddf62cddac1cc37b3062b9c8e981fdada089765f44836d1acc6
    Callback: https://api.preview-mr.com/api/gitlab/connect/callback
    Scopes: api
-- Cambiar el almacenamiento de configuraciones de /var/www/preview-manager/app-config.json a DB.
-- Un caso de uso que me gustaria tener cubierto: si alguien tiene una plataofrma custom como la de DXP de dropsolid, si quieren dar opciones de link, uli y demas, con el cli me basta verdad?
-- Necesitaria poder cambiar configuraciones de ddev.algo como config.override.yml e incluso la podibilidad de modificar la configuracion por acada Mr (por si la v de php es nueva).
-- IDEA que no se si va en este proyecto. "Live backups". Que me permita viajar hacia atras a una DB y commit en particular (el que haya estado desplegado el dia que se hizo el backup). Es super util cuando un cliente necesita ver algo del pasado como contenidos borrados.
-- IDEA cuando un preview acaba necesitamos actualizar en gitlab la url
+
+- Un caso de uso que me gustaria tener cubierto: si alguien tiene una plataofrma custom como la de DXP de dropsolid, si quieren dar opciones de link, uli y demas, con el cli me basta verdad? (hablo a nivel de integracion)
 - idea: descviar los logs a dodne podas mos accederlos vusuaoment.e Tal we no herramientas titanicas pero si visualizadoews que permitab ver y  uu un comando cli que permitea estrimeo de los y un linx de deecarga.
-- Habra que poder limitar el acceso en base al dominio (por empresa)
 - necesito dar la posibilidad de definir la ssh key a un usuario para usarla a la hora de hacer ssh a un preview. quiero crear un nuevo comando en la cli que permita hacer "ssh" al contenedor web de una preview. si un usuario quiere suar ese comando y no tiene su ssh key podemos dalr un link a su cuentta y comentarle que primero tiene que poner su clave alli. Tengo entendido que no necesito ssh para acceder a los contenedores. 
 
 Otro asunto para resolver:
@@ -137,3 +123,5 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - . Soporte Drupal decoupled (container Node.js adicional) — para competir con Upsun en ese nicho  
 - el cache estilo varnish que tiene el servidor web que reemplaza a apache en los preview se puede activar y desactivar? hace falta algun modulo en drupal? (so voy para adelante con esto deberia poder activarlo y desactivarlo desde la ui mas que desde drupal)
 - - Si quiero qeu esto funcione. Los usuarios freelance deberiantener esto gratis o por lo menos la opcion de hostearselo ellos mismos o un tier que sea 0€
+- Voy a neceitar algun check que evite que el servidor colapse si el espacio en disco se acaba.
+- Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?

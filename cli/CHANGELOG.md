@@ -5,6 +5,13 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-02-26
+
+### Added
+
+- **Auto-detect preview in `pull`**: `preview pull db` and `preview pull files` now work without arguments — the project is detected from the git remote and the preview is matched by the current branch
+- **Flexible preview names**: `pull` now accepts any preview name format (e.g. `project/branch-develop`), not just `project/mr-ID`
+
 ## [1.4.0] - 2026-02-22
 
 ### Added
