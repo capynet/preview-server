@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 from config.settings import settings
 from app.routes.gitlab import _get_gitlab_token
 from app import config_store
-from app.database import get_preview
+from app.database import get_preview, get_preview_by_branch
 
 logger = logging.getLogger(__name__)
 
@@ -208,11 +208,7 @@ async def gitlab_webhook(
         raise HTTPException(status_code=403, detail="Invalid webhook token")
 
     payload = await request.json()
-
-    # Only handle merge request events
-    if payload.get("object_kind") != "merge_request":
-        logger.debug(f"Ignoring webhook event: {payload.get('object_kind')}")
-        return {"status": "ignored", "reason": "not a merge_request event"}
+    object_kind = payload.get("object_kind")
 
     # Verify project is enabled
     project_id = payload.get("project", {}).get("id")
@@ -221,7 +217,51 @@ async def gitlab_webhook(
         logger.warning(f"Webhook for non-enabled project {project_id}")
         return {"status": "ignored", "reason": "project not enabled"}
 
-    # Extract MR data
+    if object_kind == "push":
+        return await _handle_push_event(payload, background_tasks)
+    elif object_kind == "merge_request":
+        return await _handle_mr_event(payload, background_tasks)
+    else:
+        logger.debug(f"Ignoring webhook event: {object_kind}")
+        return {"status": "ignored", "reason": f"unhandled event: {object_kind}"}
+
+
+async def _handle_push_event(payload: dict, background_tasks: BackgroundTasks):
+    """Handle push events: auto-update branch previews."""
+    ref = payload.get("ref", "")  # e.g. "refs/heads/main"
+    if not ref.startswith("refs/heads/"):
+        return {"status": "ignored", "reason": "not a branch push"}
+
+    branch = ref.removeprefix("refs/heads/")
+    project_path = payload.get("project", {}).get("path_with_namespace", "unknown")
+    project_name = project_path.split("/")[-1]
+    commit_sha = payload.get("after", "")
+
+    # Skip delete pushes (all zeros)
+    if commit_sha == "0" * 40:
+        return {"status": "ignored", "reason": "branch deleted"}
+
+    # Check if there's a branch preview for this branch
+    existing = await get_preview_by_branch(project_name, branch)
+    if not existing:
+        logger.debug(f"No branch preview for {project_name}/{branch}, ignoring push")
+        return {"status": "ignored", "reason": "no branch preview exists"}
+
+    if not existing.get("auto_update", 1):
+        logger.info(f"Skipping push update for {project_name}/{existing['preview_name']}: auto_update disabled")
+        return {"status": "ignored", "reason": "auto_update disabled"}
+
+    preview_name = existing["preview_name"]
+    logger.info(f"Push event: updating branch preview {project_name}/{preview_name} (branch: {branch}, commit: {commit_sha[:8]})")
+    background_tasks.add_task(
+        _clone_and_deploy, project_path, project_name, preview_name,
+        branch, commit_sha, "webhook-push"
+    )
+    return {"status": "ok", "action": "push_update", "project": project_path, "preview_name": preview_name}
+
+
+async def _handle_mr_event(payload: dict, background_tasks: BackgroundTasks):
+    """Handle merge request events."""
     attrs = payload.get("object_attributes", {})
     project_path = payload.get("project", {}).get("path_with_namespace", "unknown")
     project_name = project_path.split("/")[-1]

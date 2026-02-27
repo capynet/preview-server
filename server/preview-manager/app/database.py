@@ -245,11 +245,28 @@ async def get_preview(project: str, preview_name: str) -> Optional[dict]:
         await db.close()
 
 
+async def get_preview_by_branch(project: str, branch: str) -> Optional[dict]:
+    """Find a branch preview by project and branch name."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM previews WHERE project = ? AND branch = ? AND preview_name LIKE 'branch-%'",
+            (project, branch),
+        )
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
 async def get_all_previews() -> list[dict]:
     db = await get_db()
     try:
         cur = await db.execute(
-            "SELECT * FROM previews ORDER BY last_deployed_at DESC NULLS LAST"
+            """SELECT p.*,
+                      (SELECT d.id FROM deployments d WHERE d.preview_id = p.id ORDER BY d.id DESC LIMIT 1) AS latest_deployment_id
+               FROM previews p
+               ORDER BY p.last_deployed_at DESC NULLS LAST"""
         )
         rows = await cur.fetchall()
         return [dict(r) for r in rows]

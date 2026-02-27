@@ -238,6 +238,24 @@ class PreviewListManager:
         for connection in disconnected:
             self.disconnect(connection)
 
+    async def force_broadcast(self):
+        """Immediately broadcast the current preview list to all clients."""
+        if not self.active_connections:
+            return
+        try:
+            from app.routes.previews import get_preview_list_base
+            result = await get_preview_list_base(include_docker_status=False)
+            current_state = json.dumps(result["previews"], sort_keys=True, default=str)
+            self.last_state = current_state
+            await self.broadcast({
+                "type": "update",
+                "previews": result["previews"],
+                "total": result["total"],
+                "checked_at": datetime.utcnow().isoformat(),
+            })
+        except Exception as e:
+            logger.error(f"Force broadcast error: {e}", exc_info=True)
+
     async def check_and_broadcast_loop(self):
         """Background task that checks for preview list changes and broadcasts updates (two-phase)"""
         from app.routes.previews import get_preview_list_base

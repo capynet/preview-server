@@ -177,8 +177,33 @@ func uploadExistingFile(slug, kind, filePath string) error {
 	return nil
 }
 
+func ensureDdevRunning() error {
+	// Check if ddev is already running by checking container status
+	cmd := exec.Command("ddev", "describe", "-j")
+	out, err := cmd.Output()
+	if err == nil && strings.Contains(string(out), `"running"`) {
+		return nil
+	}
+
+	// Start ddev, sending all output to stderr so it doesn't pollute pipes
+	fmt.Fprintln(os.Stderr, "Starting ddev...")
+	start := exec.Command("ddev", "start")
+	start.Stdout = os.Stderr
+	start.Stderr = os.Stderr
+	if err := start.Run(); err != nil {
+		return fmt.Errorf("failed to start ddev: %w", err)
+	}
+	return nil
+}
+
 func generateAndUploadDB(slug string) error {
 	fmt.Fprintln(os.Stderr, "Generating database dump via ddev drush sql-dump...")
+
+	// Ensure ddev is running before piping stdout, so startup messages
+	// don't get mixed into the SQL dump
+	if err := ensureDdevRunning(); err != nil {
+		return err
+	}
 
 	// Create a pipe: drush sql-dump | gzip -> upload
 	drush := exec.Command("ddev", "drush", "sql-dump")

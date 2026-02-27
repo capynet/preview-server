@@ -78,8 +78,9 @@ def handle_signal(signum, frame):
 
 app = FastAPI(
     title="Preview Manager",
-    description="Preview deployment system for Drupal environments",
-    version="2.0"
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
 )
 
 app.add_middleware(

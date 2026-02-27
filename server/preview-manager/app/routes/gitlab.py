@@ -382,35 +382,63 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
 
 @router.post("/projects/{project_id}/enable")
 async def enable_project_previews(project_id: int, user: UserWithRole = Depends(require_role(Role.admin))):
-    """Create a webhook in the GitLab project for merge request events."""
+    """Create or update a webhook in the GitLab project for MR and push events."""
     token = await _get_gitlab_token()
     webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/gitlab"
 
     try:
         async with httpx.AsyncClient() as client:
+            # Check if a webhook with our URL already exists
+            existing_hook_id = None
+            resp = await client.get(
+                f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                for hook in resp.json():
+                    if hook.get("url") == webhook_url:
+                        existing_hook_id = hook["id"]
+                        break
+
             hook_payload = {
                 "url": webhook_url,
                 "merge_requests_events": True,
-                "push_events": False,
+                "push_events": True,
                 "enable_ssl_verification": True,
             }
             if settings.gitlab_webhook_secret:
                 hook_payload["token"] = settings.gitlab_webhook_secret
-            resp = await client.post(
-                f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
-                headers={"Authorization": f"Bearer {token}"},
-                json=hook_payload,
-                timeout=30,
-            )
-            resp.raise_for_status()
-            hook = resp.json()
+
+            if existing_hook_id:
+                # Update existing webhook
+                resp = await client.put(
+                    f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks/{existing_hook_id}",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=hook_payload,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                hook = resp.json()
+                message = f"Webhook updated for project {project_id}"
+            else:
+                # Create new webhook
+                resp = await client.post(
+                    f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
+                    headers={"Authorization": f"Bearer {token}"},
+                    json=hook_payload,
+                    timeout=30,
+                )
+                resp.raise_for_status()
+                hook = resp.json()
+                message = f"Webhook created for project {project_id}"
 
         await config_store.save_enabled_project_id(project_id)
 
         return {
             "success": True,
             "hook_id": hook["id"],
-            "message": f"Webhook created for project {project_id}",
+            "message": message,
         }
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 401:

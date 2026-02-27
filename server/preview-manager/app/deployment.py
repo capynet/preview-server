@@ -110,13 +110,15 @@ class PreviewDeployer:
         start = datetime.now(timezone.utc)
 
         # Create deployment record in DB
-        from app.websockets import deployment_log_broadcaster
+        from app.websockets import deployment_log_broadcaster, preview_list_manager
         preview = await get_preview(self.project_name, self.preview_name)
         if preview:
             self._deployment_id = await create_deployment(
                 preview["id"], self.triggered_by
             )
             deployment_log_broadcaster.register(self._deployment_id)
+            # Notify preview list subscribers that a new deploy started
+            await preview_list_manager.force_broadcast()
 
         is_new = await self.is_new()
         deploy_type = "NEW" if is_new else "UPDATE"

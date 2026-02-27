@@ -305,8 +305,10 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
     previews = []
     for row in rows:
         last_deployment = None
+        latest_dep_id = row.get("latest_deployment_id")
         if row.get("last_deployment_status"):
             last_deployment = {
+                "id": latest_dep_id,
                 "status": row["last_deployment_status"],
                 "completed_at": row.get("last_deployment_completed_at"),
             }
@@ -314,6 +316,9 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
                 last_deployment["error"] = row["last_deployment_error"]
             if row.get("last_deployment_duration") is not None:
                 last_deployment["duration_seconds"] = row["last_deployment_duration"]
+        elif latest_dep_id:
+            # Deploy in progress (not yet completed)
+            last_deployment = {"id": latest_dep_id, "status": "running"}
 
         previews.append({
             "name": row["preview_name"],

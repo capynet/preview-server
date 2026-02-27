@@ -35,9 +35,6 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
-- Hay que implementar el acceso automatico por dominio oauth
-- Cambiar el almacenamiento de configuraciones de /var/www/preview-manager/app-config.json a DB.
-- La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
 - 
 - Extraer toda la configuracion sensible (claves token etc) a lugar seguro y configurable para poder actualizarlos en el futuro sin tanto ptoblema. 
 - Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace cargo el desarrolladdor?

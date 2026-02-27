@@ -188,21 +188,4 @@ async def health_check():
 @router.get("/")
 async def root():
     """Root endpoint"""
-    return {
-        "name": "Preview Manager",
-        "version": "2.0",
-        "endpoints": {
-            "get_preview": "GET /api/previews/{project}/{preview_name}",
-            "list_previews": "WS /ws/previews",
-            "delete_preview": "DELETE /api/previews/{project}/{preview_name}",
-            "rebuild": "POST /api/previews/{project}/{preview_name}/rebuild",
-            "stop": "POST /api/previews/{project}/{preview_name}/stop",
-            "start": "POST /api/previews/{project}/{preview_name}/start",
-            "restart": "POST /api/previews/{project}/{preview_name}/restart",
-            "drush_uli": "POST /api/previews/{project}/{preview_name}/drush-uli",
-            "create_branch": "POST /api/previews/{project}/branch",
-            "branches": "GET /api/gitlab/projects/{project_id}/branches",
-            "health": "GET /api/health"
-        },
-        "docs": "/docs"
-    }
+    return {"status": "ok"}
