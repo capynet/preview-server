@@ -65,6 +65,7 @@ class PreviewDeployer:
         commit_sha: str,
         triggered_by: str | None = None,
         mr_iid: int | None = None,
+        deployment_id: int | None = None,
     ):
         self.project_name = project_name
         self.preview_name = preview_name
@@ -78,7 +79,7 @@ class PreviewDeployer:
         self.preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
         self._preview_config: dict | None = None
         self._log_buffer: list[str] = []
-        self._deployment_id: int | None = None
+        self._deployment_id: int | None = deployment_id
         self._step_timings: list[tuple[str, float, str]] = []  # (step, duration, status)
 
     # ------------------------------------------------------------------
@@ -86,10 +87,12 @@ class PreviewDeployer:
     # ------------------------------------------------------------------
 
     async def is_new(self) -> bool:
+        """Check if this is a first deploy (no previous successful deployment)."""
         state = await PreviewStateManager.load_state(self.project_name, self.preview_name)
         if not state:
             return True
-        return state["status"] == "creating"
+        # If there's a previous successful deployment, this is an update
+        return not state.get("last_deployed_at")
 
     async def is_creating(self) -> bool:
         state = await PreviewStateManager.load_state(self.project_name, self.preview_name)
@@ -109,16 +112,16 @@ class PreviewDeployer:
         self._step_timings = []
         start = datetime.now(timezone.utc)
 
-        # Create deployment record in DB
+        # Create deployment record in DB (or reuse one created earlier)
         from app.websockets import deployment_log_broadcaster, preview_list_manager
-        preview = await get_preview(self.project_name, self.preview_name)
-        if preview:
-            self._deployment_id = await create_deployment(
-                preview["id"], self.triggered_by
-            )
-            deployment_log_broadcaster.register(self._deployment_id)
-            # Notify preview list subscribers that a new deploy started
-            await preview_list_manager.force_broadcast()
+        if not self._deployment_id:
+            preview = await get_preview(self.project_name, self.preview_name)
+            if preview:
+                self._deployment_id = await create_deployment(
+                    preview["id"], self.triggered_by
+                )
+                deployment_log_broadcaster.register(self._deployment_id)
+                await preview_list_manager.force_broadcast()
 
         is_new = await self.is_new()
         deploy_type = "NEW" if is_new else "UPDATE"

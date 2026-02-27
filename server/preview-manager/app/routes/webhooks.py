@@ -23,6 +23,7 @@ _deploy_locks: dict[str, asyncio.Lock] = {}
 # Files/dirs to preserve during rsync updates
 RSYNC_EXCLUDES = [
     "--exclude=docker-compose.yml",
+    "--exclude=.overlay",
 ]
 
 
@@ -75,11 +76,25 @@ async def _clone_preview(
             # Sync to destination
             dest.mkdir(parents=True, exist_ok=True)
 
-            # Fix ownership before rsync: Docker containers create files as
-            # root, which prevents rsync --delete from removing them.
-            # Use a lightweight Docker container to chown everything to the
-            # current user so rsync can overwrite/delete freely.
+            # For updates: stop containers first (they hold the mount),
+            # then unmount overlay so rsync --delete can remove dirs freely.
             if is_update:
+                from app.overlay import umount_overlay
+                logger.info(f"Stopping containers and unmounting overlay for {preview_name} before rsync")
+
+                stop_proc = await asyncio.create_subprocess_exec(
+                    "docker", "compose", "down", "--timeout", "5",
+                    cwd=str(dest),
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                await asyncio.wait_for(stop_proc.communicate(), timeout=120)
+
+                try:
+                    await umount_overlay(dest)
+                except Exception as e:
+                    logger.warning(f"Failed to umount overlay for {preview_name}: {e}")
+
                 import os
                 uid = os.getuid()
                 gid = os.getgid()
@@ -104,12 +119,19 @@ async def _clone_preview(
             )
             stdout_sync, stderr_sync = await proc_sync.communicate()
 
-            if proc_sync.returncode != 0:
+            if proc_sync.returncode not in (0, 23):
+                # 23 = partial transfer (e.g. busy mount points) — acceptable for updates
                 logger.error(
                     f"rsync failed for {project_path} {preview_name}: "
                     f"{stderr_sync.decode().strip()}"
                 )
                 return False
+            if proc_sync.returncode == 23:
+                logger.warning(
+                    f"rsync partial transfer for {project_path} {preview_name} "
+                    f"(some busy dirs skipped, expected for overlay mounts): "
+                    f"{stderr_sync.decode().strip()}"
+                )
 
             # Ensure the preview directory is world-readable so Apache
             # inside the container can serve files (rsync -a preserves the
@@ -154,16 +176,29 @@ async def _clone_and_deploy(
     async with lock:
         logger.info(f"Starting clone+deploy for {deploy_key} (branch={source_branch}, commit={commit_sha[:8]})")
 
+        # Create deployment record early so UI can show progress immediately
+        from app.database import get_preview, create_deployment
+        from app.websockets import deployment_log_broadcaster, preview_list_manager
+        preview = await get_preview(project_name, preview_name)
+        early_deployment_id = None
+        if preview:
+            early_deployment_id = await create_deployment(preview["id"], triggered_by)
+            deployment_log_broadcaster.register(early_deployment_id)
+            await preview_list_manager.force_broadcast()
+
         ok = await _clone_preview(project_path, project_name, preview_name, source_branch, commit_sha)
         if not ok:
             logger.error(f"Clone failed, skipping deploy for {deploy_key}")
-            # Update preview status so it doesn't stay stuck in pending/creating
             from app.state import PreviewStateManager
+            from app.database import finish_deployment
+            if early_deployment_id:
+                await finish_deployment(early_deployment_id, "failed", "Clone failed (git clone or rsync error, check logs)")
             await PreviewStateManager.save_state(
                 project_name, preview_name,
                 status="failed",
                 last_deployment_error="Clone failed (git clone or rsync error, check logs)",
             )
+            await preview_list_manager.force_broadcast()
             return
 
         deployer = PreviewDeployer(
@@ -173,6 +208,7 @@ async def _clone_and_deploy(
             commit_sha=commit_sha,
             triggered_by=triggered_by,
             mr_iid=mr_iid,
+            deployment_id=early_deployment_id,
         )
         success = await deployer.deploy()
         if not success:
