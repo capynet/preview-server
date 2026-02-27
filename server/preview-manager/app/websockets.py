@@ -293,12 +293,42 @@ class PreviewListManager:
 preview_list_manager = PreviewListManager()
 
 
+class SystemResourcesManager:
+    """Manages WebSocket connections for system resource metrics."""
+
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+        logger.info(f"System resources WS connection. Total: {len(self.active_connections)}")
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        logger.info(f"System resources WS disconnected. Total: {len(self.active_connections)}")
+
+    async def broadcast(self, message: dict):
+        disconnected = []
+        for conn in self.active_connections:
+            try:
+                await conn.send_json(message)
+            except Exception:
+                disconnected.append(conn)
+        for conn in disconnected:
+            self.disconnect(conn)
+
+
+system_resources_manager = SystemResourcesManager()
+
+
 async def system_resources_loop():
     """Background loop that broadcasts system resource metrics every 2 seconds."""
     logger.info("Starting system resources broadcast loop")
     while True:
         try:
-            if not preview_list_manager.active_connections:
+            if not system_resources_manager.active_connections:
                 await asyncio.sleep(2)
                 continue
 
@@ -346,7 +376,7 @@ async def system_resources_loop():
                 "stats": stats,
             }
 
-            await preview_list_manager.broadcast(message)
+            await system_resources_manager.broadcast(message)
             await asyncio.sleep(2)
 
         except asyncio.CancelledError:
@@ -489,6 +519,28 @@ async def websocket_previews(websocket: WebSocket):
         logger.info(f"Preview list WebSocket connection closed: {e}")
     finally:
         preview_list_manager.disconnect(websocket)
+
+
+@router.websocket("/ws/system-resources")
+async def websocket_system_resources(websocket: WebSocket):
+    """WebSocket endpoint for real-time system resource metrics."""
+    await _authenticate_ws(websocket, Role.viewer)
+    await system_resources_manager.connect(websocket)
+    try:
+        while True:
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
+            except Exception:
+                break
+    except Exception:
+        pass
+    finally:
+        system_resources_manager.disconnect(websocket)
 
 
 @router.websocket("/ws/deployments/{deployment_id}/logs")

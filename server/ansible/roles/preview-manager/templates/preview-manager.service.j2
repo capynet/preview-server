@@ -17,7 +17,8 @@ StandardError=journal
 SyslogIdentifier=preview-manager
 
 # Security
-NoNewPrivileges=true
+# NoNewPrivileges=false required for overlay mount (sudo mount -t overlay)
+NoNewPrivileges=false
 PrivateTmp=true
 
 # Resource limits
