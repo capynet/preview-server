@@ -30,6 +30,7 @@ from app.auth.models import (
 )
 from app.auth.email import send_invitation_email
 from app.auth.oauth import get_provider
+from app import config_store
 
 logger = logging.getLogger(__name__)
 
@@ -154,8 +155,9 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
             invitation = await db.get_invitation_by_email(info.email)
             count = await db.user_count()
 
-            # Only allow signup if first user or has invitation
-            if count > 0 and not invitation:
+            # Only allow signup if first user, has invitation, or matches allowed domain
+            domain_role = await config_store.match_allowed_domain(info.email) if count > 0 else None
+            if count > 0 and not invitation and not domain_role:
                 logger.warning(f"OAuth signup rejected for {info.email}: no invitation")
                 return RedirectResponse(f"{settings.frontend_url}/auth/login?error=not_invited")
 
@@ -167,12 +169,15 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
             if count == 0:
                 await db.set_role(user["id"], Role.admin.value)
                 logger.info(f"First user {info.email} assigned admin role")
-            else:
+            elif invitation:
                 await db.set_role(user["id"], invitation["role"])
                 await db.mark_invitation_accepted(invitation["id"])
                 if invitation.get("project_slug"):
                     await db.add_project_member(user["id"], invitation["project_slug"], invitation["invited_by"])
                 logger.info(f"User {info.email} accepted invitation with role {invitation['role']}")
+            else:
+                await db.set_role(user["id"], domain_role)
+                logger.info(f"User {info.email} auto-registered with role {domain_role} via allowed domain")
 
     if not user:
         raise HTTPException(status_code=500, detail="Failed to resolve user")

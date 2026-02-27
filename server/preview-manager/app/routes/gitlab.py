@@ -154,8 +154,9 @@ async def gitlab_auth_callback(code: str, state: str = ""):
             invitation = await db.get_invitation_by_email(email)
             count = await db.user_count()
 
-            # Only allow signup if first user or has invitation
-            if count > 0 and not invitation:
+            # Only allow signup if first user, has invitation, or matches allowed domain
+            domain_role = await config_store.match_allowed_domain(email) if count > 0 else None
+            if count > 0 and not invitation and not domain_role:
                 logger.warning(f"OAuth signup rejected for {email}: no invitation")
                 return RedirectResponse(f"{settings.frontend_url}/auth/login?error=not_invited")
 
@@ -166,10 +167,13 @@ async def gitlab_auth_callback(code: str, state: str = ""):
             if count == 0:
                 await db.set_role(user["id"], Role.admin.value)
                 logger.info(f"First user {email} assigned admin role")
-            else:
+            elif invitation:
                 await db.set_role(user["id"], invitation["role"])
                 await db.mark_invitation_accepted(invitation["id"])
                 logger.info(f"User {email} accepted invitation with role {invitation['role']}")
+            else:
+                await db.set_role(user["id"], domain_role)
+                logger.info(f"User {email} auto-registered with role {domain_role} via allowed domain")
 
     if not user:
         raise HTTPException(status_code=500, detail="Failed to resolve user")

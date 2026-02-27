@@ -150,6 +150,33 @@ async def save_project_env_vars(project: str, request: Request, user: UserWithRo
     return {"success": True, "env_vars": env_vars}
 
 
+# ---- Allowed email domains ----
+
+@router.get("/api/config/allowed-domains")
+async def get_allowed_domains(user: UserWithRole = Depends(require_role(Role.admin))):
+    """Get allowed email domains for auto-registration."""
+    domains = await config_store.load_allowed_domains()
+    return {"domains": domains}
+
+
+@router.put("/api/config/allowed-domains")
+async def save_allowed_domains(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
+    """Save allowed email domains for auto-registration."""
+    body = await request.json()
+    domains = body.get("domains", [])
+    if not isinstance(domains, list):
+        raise HTTPException(status_code=400, detail="domains must be a list")
+    for entry in domains:
+        if not isinstance(entry, dict) or "domain" not in entry or "role" not in entry:
+            raise HTTPException(status_code=400, detail="Each entry must have 'domain' and 'role'")
+        if entry["role"] not in ("viewer", "manager"):
+            raise HTTPException(status_code=400, detail="Role must be 'viewer' or 'manager'")
+        if not entry["domain"] or not isinstance(entry["domain"], str):
+            raise HTTPException(status_code=400, detail="Domain must be a non-empty string")
+    await config_store.save_allowed_domains(domains)
+    return {"success": True, "domains": domains}
+
+
 @router.get("/api/health")
 async def health_check():
     """Health check endpoint"""

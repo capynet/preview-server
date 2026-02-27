@@ -117,3 +117,34 @@ async def save_enabled_project_id(project_id: int):
 
 async def clear_enabled_project_ids():
     await delete_config("gitlab_enabled_project_ids")
+
+
+# ---- Allowed email domains helpers ----
+
+async def load_allowed_domains() -> list[dict]:
+    """Load allowed email domains from config. Returns list of {domain, role}."""
+    val = await get_config("allowed_domains")
+    if not val:
+        return []
+    try:
+        return json.loads(val)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
+async def save_allowed_domains(domains: list[dict]):
+    """Save allowed email domains to config."""
+    await set_config("allowed_domains", json.dumps(domains))
+
+
+async def match_allowed_domain(email: str) -> Optional[str]:
+    """Check if email domain matches an allowed domain. Returns role or None."""
+    parts = email.rsplit("@", 1)
+    if len(parts) != 2:
+        return None
+    email_domain = parts[1].lower()
+    domains = await load_allowed_domains()
+    for entry in domains:
+        if entry.get("domain", "").lower() == email_domain:
+            return entry.get("role")
+    return None
