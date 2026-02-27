@@ -35,14 +35,15 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
-- Habra que poder limitar el acceso en base al dominio (por empresa)
-- Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace carlo el desarrolladdor?
+- posibilidad de definir variables de entorno exclusivas para el preview. va a haber veces que se este trabajando en una modificacion especifica que necesite sobreescribir o crear nuevas env vars.
+- Hay que implementar el acceso automatico por dominio oauth
 - Cambiar el almacenamiento de configuraciones de /var/www/preview-manager/app-config.json a DB.
 - La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.
-- necesito extraer los tokens de clousflare, gitlab runner y el certificado ssh.
-- Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
+- 
+- Extraer toda la configuracion sensible (claves token etc) a lugar seguro y configurable para poder actualizarlos en el futuro sin tanto ptoblema. 
+- Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace cargo el desarrolladdor?
+- creo que esto ya existe: Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
 - Acceso por consola via ui y posibilidad de configurar pu key para acceder a los ddev? (creo que no porque se puede acceder sin mas)
-- posibilidad de definir variables de entorno exclusivas para el preview. va a haber veces que se este trabajando en una modificacion especifica que necesite sobreescribir o crear nuevas env vars.
 - IDEA cuando un preview acabe de generarse necesitamos proporcionar la url del preview en el MR de gitlab.
 - 
 - Cuando este todo estable hay que quitar el debug "set -x"
@@ -60,9 +61,7 @@ Is the UI of preview manager ([server](server))
    "Previews API"
    Callback: https://api.preview-mr.com/api/gitlab/connect/callback
    Scopes: api
-   
-   
-   
+
    "User login"
    Application ID: 3a4c9a8e1626f825734902c265eda47787b56f1724f09d65419e88991ab228d4
    Secret: gloas-85522b0b96f9a61bf169e10231a2422a6c59325dc324de1535cb0d4aecf8e0ee
@@ -81,17 +80,13 @@ Is the UI of preview manager ([server](server))
 
 Otro asunto para resolver:
    Problema
-   
    Actualmente solo hay una DB base por proyecto. Se necesita poder tener previews con DBs distintas (ej: main con DB live, develop con DB sanitizada).
    
    Solución
-   
    Nuevo flag --target en preview push db que importa la DB directamente en una preview existente, en vez de subirla como base file del proyecto.
    
    Flujo
-   
    preview push db --target=branch-main
-   
    
    1. CLI hace dump local (drush sql:dump, como ya hace)
       2. CLI sube el gzip a POST /api/previews/{project}/{preview_name}/db/import
