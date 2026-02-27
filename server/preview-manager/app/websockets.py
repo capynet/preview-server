@@ -555,6 +555,7 @@ async def websocket_deployment_logs(websocket: WebSocket, deployment_id: int):
         await websocket.close()
         return
 
+    logger.info(f"Deployment logs WS subscribed: deployment_id={deployment_id}")
     await deployment_log_broadcaster.subscribe(deployment_id, websocket)
 
     try:
@@ -563,8 +564,8 @@ async def websocket_deployment_logs(websocket: WebSocket, deployment_id: int):
                 await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
             except asyncio.TimeoutError:
                 continue
-    except Exception:
-        pass
+    except Exception as e:
+        logger.info(f"Deployment logs WS closed: deployment_id={deployment_id}, reason={e}")
     finally:
         deployment_log_broadcaster.unsubscribe(deployment_id, websocket)
         try:

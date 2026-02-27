@@ -630,6 +630,50 @@ async def get_preview_deployment(
     return deployment
 
 
+@router.get("/api/previews/{project}/{preview_name}/deployments/{deployment_id}/live-logs")
+async def get_deployment_live_logs(
+    project: str, preview_name: str, deployment_id: int,
+    offset: int = 0,
+    user: UserWithRole = Depends(require_role(Role.viewer)),
+):
+    """Poll deployment logs. Returns lines from offset onward.
+
+    For running deployments: reads from the in-memory broadcaster buffer.
+    For completed deployments: reads from the DB log_output field.
+    """
+    from app.websockets import deployment_log_broadcaster
+
+    preview = await get_preview(project, preview_name)
+    if not preview:
+        raise HTTPException(status_code=404, detail="Preview not found")
+
+    # Check broadcaster first (running deployment)
+    entry = deployment_log_broadcaster.get(deployment_id)
+    if entry:
+        lines = entry["logs"][offset:]
+        return {
+            "lines": lines,
+            "offset": offset + len(lines),
+            "complete": entry["complete"],
+            "status": "complete" if entry["complete"] else "running",
+        }
+
+    # Fallback to DB (completed deployment)
+    deployment = await db_get_deployment(deployment_id)
+    if not deployment or deployment["preview_id"] != preview["id"]:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+
+    log_output = deployment.get("log_output") or ""
+    # Return as single chunk if offset is 0, empty if already fetched
+    lines = [log_output] if offset == 0 and log_output else []
+    return {
+        "lines": lines,
+        "offset": offset + len(lines),
+        "complete": True,
+        "status": deployment.get("status", "unknown"),
+    }
+
+
 @router.get("/api/previews/{project}/{preview_name}/db/download")
 async def download_db(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
     """Stream a gzipped SQL dump of the preview database."""
