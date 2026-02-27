@@ -1,5 +1,6 @@
 """Configuration and health check endpoints"""
 
+import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -118,6 +119,35 @@ async def save_auto_erase_config(request: Request, user: UserWithRole = Depends(
     if "days" in body:
         await config_store.set_config("auto_erase_days", str(int(body["days"])))
     return {"success": True}
+
+
+# ---- Project environment variables ----
+
+@router.get("/api/config/env-vars/{project}")
+async def get_project_env_vars(project: str, user: UserWithRole = Depends(require_role(Role.viewer))):
+    """Get environment variables for a project."""
+    raw = await config_store.get_config(f"env_vars_{project}")
+    if not raw:
+        return {"env_vars": {}}
+    try:
+        return {"env_vars": json.loads(raw)}
+    except (json.JSONDecodeError, TypeError):
+        return {"env_vars": {}}
+
+
+@router.put("/api/config/env-vars/{project}")
+async def save_project_env_vars(project: str, request: Request, user: UserWithRole = Depends(require_role(Role.manager))):
+    """Save environment variables for a project."""
+    body = await request.json()
+    env_vars = body.get("env_vars", {})
+    if not isinstance(env_vars, dict):
+        raise HTTPException(status_code=400, detail="env_vars must be an object")
+    # Validate all keys and values are strings
+    for k, v in env_vars.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            raise HTTPException(status_code=400, detail="All keys and values must be strings")
+    await config_store.set_config(f"env_vars_{project}", json.dumps(env_vars))
+    return {"success": True, "env_vars": env_vars}
 
 
 @router.get("/api/health")

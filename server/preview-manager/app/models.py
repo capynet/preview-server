@@ -20,5 +20,6 @@ class PreviewInfo(BaseModel):
     last_deployment: Optional[dict] = None
     auto_update: bool = True
     pinned: bool = False
+    env_vars: dict[str, str] = {}
     mr_title: Optional[str] = None
     mr_url: Optional[str] = None

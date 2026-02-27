@@ -91,6 +91,7 @@ def generate_docker_compose(
     branch: str = "",
     commit_sha: str = "",
     mr_iid: int | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> dict:
     """Generate a docker-compose.yml dict for a preview environment."""
     prefix = _container_prefix(project_name, preview_name)
@@ -141,8 +142,12 @@ def generate_docker_compose(
         php_env["PREV_SOLR_HOST"] = f"{prefix}-solr"
         php_env["PREV_SOLR_CORE"] = "drupal"
 
-    # Merge user env vars
+    # Merge user env vars from preview.yml
     php_env.update(config["env"])
+
+    # Merge extra env vars (project + preview level from UI)
+    if extra_env:
+        php_env.update(extra_env)
 
     # Build compose structure
     # Use prefix as project name to avoid collisions between previews

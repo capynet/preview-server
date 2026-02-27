@@ -35,7 +35,6 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
-- posibilidad de definir variables de entorno exclusivas para el preview. va a haber veces que se este trabajando en una modificacion especifica que necesite sobreescribir o crear nuevas env vars.
 - Hay que implementar el acceso automatico por dominio oauth
 - Cambiar el almacenamiento de configuraciones de /var/www/preview-manager/app-config.json a DB.
 - La url https://api.preview-mr.com/ no deberia informar sobre lso endpoint. De hecho habria que revisar los endpoint y asegurarse que no queda nada expuesto que pueda ser peligroso.

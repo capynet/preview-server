@@ -213,6 +213,10 @@ async def init_db():
             logger.info("Migrating previews table: adding pinned column")
             await db.execute("ALTER TABLE previews ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
 
+        if "env_vars" not in col_names:
+            logger.info("Migrating previews table: adding env_vars column")
+            await db.execute("ALTER TABLE previews ADD COLUMN env_vars TEXT DEFAULT '{}'")
+
         # Migration: add project_slug column to invitations if missing
         cur3 = await db.execute("PRAGMA table_info(invitations)")
         inv_cols = {row[1] for row in await cur3.fetchall()}

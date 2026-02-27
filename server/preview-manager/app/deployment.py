@@ -15,6 +15,7 @@ from app.docker_compose import (
 from app.state import PreviewStateManager
 from app.database import get_preview, create_deployment, finish_deployment
 from app.overlay import get_base_files_dir, mount_overlay
+from app import config_store
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -234,10 +235,29 @@ class PreviewDeployer:
             config["docroot"] = detect_docroot(self.preview_path)
 
         self._preview_config = config
+
+        # Load extra env vars: project-level + preview-level (preview overrides project)
+        extra_env: dict[str, str] = {}
+        try:
+            import json
+            project_env_json = await config_store.get_config(f"env_vars_{self.project_name}")
+            if project_env_json:
+                extra_env.update(json.loads(project_env_json))
+
+            preview_row = await get_preview(self.project_name, self.preview_name)
+            if preview_row and preview_row.get("env_vars"):
+                preview_env = preview_row["env_vars"]
+                if isinstance(preview_env, str):
+                    preview_env = json.loads(preview_env)
+                extra_env.update(preview_env)
+        except Exception as e:
+            logger.warning(f"Error loading extra env vars: {e}")
+
         compose = generate_docker_compose(
             self.project_name, self.preview_name, config,
             branch=self.branch, commit_sha=self.commit_sha,
             mr_iid=self.mr_iid,
+            extra_env=extra_env if extra_env else None,
         )
         write_docker_compose(self.preview_path, compose)
 

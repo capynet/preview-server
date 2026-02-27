@@ -56,6 +56,14 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         if state.get("last_deployment_duration") is not None:
             last_deployment["duration_seconds"] = state["last_deployment_duration"]
 
+    # Parse env_vars from JSON string if needed
+    env_vars = state.get("env_vars", "{}")
+    if isinstance(env_vars, str):
+        try:
+            env_vars = json.loads(env_vars) if env_vars else {}
+        except (json.JSONDecodeError, TypeError):
+            env_vars = {}
+
     return PreviewInfo(
         preview_name=state["preview_name"],
         project=state["project"],
@@ -70,6 +78,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         last_deployment=last_deployment,
         auto_update=bool(state.get("auto_update", 1)),
         pinned=bool(state.get("pinned", 0)),
+        env_vars=env_vars,
     )
 
 
@@ -191,6 +200,7 @@ async def get_preview_endpoint(project: str, preview_name: str, user: UserWithRo
 class UpdatePreviewRequest(BaseModel):
     auto_update: Optional[bool] = None
     pinned: Optional[bool] = None
+    env_vars: Optional[dict[str, str]] = None
 
 
 @router.patch("/api/previews/{project}/{preview_name}")
@@ -210,12 +220,20 @@ async def update_preview_endpoint(
         updates["auto_update"] = int(body.auto_update)
     if body.pinned is not None:
         updates["pinned"] = int(body.pinned)
+    if body.env_vars is not None:
+        updates["env_vars"] = json.dumps(body.env_vars)
 
     if updates:
         await PreviewStateManager.save_state(project, preview_name, **updates)
 
     updated = await PreviewStateManager.load_state(project, preview_name)
-    return _build_preview_info(updated)
+    result = _build_preview_info(updated)
+
+    # If env_vars changed and preview is running, signal that rebuild is needed
+    if body.env_vars is not None:
+        return {**result.model_dump(), "needs_rebuild": True}
+
+    return result
 
 
 async def get_docker_status(preview_path: Path) -> str:
