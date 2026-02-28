@@ -35,7 +35,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
-- 
+- Drush aliases para los preview para poder lanzar comando "preview drush"
 - Extraer toda la configuracion sensible (claves token etc) a lugar seguro y configurable para poder actualizarlos en el futuro sin tanto ptoblema. 
 - Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace cargo el desarrolladdor?
 - creo que esto ya existe: Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.

@@ -127,7 +127,11 @@ func (c *Client) PostAction(project string, mrID int, action string) (*ActionRes
 }
 
 func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult, error) {
-	url := fmt.Sprintf("%s/api/previews/%s/mr-%d/drush", c.BaseURL, project, mrID)
+	return c.PostDrushByName(project, fmt.Sprintf("mr-%d", mrID), args)
+}
+
+func (c *Client) PostDrushByName(project string, previewName string, args string) (*ActionResult, error) {
+	url := fmt.Sprintf("%s/api/previews/%s/%s/drush", c.BaseURL, project, previewName)
 
 	payload := fmt.Sprintf(`{"args": %q}`, args)
 	resp, err := c.doRequest("POST", url, strings.NewReader(payload))
@@ -138,7 +142,7 @@ func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult
 
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode == 404 {
-		return nil, fmt.Errorf("preview %s/mr-%d not found", project, mrID)
+		return nil, fmt.Errorf("preview %s/%s not found", project, previewName)
 	}
 
 	var result ActionResult
