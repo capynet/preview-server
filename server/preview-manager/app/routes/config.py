@@ -20,7 +20,6 @@ async def get_app_config(user: UserWithRole = Depends(require_role(Role.admin)))
     """Get application configuration"""
     return {
         "gitlab_url": settings.gitlab_url,
-        "gitlab_group_name": settings.gitlab_group_name,
     }
 
 
@@ -31,13 +30,10 @@ async def save_app_config(request: Request, user: UserWithRole = Depends(require
         body = await request.json()
 
         gitlab_url = body.get("gitlab_url", settings.gitlab_url)
-        gitlab_group_name = body.get("gitlab_group_name", settings.gitlab_group_name)
 
         await config_store.set_config("gitlab_url", gitlab_url)
-        await config_store.set_config("gitlab_group_name", gitlab_group_name)
 
         settings.gitlab_url = gitlab_url
-        settings.gitlab_group_name = gitlab_group_name
 
         logger.info("App configuration saved to database")
 

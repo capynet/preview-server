@@ -9,6 +9,7 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from config.settings import settings
 from app.auth import database as db
@@ -380,8 +381,12 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
         raise HTTPException(status_code=502, detail=f"GitLab API error: {e}")
 
 
+class EnableProjectRequest(BaseModel):
+    path_with_namespace: str = ""
+
+
 @router.post("/projects/{project_id}/enable")
-async def enable_project_previews(project_id: int, user: UserWithRole = Depends(require_role(Role.admin))):
+async def enable_project_previews(project_id: int, body: EnableProjectRequest = EnableProjectRequest(), user: UserWithRole = Depends(require_role(Role.admin))):
     """Create or update a webhook in the GitLab project for MR and push events."""
     token = await _get_gitlab_token()
     webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/gitlab"
@@ -434,6 +439,8 @@ async def enable_project_previews(project_id: int, user: UserWithRole = Depends(
                 message = f"Webhook created for project {project_id}"
 
         await config_store.save_enabled_project_id(project_id)
+        if body.path_with_namespace:
+            await config_store.save_project_path(project_id, body.path_with_namespace)
 
         return {
             "success": True,
@@ -503,7 +510,9 @@ async def list_project_branches(project_id: int, user: UserWithRole = Depends(re
 async def list_project_branches_by_slug(project_slug: str, user: UserWithRole = Depends(require_role(Role.viewer))):
     """List branches for a GitLab project using the project slug (no numeric ID needed)."""
     token = await _get_gitlab_token()
-    project_path = f"{settings.gitlab_group_name}/{project_slug}"
+    project_path = await config_store.get_project_path_by_slug(project_slug)
+    if not project_path:
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found in enabled projects")
     encoded_path = project_path.replace("/", "%2F")
 
     try:
@@ -608,6 +617,7 @@ async def gitlab_disconnect(user: UserWithRole = Depends(require_role(Role.admin
             errors.append(f"Preview {p['project']}/{p['preview_name']}: {e}")
 
     await config_store.clear_enabled_project_ids()
+    await config_store.clear_project_paths()
     await config_store.remove_oauth_tokens()
 
     return {

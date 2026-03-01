@@ -124,7 +124,9 @@ async def create_branch_preview(
 
     # Get the latest commit from the branch via GitLab API
     token = await _get_gitlab_token()
-    project_path = f"{settings.gitlab_group_name}/{project}"
+    project_path = await config_store.get_project_path_by_slug(project)
+    if not project_path:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found in enabled projects")
     encoded_path = project_path.replace("/", "%2F")
 
     try:
@@ -578,7 +580,9 @@ async def rebuild_preview(
     if not state or not state.get("branch"):
         raise HTTPException(status_code=400, detail="Cannot determine branch for this preview")
 
-    project_path = f"{settings.gitlab_group_name}/{project}"
+    project_path = await config_store.get_project_path_by_slug(project)
+    if not project_path:
+        raise HTTPException(status_code=400, detail=f"Project '{project}' not found in enabled projects")
 
     from app.routes.webhooks import _clone_and_deploy
 

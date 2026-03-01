@@ -60,8 +60,6 @@ async def load_config_to_settings():
     cfg = await get_all_config()
     if "gitlab_url" in cfg:
         settings.gitlab_url = cfg["gitlab_url"]
-    if "gitlab_group_name" in cfg:
-        settings.gitlab_group_name = cfg["gitlab_group_name"]
     if "gitlab_oauth_access_token" in cfg:
         settings.gitlab_oauth_access_token = cfg["gitlab_oauth_access_token"] or None
     if "gitlab_oauth_refresh_token" in cfg:
@@ -117,6 +115,37 @@ async def save_enabled_project_id(project_id: int):
 
 async def clear_enabled_project_ids():
     await delete_config("gitlab_enabled_project_ids")
+
+
+# ---- Project path helpers (gitlab_id -> path_with_namespace) ----
+
+async def load_project_paths() -> dict[int, str]:
+    val = await get_config("gitlab_project_paths")
+    if not val:
+        return {}
+    try:
+        raw = json.loads(val)
+        return {int(k): v for k, v in raw.items()}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+async def save_project_path(project_id: int, path: str):
+    paths = await load_project_paths()
+    paths[project_id] = path
+    await set_config("gitlab_project_paths", json.dumps({str(k): v for k, v in paths.items()}))
+
+
+async def get_project_path_by_slug(slug: str) -> str | None:
+    paths = await load_project_paths()
+    for path in paths.values():
+        if path.rsplit("/", 1)[-1] == slug:
+            return path
+    return None
+
+
+async def clear_project_paths():
+    await delete_config("gitlab_project_paths")
 
 
 # ---- Allowed email domains helpers ----

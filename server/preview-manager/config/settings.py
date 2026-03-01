@@ -26,7 +26,6 @@ class Settings(BaseSettings):
 
     # GitLab Integration
     gitlab_url: str = "https://gitlab.com"
-    gitlab_group_name: str = "preview-tests"
     gitlab_webhook_secret: str = ""
 
     # Auth
