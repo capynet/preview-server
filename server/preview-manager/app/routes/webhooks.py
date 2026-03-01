@@ -47,7 +47,9 @@ async def _clone_preview(
 
     try:
         token = await _get_gitlab_token()
-        clone_url = f"https://oauth2:{token}@gitlab.com/{project_path}.git"
+        from urllib.parse import urlparse
+        parsed = urlparse(settings.gitlab_url)
+        clone_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
 
         dest.parent.mkdir(parents=True, exist_ok=True)
 
