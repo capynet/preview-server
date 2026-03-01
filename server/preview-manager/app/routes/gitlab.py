@@ -192,8 +192,8 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithRole = Depend
                 headers={"PRIVATE-TOKEN": body.token},
                 timeout=15,
             )
-        if resp.status_code == 401:
-            raise HTTPException(status_code=401, detail="Invalid token: authentication failed")
+        if resp.status_code in (401, 403):
+            raise HTTPException(status_code=401, detail="Invalid token: authentication failed (check scopes and expiration)")
         if resp.status_code != 200:
             raise HTTPException(status_code=502, detail=f"GitLab API error: HTTP {resp.status_code}")
         gl_user = resp.json()
