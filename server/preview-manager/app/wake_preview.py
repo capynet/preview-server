@@ -10,7 +10,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from config.settings import settings
 from app.auth.dependencies import SESSION_COOKIE
 from app.auth import database as auth_db
-from app.database import get_preview_by_domain, update_last_accessed
+from app.database import get_preview_by_domain, update_last_accessed, has_running_deployment
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +75,64 @@ WAKE_PAGE_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+BUILDING_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="refresh" content="10">
+    <title>Building preview...</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #0a0a0a;
+            color: #e5e5e5;
+        }}
+        .container {{
+            text-align: center;
+            max-width: 480px;
+            padding: 2rem;
+        }}
+        .spinner {{
+            width: 48px;
+            height: 48px;
+            border: 4px solid #333;
+            border-top-color: #f59e0b;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 1.5rem;
+        }}
+        @keyframes spin {{
+            to {{ transform: rotate(360deg); }}
+        }}
+        h1 {{
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }}
+        p {{
+            color: #888;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h1>Building preview</h1>
+        <p>{preview_name} &mdash; {project}</p>
+        <p>A deployment is in progress. This page will refresh automatically when it&rsquo;s ready.</p>
+    </div>
+</body>
+</html>"""
+
+
 class WakePreviewMiddleware(BaseHTTPMiddleware):
     """Intercept requests to *.mr.preview-mr.com that hit the API fallback.
 
@@ -110,6 +168,21 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         project = preview["project"]
         preview_name = preview["preview_name"]
         preview_path = Path(preview["path"]) if preview.get("path") else None
+
+        # Check if a deployment is running — show building page instead of waking
+        if preview.get("id"):
+            try:
+                building = await has_running_deployment(preview["id"])
+                if building:
+                    return HTMLResponse(
+                        content=BUILDING_PAGE_HTML.format(
+                            preview_name=preview_name,
+                            project=project,
+                        ),
+                        status_code=200,
+                    )
+            except Exception:
+                pass
 
         if not preview_path or not preview_path.exists():
             return HTMLResponse(

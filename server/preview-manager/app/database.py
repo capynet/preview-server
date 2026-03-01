@@ -381,6 +381,19 @@ async def update_last_accessed(project: str, preview_name: str):
         await db.close()
 
 
+async def has_running_deployment(preview_id: int) -> bool:
+    """Check if a preview has any deployment with status 'running'."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT 1 FROM deployments WHERE preview_id = ? AND status = 'running' LIMIT 1",
+            (preview_id,),
+        )
+        return await cur.fetchone() is not None
+    finally:
+        await db.close()
+
+
 # ---- Deployment CRUD ----
 
 async def create_deployment(preview_id: int, triggered_by: str | None = None) -> int:
