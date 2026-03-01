@@ -132,6 +132,31 @@ async def clear_project_paths():
     await delete_config("gitlab_project_paths")
 
 
+# ---- Project details helpers (full info for enabled projects) ----
+
+async def load_project_details() -> dict[int, dict]:
+    """Load full project details for all enabled projects."""
+    val = await get_config("gitlab_project_details")
+    if not val:
+        return {}
+    try:
+        raw = json.loads(val)
+        return {int(k): v for k, v in raw.items()}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+
+
+async def save_project_details(project_id: int, details: dict):
+    """Save project details (name, path_with_namespace, web_url, default_branch)."""
+    all_details = await load_project_details()
+    all_details[project_id] = details
+    await set_config("gitlab_project_details", json.dumps({str(k): v for k, v in all_details.items()}))
+
+
+async def clear_project_details():
+    await delete_config("gitlab_project_details")
+
+
 # ---- Allowed email domains helpers ----
 
 async def load_allowed_domains() -> list[dict]:

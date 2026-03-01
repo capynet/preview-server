@@ -15,6 +15,7 @@ from app.auth.dependencies import SESSION_COOKIE, get_current_user, require_role
 from app.auth.models import Role, UserWithRole
 from app.auth.oauth import GitLabOAuth
 from app import config_store
+from app.config_store import load_project_details
 
 logger = logging.getLogger(__name__)
 
@@ -154,11 +155,15 @@ async def gitlab_status(user: UserWithRole = Depends(require_role(Role.viewer)))
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{settings.gitlab_url}/api/v4/user",
+                f"{settings.gitlab_url}/api/v4/personal_access_tokens/self",
                 headers={"PRIVATE-TOKEN": settings.gitlab_oauth_access_token},
                 timeout=10,
             )
         if resp.status_code == 200:
+            pat_info = resp.json()
+            if not pat_info.get("active", False):
+                await config_store.remove_gitlab_token()
+                return {"connected": False, "gitlab_url": settings.gitlab_url}
             return {"connected": True, "gitlab_url": settings.gitlab_url}
         elif resp.status_code == 401:
             logger.info("GitLab token invalid (HTTP 401), removing stored token")
@@ -185,18 +190,27 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithRole = Depend
         raise HTTPException(status_code=400, detail="GitLab URL is required")
 
     # Validate the token against GitLab API
+    headers = {"PRIVATE-TOKEN": body.token}
+    token_name = ""
     try:
         async with httpx.AsyncClient() as client:
+            # Try /personal_access_tokens/self first (works even if /user is restricted)
             resp = await client.get(
-                f"{gitlab_url}/api/v4/user",
-                headers={"PRIVATE-TOKEN": body.token},
+                f"{gitlab_url}/api/v4/personal_access_tokens/self",
+                headers=headers,
                 timeout=15,
             )
-        if resp.status_code in (401, 403):
-            raise HTTPException(status_code=401, detail="Invalid token: authentication failed (check scopes and expiration)")
-        if resp.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"GitLab API error: HTTP {resp.status_code}")
-        gl_user = resp.json()
+            if resp.status_code == 200:
+                pat_info = resp.json()
+                token_name = pat_info.get("name", "")
+                if not pat_info.get("active", False):
+                    raise HTTPException(status_code=401, detail="Token is revoked or inactive")
+                if "api" not in pat_info.get("scopes", []):
+                    raise HTTPException(status_code=401, detail="Token needs 'api' scope")
+            elif resp.status_code in (401, 403):
+                raise HTTPException(status_code=401, detail="Invalid token: authentication failed")
+            else:
+                raise HTTPException(status_code=502, detail=f"GitLab API error: HTTP {resp.status_code}")
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"Could not reach GitLab at {gitlab_url}: {e}")
 
@@ -208,7 +222,7 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithRole = Depend
     return {
         "success": True,
         "gitlab_url": gitlab_url,
-        "user_name": gl_user.get("name", gl_user.get("username", "")),
+        "token_name": token_name,
     }
 
 
@@ -220,7 +234,7 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
     try:
         all_projects = []
         page = 1
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=60) as client:
             while True:
                 resp = await client.get(
                     f"{settings.gitlab_url}/api/v4/projects",
@@ -233,7 +247,6 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
                         "order_by": "name",
                         "sort": "asc",
                     },
-                    timeout=30,
                 )
                 resp.raise_for_status()
                 projects_page = resp.json()
@@ -302,6 +315,80 @@ async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer)
 
 class EnableProjectRequest(BaseModel):
     path_with_namespace: str = ""
+    name: str = ""
+    web_url: str = ""
+    default_branch: str = "main"
+
+
+@router.get("/projects/enabled")
+async def gitlab_enabled_projects(user: UserWithRole = Depends(require_role(Role.viewer))):
+    """List only enabled projects using local data (no GitLab API calls for listing)."""
+    token = settings.gitlab_oauth_access_token
+    if not token:
+        raise HTTPException(status_code=400, detail="GitLab not connected")
+
+    enabled_ids = await config_store.load_enabled_project_ids()
+    if not enabled_ids:
+        return {"projects": []}
+
+    project_details = await load_project_details()
+    project_paths = await config_store.load_project_paths()
+    webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/gitlab"
+
+    # Check webhooks in parallel for enabled projects
+    webhook_status: dict[int, bool] = {}
+
+    async def check_webhook(project_id: int):
+        try:
+            async with httpx.AsyncClient() as c:
+                resp = await c.get(
+                    f"{settings.gitlab_url}/api/v4/projects/{project_id}/hooks",
+                    headers={"PRIVATE-TOKEN": token},
+                    timeout=10,
+                )
+                if resp.status_code == 200:
+                    hooks = resp.json()
+                    webhook_status[project_id] = any(
+                        h.get("url") == webhook_url and h.get("merge_requests_events")
+                        for h in hooks
+                    )
+                else:
+                    webhook_status[project_id] = False
+        except Exception:
+            webhook_status[project_id] = True
+
+    await asyncio.gather(*[check_webhook(pid) for pid in enabled_ids])
+
+    projects = []
+    for pid in sorted(enabled_ids):
+        details = project_details.get(pid)
+        path = project_paths.get(pid, "")
+        if details:
+            projects.append({
+                "id": pid,
+                "name": details.get("name", path.rsplit("/", 1)[-1] if path else f"Project {pid}"),
+                "path_with_namespace": details.get("path_with_namespace", path),
+                "description": "",
+                "web_url": details.get("web_url", ""),
+                "default_branch": details.get("default_branch", "main"),
+                "previews_enabled": True,
+                "webhook_active": webhook_status.get(pid, True),
+            })
+        else:
+            # Legacy fallback: project was enabled before details were stored
+            name = path.rsplit("/", 1)[-1] if path else f"Project {pid}"
+            projects.append({
+                "id": pid,
+                "name": name,
+                "path_with_namespace": path,
+                "description": "",
+                "web_url": f"{settings.gitlab_url}/{path}" if path else "",
+                "default_branch": "main",
+                "previews_enabled": True,
+                "webhook_active": webhook_status.get(pid, True),
+            })
+
+    return {"projects": projects}
 
 
 @router.post("/projects/{project_id}/enable")
@@ -360,6 +447,14 @@ async def enable_project_previews(project_id: int, body: EnableProjectRequest = 
         await config_store.save_enabled_project_id(project_id)
         if body.path_with_namespace:
             await config_store.save_project_path(project_id, body.path_with_namespace)
+        # Save full project details for the enabled projects endpoint
+        if body.name or body.path_with_namespace:
+            await config_store.save_project_details(project_id, {
+                "name": body.name or body.path_with_namespace.rsplit("/", 1)[-1],
+                "path_with_namespace": body.path_with_namespace,
+                "web_url": body.web_url,
+                "default_branch": body.default_branch or "main",
+            })
 
         return {
             "success": True,
@@ -537,6 +632,7 @@ async def gitlab_disconnect(user: UserWithRole = Depends(require_role(Role.admin
 
     await config_store.clear_enabled_project_ids()
     await config_store.clear_project_paths()
+    await config_store.clear_project_details()
     await config_store.remove_gitlab_token()
 
     return {
