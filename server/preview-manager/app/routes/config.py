@@ -147,7 +147,19 @@ async def save_project_env_vars(project: str, request: Request, user: UserWithRo
         if not isinstance(k, str) or not isinstance(v, str):
             raise HTTPException(status_code=400, detail="All keys and values must be strings")
     await config_store.set_config(f"env_vars_{project}", json.dumps(env_vars))
-    return {"success": True, "env_vars": env_vars}
+
+    # Check if there are active previews that would need a rebuild
+    from app.database import get_all_previews
+    all_previews = await get_all_previews()
+    active_previews = [p["preview_name"] for p in all_previews
+                       if p["project"] == project and p["status"] in ("active", "failed")]
+
+    return {
+        "success": True,
+        "env_vars": env_vars,
+        "needs_rebuild": len(active_previews) > 0,
+        "affected_previews": active_previews,
+    }
 
 
 # ---- Allowed email domains ----
