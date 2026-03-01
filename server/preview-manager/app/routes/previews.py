@@ -133,7 +133,7 @@ async def create_branch_preview(
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 f"{settings.gitlab_url}/api/v4/projects/{encoded_path}/repository/branches/{body.branch}",
-                headers={"Authorization": f"Bearer {token}"},
+                headers={"PRIVATE-TOKEN": token},
                 timeout=15,
             )
             if resp.status_code == 404:

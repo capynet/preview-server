@@ -37,13 +37,8 @@ class Settings(BaseSettings):
     google_oauth_client_secret: str = ""
     oauth_redirect_uri_base: str = "https://api.preview-mr.com/api/auth/callback"
 
-    # GitLab Connect OAuth (separate app with `api` scope for previews)
-    gitlab_connect_client_id: str = ""
-    gitlab_connect_client_secret: str = ""
-    # Stored after OAuth connect flow
+    # GitLab API access (Personal Access Token)
     gitlab_oauth_access_token: Optional[str] = None
-    gitlab_oauth_refresh_token: Optional[str] = None
-    gitlab_oauth_token_expires_at: Optional[int] = None
     session_max_age_seconds: int = 604800  # 7 days
     frontend_url: str = "https://app.preview-mr.com"
 

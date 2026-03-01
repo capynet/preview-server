@@ -62,37 +62,21 @@ async def load_config_to_settings():
         settings.gitlab_url = cfg["gitlab_url"]
     if "gitlab_oauth_access_token" in cfg:
         settings.gitlab_oauth_access_token = cfg["gitlab_oauth_access_token"] or None
-    if "gitlab_oauth_refresh_token" in cfg:
-        settings.gitlab_oauth_refresh_token = cfg["gitlab_oauth_refresh_token"] or None
-    if "gitlab_oauth_token_expires_at" in cfg:
-        val = cfg["gitlab_oauth_token_expires_at"]
-        settings.gitlab_oauth_token_expires_at = int(val) if val else None
 
     logger.info("App config loaded from database")
 
 
-# ---- OAuth token helpers ----
+# ---- GitLab token helpers ----
 
-async def save_oauth_tokens(access_token: str, refresh_token: Optional[str], expires_at: Optional[int]):
-    settings.gitlab_oauth_access_token = access_token
-    settings.gitlab_oauth_refresh_token = refresh_token
-    settings.gitlab_oauth_token_expires_at = expires_at
-
-    await set_config("gitlab_oauth_access_token", access_token)
-    await set_config("gitlab_oauth_refresh_token", refresh_token or "")
-    await set_config("gitlab_oauth_token_expires_at", str(expires_at) if expires_at else "")
-
-    logger.info("GitLab OAuth tokens saved to database")
+async def save_gitlab_token(token: str):
+    settings.gitlab_oauth_access_token = token
+    await set_config("gitlab_oauth_access_token", token)
+    logger.info("GitLab token saved to database")
 
 
-async def remove_oauth_tokens():
+async def remove_gitlab_token():
     settings.gitlab_oauth_access_token = None
-    settings.gitlab_oauth_refresh_token = None
-    settings.gitlab_oauth_token_expires_at = None
-
     await delete_config("gitlab_oauth_access_token")
-    await delete_config("gitlab_oauth_refresh_token")
-    await delete_config("gitlab_oauth_token_expires_at")
 
 
 # ---- Enabled project IDs helpers ----
