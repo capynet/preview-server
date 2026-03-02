@@ -215,14 +215,8 @@ class PreviewDeployer:
 
     def _verify_base_files(self):
         db = Path(f"/backups/{self.project_name}-base.sql.gz")
-        files_dir = get_base_files_dir(self.project_name)
-        missing = []
         if not db.exists():
-            missing.append(str(db))
-        if not files_dir.exists():
-            missing.append(f"base files directory ({files_dir})")
-        if missing:
-            raise RuntimeError(f"Base files missing: {', '.join(missing)}")
+            raise RuntimeError(f"Base files missing: {db}")
 
     async def _generate_compose(self):
         """Parse preview.yml and generate docker-compose.yml."""
@@ -330,7 +324,19 @@ class PreviewDeployer:
         await self._run_shell(cmd, step="import-db", timeout=TIMEOUT_IMPORT_DB)
 
     async def _import_files(self):
-        """Mount overlay filesystem for shared base files."""
+        """Mount overlay filesystem for shared base files (skipped if none uploaded)."""
+        base_dir = get_base_files_dir(self.project_name)
+        if not base_dir.exists():
+            # Create an empty files directory so Drupal can still function
+            public_path = self._preview_config["env"].get(
+                "PREV_FILE_PUBLIC_PATH", "sites/default/files"
+            ) if self._preview_config else "sites/default/files"
+            docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
+            files_dir = self.preview_path / docroot / public_path
+            files_dir.mkdir(parents=True, exist_ok=True)
+            await self._log(f"{DIM}No base files found — created empty {docroot}/{public_path}{RESET}")
+            return
+
         step = "import-files"
         await self._log_step_start(step)
         t0 = time.monotonic()
@@ -346,7 +352,6 @@ class PreviewDeployer:
         )
 
         elapsed = time.monotonic() - t0
-        base_dir = get_base_files_dir(self.project_name)
         await self._log_step_end(
             step, elapsed, True,
             f"{DIM}Mounted overlay (base: {base_dir}){RESET}",

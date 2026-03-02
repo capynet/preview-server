@@ -237,22 +237,25 @@ const chunkSize = 50 * 1024 * 1024 // 50MB
 // UploadBaseFileChunked copies the reader to a temp file, then uploads using
 // single request (if <50MB) or chunked upload (if >=50MB) with a progress bar.
 func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, filename string) error {
-	// 1. Copy stream to temp file to know size and allow chunking
-	tmpFile, err := os.CreateTemp("", "preview-upload-*")
+	// 1. Copy stream to temp file to know size and allow chunking.
+	// Use current directory instead of os.TempDir() because /tmp may be
+	// a tmpfs (RAM-backed) on Linux, which can't handle large files.
+	// The current directory is always on a real filesystem.
+	tmpFile, err := os.CreateTemp(".", ".preview-upload-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	fmt.Fprintf(os.Stderr, "Buffering to temp file...\r")
-	written, err := io.Copy(tmpFile, reader)
+	bw := &bufferProgressWriter{}
+	written, err := io.Copy(tmpFile, io.TeeReader(reader, bw))
 	if err != nil {
 		tmpFile.Close()
 		return fmt.Errorf("failed to buffer upload: %w", err)
 	}
 	tmpFile.Close()
-	fmt.Fprintf(os.Stderr, "Buffered %s to temp file.  \n", formatBytes(written))
+	fmt.Fprintf(os.Stderr, "\rBuffered %s to temp file.              \n", formatBytes(written))
 
 	// 2. Decide: single or chunked
 	if written < chunkSize {
@@ -442,6 +445,24 @@ func (c *Client) uploadOneChunk(slug, kind, uploadID string, index int, data []b
 }
 
 // progressWriter counts bytes written and prints a progress bar to stderr.
+// bufferProgressWriter shows bytes written during buffering (unknown total).
+type bufferProgressWriter struct {
+	written int64
+	lastLog int64
+}
+
+func (bw *bufferProgressWriter) Write(p []byte) (int, error) {
+	bw.written += int64(len(p))
+	// Update every 1MB to avoid excessive output
+	if bw.written-bw.lastLog >= 1024*1024 {
+		bw.lastLog = bw.written
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		frame := frames[(bw.written/(1024*1024))%int64(len(frames))]
+		fmt.Fprintf(os.Stderr, "\r%s Packaging... %s", frame, formatBytes(bw.written))
+	}
+	return len(p), nil
+}
+
 type progressWriter struct {
 	total   int64
 	written int64

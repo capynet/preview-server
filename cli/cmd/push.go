@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -196,6 +197,48 @@ func ensureDdevRunning() error {
 	return nil
 }
 
+// getDrupalFilesDir uses ddev drush status to detect the public files directory.
+// Returns a path relative to the project root (e.g. "docroot/sites/default/files").
+func getDrupalFilesDir() (string, error) {
+	out, err := exec.Command("ddev", "drush", "status", "--format=json").Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run ddev drush status: %w", err)
+	}
+
+	var status map[string]interface{}
+	if err := json.Unmarshal(out, &status); err != nil {
+		return "", fmt.Errorf("failed to parse drush status: %w", err)
+	}
+
+	// "root" is the Drupal root inside the container, e.g. "/var/www/html/docroot"
+	// "files" is relative to root, e.g. "sites/default/files"
+	root, _ := status["root"].(string)
+	files, _ := status["files"].(string)
+
+	if files == "" {
+		return "", fmt.Errorf("drush status did not return a files path")
+	}
+
+	// Extract the docroot relative to /var/www/html (DDEV mount point)
+	// e.g. "/var/www/html/docroot" -> "docroot", "/var/www/html" -> ""
+	docroot := ""
+	ddevMount := "/var/www/html"
+	if root != "" && strings.HasPrefix(root, ddevMount) {
+		docroot = strings.TrimPrefix(root, ddevMount)
+		docroot = strings.TrimPrefix(docroot, "/")
+	}
+
+	// Build the local path: docroot + files
+	var filesDir string
+	if docroot != "" {
+		filesDir = filepath.Join(docroot, files)
+	} else {
+		filesDir = files
+	}
+
+	return filesDir, nil
+}
+
 func generateAndUploadDB(slug string) error {
 	fmt.Fprintln(os.Stderr, "Generating database dump via ddev drush sql-dump...")
 
@@ -205,7 +248,7 @@ func generateAndUploadDB(slug string) error {
 		return err
 	}
 
-	// Create a pipe: drush sql-dump | gzip -> upload
+	// Create a pipe: drush sql-dump | pigz/gzip -> upload
 	drush := exec.Command("ddev", "drush", "sql-dump")
 	drush.Stderr = os.Stderr
 
@@ -214,31 +257,39 @@ func generateAndUploadDB(slug string) error {
 		return fmt.Errorf("failed to create pipe: %w", err)
 	}
 
-	gzipCmd := exec.Command("gzip", "-c")
-	gzipCmd.Stdin = drushOut
-	gzipCmd.Stderr = os.Stderr
+	// Use pigz if available, else gzip. Level 6 for good balance.
+	var compressor *exec.Cmd
+	compressorName := "gzip"
+	if hasPigz() {
+		compressorName = "pigz"
+		compressor = exec.Command("pigz", "-6", "-c")
+	} else {
+		compressor = exec.Command("gzip", "-6", "-c")
+	}
+	compressor.Stdin = drushOut
+	compressor.Stderr = os.Stderr
 
-	gzipOut, err := gzipCmd.StdoutPipe()
+	compressedOut, err := compressor.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create gzip pipe: %w", err)
+		return fmt.Errorf("failed to create %s pipe: %w", compressorName, err)
 	}
 
 	if err := drush.Start(); err != nil {
 		return fmt.Errorf("failed to start drush: %w", err)
 	}
-	if err := gzipCmd.Start(); err != nil {
-		return fmt.Errorf("failed to start gzip: %w", err)
+	if err := compressor.Start(); err != nil {
+		return fmt.Errorf("failed to start %s: %w", compressorName, err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Uploading database dump...")
+	fmt.Fprintf(os.Stderr, "Uploading database dump (compressor: %s -6)...\n", compressorName)
 
 	filename := fmt.Sprintf("%s-base.sql.gz", slug)
-	if err := apiClient.UploadBaseFileChunked(slug, "db", gzipOut, filename); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, "db", compressedOut, filename); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
-	if err := gzipCmd.Wait(); err != nil {
-		return fmt.Errorf("gzip failed: %w", err)
+	if err := compressor.Wait(); err != nil {
+		return fmt.Errorf("%s failed: %w", compressorName, err)
 	}
 	if err := drush.Wait(); err != nil {
 		return fmt.Errorf("drush sql-dump failed: %w", err)
@@ -261,28 +312,87 @@ func parseSizeMB(s string) (int64, error) {
 	return int64(mb * 1024 * 1024), nil
 }
 
+// hasPigz checks if pigz is available in PATH.
+func hasPigz() bool {
+	_, err := exec.LookPath("pigz")
+	return err == nil
+}
+
+// dirSize returns the total size in bytes of a directory using du -sb.
+func dirSize(path string) (int64, error) {
+	out, err := exec.Command("du", "-sb", path).Output()
+	if err != nil {
+		return 0, err
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("unexpected du output")
+	}
+	return strconv.ParseInt(fields[0], 10, 64)
+}
+
+// formatBytesShort formats bytes as a human-readable string (e.g. "1.2 GB").
+func formatBytesShort(b int64) string {
+	switch {
+	case b >= 1024*1024*1024:
+		return fmt.Sprintf("%.1f GB", float64(b)/(1024*1024*1024))
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024))
+	case b >= 1024:
+		return fmt.Sprintf("%.1f KB", float64(b)/1024)
+	default:
+		return fmt.Sprintf("%d B", b)
+	}
+}
+
 func generateAndUploadFiles(slug string) error {
-	// Determine the files directory
-	filesDir := "web/sites/default/files"
+	// Ensure ddev is running so we can query drush
+	if err := ensureDdevRunning(); err != nil {
+		return err
+	}
+
+	// Detect files directory via drush status
+	filesDir, err := getDrupalFilesDir()
+	if err != nil {
+		return fmt.Errorf("could not detect files directory: %w", err)
+	}
 	if _, err := os.Stat(filesDir); os.IsNotExist(err) {
 		return fmt.Errorf("files directory %q not found — are you in the project root?", filesDir)
 	}
 
-	// Build tar args
-	tarArgs := []string{"czf", "-", "--exclude=./css", "--exclude=./js", "--exclude=./php"}
+	// Calculate source size
+	sourceSize, _ := dirSize(filesDir)
+	if sourceSize > 0 {
+		fmt.Fprintf(os.Stderr, "Source: %s (%s)\n", filesDir, formatBytesShort(sourceSize))
+	}
 
-	// If --strip-heavy-files is set, use find to generate file list excluding large files
-	var findCmd *exec.Cmd
+	// Determine compressor: pigz if available, else gzip
+	// Level 6 = good compression/speed balance (gzip default is 6, but being explicit)
+	usePigz := hasPigz()
+	compressorName := "gzip"
+	var compressorCmd *exec.Cmd
+	if usePigz {
+		compressorName = "pigz"
+		compressorCmd = exec.Command("pigz", "-6", "-c")
+	} else {
+		compressorCmd = exec.Command("gzip", "-6", "-c")
+		// Show hint for large packages (>500MB uncompressed)
+		if sourceSize > 500*1024*1024 {
+			fmt.Fprintln(os.Stderr, "HINT: Install pigz to speed up compression using multiple cores: sudo apt install pigz")
+		}
+	}
+
+	// Build tar args (no compression — piped to external compressor)
+	tarArgs := []string{"cf", "-", "--exclude=./css", "--exclude=./js", "--exclude=./php"}
+
+	// If --strip-heavy-files is set, exclude large files
 	if stripHeavyFiles != "" {
 		maxBytes, err := parseSizeMB(stripHeavyFiles)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(os.Stderr, "Packaging %s (excluding files > %s)...\n", filesDir, stripHeavyFiles)
 
-		// Use find to list files under the size limit, then pass to tar via --files-from
-		// find outputs paths relative to filesDir
-		findCmd = exec.Command("find", ".", "-type", "f", "-size", fmt.Sprintf("+%dc", maxBytes),
+		findCmd := exec.Command("find", ".", "-type", "f", "-size", fmt.Sprintf("+%dc", maxBytes),
 			"-not", "-path", "./css/*", "-not", "-path", "./js/*", "-not", "-path", "./php/*")
 		findCmd.Dir = filesDir
 		findOut, err := findCmd.Output()
@@ -290,7 +400,6 @@ func generateAndUploadFiles(slug string) error {
 			return fmt.Errorf("find failed: %w", err)
 		}
 
-		// Build --exclude for each heavy file
 		heavyFiles := strings.Split(strings.TrimSpace(string(findOut)), "\n")
 		skipped := 0
 		for _, f := range heavyFiles {
@@ -304,30 +413,45 @@ func generateAndUploadFiles(slug string) error {
 		if skipped > 0 {
 			fmt.Fprintf(os.Stderr, "Skipping %d files larger than %s\n", skipped, stripHeavyFiles)
 		}
-	} else {
-		fmt.Fprintf(os.Stderr, "Packaging %s...\n", filesDir)
 	}
+
+	fmt.Fprintf(os.Stderr, "Packaging %s (compressor: %s -6)...\n", filesDir, compressorName)
 
 	tarArgs = append(tarArgs, "-C", filesDir, ".")
 	tarCmd := exec.Command("tar", tarArgs...)
 	tarCmd.Stderr = os.Stderr
 
+	// Pipe: tar -> compressor -> upload
 	tarOut, err := tarCmd.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create pipe: %w", err)
+		return fmt.Errorf("failed to create tar pipe: %w", err)
+	}
+
+	compressorCmd.Stdin = tarOut
+	compressorCmd.Stderr = os.Stderr
+
+	compressedOut, err := compressorCmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("failed to create compressor pipe: %w", err)
 	}
 
 	if err := tarCmd.Start(); err != nil {
 		return fmt.Errorf("failed to start tar: %w", err)
 	}
+	if err := compressorCmd.Start(); err != nil {
+		return fmt.Errorf("failed to start %s: %w", compressorName, err)
+	}
 
 	fmt.Fprintln(os.Stderr, "Uploading files archive...")
 
 	filename := fmt.Sprintf("%s-files.tar.gz", slug)
-	if err := apiClient.UploadBaseFileChunked(slug, "files", tarOut, filename); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, "files", compressedOut, filename); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
+	if err := compressorCmd.Wait(); err != nil {
+		return fmt.Errorf("%s failed: %w", compressorName, err)
+	}
 	if err := tarCmd.Wait(); err != nil {
 		return fmt.Errorf("tar failed: %w", err)
 	}

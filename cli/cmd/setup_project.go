@@ -54,9 +54,16 @@ func runSetupProject() error {
 	settingsPath := filepath.Join(settingsDir, "settings.php")
 	result, err := appendPreviewInclude(settingsPath)
 	if err != nil {
-		return fmt.Errorf("failed to update settings.php: %w", err)
-	}
-	if result == "created" || result == "appended" {
+		fmt.Printf("  ⚠ %s — could not write (permission denied)\n", settingsPath)
+		fmt.Println()
+		fmt.Println("  Add the following snippet manually to the end of your settings.php:")
+		fmt.Println()
+		for _, line := range strings.Split(strings.TrimSpace(previewIncludeSnippet), "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+		fmt.Println()
+		skipped = append(skipped, settingsPath)
+	} else if result == "created" || result == "appended" {
 		created = append(created, settingsPath)
 		fmt.Printf("  ✓ %s — preview include added\n", settingsPath)
 	} else {
@@ -279,7 +286,7 @@ if (empty($settings['hash_salt'])) {
 func previewYmlContent() string {
 	return `# Preview Manager configuration
 # This file defines how preview environments are created for this project.
-# See: https://preview-mr.com/docs/configuration
+# See: https://app.preview-mr.com/docs/configuration
 
 # PHP version for the preview container.
 # Supported: 8.1, 8.2, 8.3

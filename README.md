@@ -116,3 +116,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - - Si quiero qeu esto funcione. Los usuarios freelance deberiantener esto gratis o por lo menos la opcion de hostearselo ellos mismos o un tier que sea 0€
 - Voy a neceitar algun check que evite que el servidor colapse si el espacio en disco se acaba.
 - Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?
+- preview autocompletion deberia hacerse automaticamente en lugar de necesitar lanzar el comando a mano. 

@@ -5,6 +5,37 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.2] - 2026-03-02
+
+### Improved
+
+- **`setup project` graceful fallback**: When `settings.php` is not writable (e.g. owned by root), the CLI now shows the snippet to add manually instead of failing with an error
+
+## [1.7.1] - 2026-03-01
+
+### Fixed
+
+- **Temp file on disk**: Upload buffer now uses the current directory instead of `/tmp`, which on many Linux distros is a RAM-backed tmpfs. Prevents "no space left on device" errors on large uploads.
+
+## [1.7.0] - 2026-03-01
+
+### Added
+
+- **pigz support**: `push db` and `push files` automatically use `pigz` (parallel gzip) when available, significantly faster on multi-core systems. Falls back to `gzip` if not installed.
+- **Source size display**: `push files` now shows the uncompressed source size before packaging (e.g. "Source: docroot/sites/default/files (1.2 GB)")
+- **pigz install hint**: When packaging >500 MB without pigz, shows a hint to install it
+
+### Improved
+
+- **Compression level**: Explicit `-6` compression level (good balance between speed and ratio)
+- **Buffering progress**: `push db` and `push files` now show a live spinner with bytes processed during packaging, instead of appearing frozen
+
+## [1.6.1] - 2026-03-01
+
+### Fixed
+
+- **`push files` auto-detect docroot**: Instead of hardcoding `web/sites/default/files`, the CLI now uses `ddev drush status` to detect the actual files directory. Projects using `docroot/` or other non-standard webroot paths now work correctly.
+
 ## [1.6.0] - 2026-02-28
 
 ### Added

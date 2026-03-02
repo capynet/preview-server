@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import secrets
+import time
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,53 @@ from app.config_store import load_project_details
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/gitlab", tags=["gitlab"])
+
+# ---- In-memory cache for GitLab project listing ----
+_projects_cache: list[dict] | None = None
+_projects_cache_ts: float = 0.0
+_PROJECTS_CACHE_TTL = 3600  # 1 hour
+
+
+def _invalidate_projects_cache():
+    global _projects_cache, _projects_cache_ts
+    _projects_cache = None
+    _projects_cache_ts = 0.0
+
+
+async def _fetch_all_gitlab_projects(token: str) -> list[dict]:
+    """Fetch all GitLab projects, using in-memory cache (1h TTL)."""
+    global _projects_cache, _projects_cache_ts
+    if _projects_cache is not None and (time.monotonic() - _projects_cache_ts) < _PROJECTS_CACHE_TTL:
+        return _projects_cache
+
+    all_projects = []
+    page = 1
+    async with httpx.AsyncClient(timeout=60) as client:
+        while True:
+            resp = await client.get(
+                f"{settings.gitlab_url}/api/v4/projects",
+                headers={"PRIVATE-TOKEN": token},
+                params={
+                    "membership": "true",
+                    "archived": "false",
+                    "per_page": 100,
+                    "page": page,
+                    "order_by": "name",
+                    "sort": "asc",
+                },
+            )
+            resp.raise_for_status()
+            projects_page = resp.json()
+            if not projects_page:
+                break
+            all_projects.extend(projects_page)
+            if len(projects_page) < 100:
+                break
+            page += 1
+
+    _projects_cache = all_projects
+    _projects_cache_ts = time.monotonic()
+    return all_projects
 
 
 async def _get_gitlab_token() -> str:
@@ -228,35 +276,11 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithRole = Depend
 
 @router.get("/projects")
 async def gitlab_projects(user: UserWithRole = Depends(require_role(Role.viewer))):
-    """List GitLab projects accessible to the connected account."""
+    """List GitLab projects accessible to the connected account (cached 1h)."""
     token = await _get_gitlab_token()
 
     try:
-        all_projects = []
-        page = 1
-        async with httpx.AsyncClient(timeout=60) as client:
-            while True:
-                resp = await client.get(
-                    f"{settings.gitlab_url}/api/v4/projects",
-                    headers={"PRIVATE-TOKEN": token},
-                    params={
-                        "membership": "true",
-                        "archived": "false",
-                        "per_page": 100,
-                        "page": page,
-                        "order_by": "name",
-                        "sort": "asc",
-                    },
-                )
-                resp.raise_for_status()
-                projects_page = resp.json()
-                if not projects_page:
-                    break
-                all_projects.extend(projects_page)
-                # Check if there are more pages
-                if len(projects_page) < 100:
-                    break
-                page += 1
+        all_projects = await _fetch_all_gitlab_projects(token)
 
         # Load enabled project IDs from config
         enabled_ids = await config_store.load_enabled_project_ids()
@@ -634,6 +658,7 @@ async def gitlab_disconnect(user: UserWithRole = Depends(require_role(Role.admin
     await config_store.clear_project_paths()
     await config_store.clear_project_details()
     await config_store.remove_gitlab_token()
+    _invalidate_projects_cache()
 
     return {
         "success": True,

@@ -187,6 +187,15 @@
     mode: '0644'
   tags: [cli]
 
+- name: Copy CLI VERSION file
+  copy:
+    src: "{{ playbook_dir }}/../../../cli/VERSION"
+    dest: /var/www/preview-manager/cli/VERSION
+    owner: preview-manager
+    group: preview-manager
+    mode: '0644'
+  tags: [cli]
+
 - name: Enable and start preview-manager service
   systemd:
     name: preview-manager
