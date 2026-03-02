@@ -117,3 +117,5 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Voy a neceitar algun check que evite que el servidor colapse si el espacio en disco se acaba.
 - Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?
 - preview autocompletion deberia hacerse automaticamente en lugar de necesitar lanzar el comando a mano. 
+- Es posible permirir el uso de apache o OpenLiteSpeed indistintamente?
+- Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
