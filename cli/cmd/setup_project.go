@@ -292,12 +292,14 @@ func previewYmlContent() string {
 # Supported: 8.1, 8.2, 8.3
 php_version: "8.3"
 
-# MySQL version. Use "8.0", "8.4", etc.
-# For MariaDB, use the top-level "mariadb" key instead.
-mysql_version: "8.0"
-
-# Uncomment to use MariaDB instead of MySQL:
-# mariadb: "10.6"
+# Database engine and version (same format as DDEV).
+# Examples:
+#   mysql:5.7   (≈ mariadb:10.3)
+#   mysql:8.0   (≈ mariadb:10.5)
+#   mysql:8.4   (≈ mariadb:11.4)
+#   mariadb:10.6
+#   mariadb:11.4
+database: mysql:8.0
 
 # Document root relative to the project root.
 # Auto-detected if not set (looks for "web/" or "docroot/").

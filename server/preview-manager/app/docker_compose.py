@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 # Defaults when preview.yml is missing or incomplete
 DEFAULTS = {
     "php_version": "8.3",
-    "mysql_version": "8.0",
+    "database": "mysql:8.0",
     "docroot": "web",
     "services": {
         "redis": False,
@@ -47,10 +47,16 @@ def parse_preview_yml(preview_path: Path) -> dict:
 
     if "php_version" in raw:
         config["php_version"] = str(raw["php_version"])
-    if "mysql_version" in raw:
-        config["mysql_version"] = str(raw["mysql_version"])
-    if "mariadb" in raw:
-        config["mysql_version"] = f"mariadb:{raw['mariadb']}"
+
+    # Unified "database" property: "mysql:8.0", "mariadb:10.6", etc.
+    # Also supports legacy "mysql_version" and "mariadb" for backwards compat.
+    if "database" in raw:
+        config["database"] = str(raw["database"])
+    elif "mariadb" in raw:
+        config["database"] = f"mariadb:{raw['mariadb']}"
+    elif "mysql_version" in raw:
+        db_val = str(raw["mysql_version"])
+        config["database"] = f"mysql:{db_val}" if ":" not in db_val else db_val
     if "docroot" in raw:
         config["docroot"] = str(raw["docroot"])
 
@@ -74,7 +80,7 @@ def parse_preview_yml(preview_path: Path) -> dict:
         # deploy: false — explicitly disable all deploy scripts
         config["deploy"] = {"new": None, "update": None}
 
-    logger.info(f"Parsed preview.yml: php={config['php_version']}, mysql={config['mysql_version']}, "
+    logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, solr={config['services']['solr']}, "
                 f"deploy.new={config['deploy']['new']}, deploy.update={config['deploy']['update']}")
     return config
@@ -99,12 +105,12 @@ def generate_docker_compose(
     url = f"https://{domain}"
     network_name = settings.docker_network
 
-    # Determine DB image
-    mysql_version = config["mysql_version"]
-    if mysql_version.startswith("mariadb:"):
-        db_image = mysql_version  # e.g. mariadb:10.6
+    # Determine DB image from unified "database" property (e.g. "mysql:8.0", "mariadb:10.6")
+    db_spec = config["database"]
+    if ":" in db_spec:
+        db_image = db_spec
     else:
-        db_image = f"mysql:{mysql_version}"
+        db_image = f"mysql:{db_spec}"
 
     # Detect host UID/GID so the container can remap www-data to match,
     # avoiding file ownership conflicts between host and container.
