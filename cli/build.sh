@@ -19,6 +19,7 @@ else
 fi
 
 echo "$VERSION" > VERSION
+mkdir -p dist
 echo "$VERSION" > dist/VERSION
 
 echo "Building CLI v${VERSION} (was ${CURRENT})"
