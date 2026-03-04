@@ -119,3 +119,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - preview autocompletion deberia hacerse automaticamente en lugar de necesitar lanzar el comando a mano. 
 - Es posible permirir el uso de apache o OpenLiteSpeed indistintamente?
 - Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
+- Deberia automatizar el deploy de ansible o la generacion de version del cli cuando pusheo a master?
