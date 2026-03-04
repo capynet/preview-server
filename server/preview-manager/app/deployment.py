@@ -563,7 +563,7 @@ if (getenv('PREV_IS_PREVIEW')) {
     async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120) -> str:
         """Run a command inside the PHP container."""
         php_container = f"{self.container_prefix}-php"
-        full_cmd = ("docker", "exec", php_container, *cmd)
+        full_cmd = ("docker", "exec", "-e", "COLUMNS=200", php_container, *cmd)
         return await self._run(*full_cmd, step=step, timeout=timeout)
 
     async def _log_raw(self, text: str):
