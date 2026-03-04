@@ -186,29 +186,28 @@ func previewYmlContent() string {
 # See: https://app.preview-mr.com/docs/configuration
 
 # PHP version for the preview container.
-# Supported: 8.1, 8.2, 8.3
+# Supported: 8.1, 8.2, 8.3, 8.4
 php_version: "8.3"
 
-# Database engine and version (same format as DDEV).
+# Database engine and version.
 # Examples:
 #   mysql:5.7   (≈ mariadb:10.3)
-#   mysql:8.0   (≈ mariadb:10.5)
+#   mysql:8.0   (≈ mariadb:10.6)
 #   mysql:8.4   (≈ mariadb:11.4)
 #   mariadb:10.6
 #   mariadb:11.4
-#   percona:8.0
-#   percona:8.4
 database: mysql:8.0
 
 # Document root relative to the project root.
 # Auto-detected if not set (looks for "web/" or "docroot/").
 docroot: web
 
-# Optional services. Disabled by default.
+# Optional services. Set a version to enable, false to disable.
 # When enabled, the corresponding PREV_*_HOST env vars are set automatically.
-services:
-  redis: false
-  solr: false
+# Note: redis and valkey are mutually exclusive (valkey takes priority).
+redis: false          # e.g. "7", "6"
+valkey: false         # e.g. "8", "7" (Redis-compatible fork)
+solr: false           # e.g. "9", "8"
 
 # Custom environment variables injected into the PHP container.
 # These are available in settings.preview.php via getenv().

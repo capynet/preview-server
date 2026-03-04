@@ -18,6 +18,7 @@ DEFAULTS = {
     "services": {
         "redis": False,
         "solr": False,
+        "valkey": False,
     },
     "env": {},
     "deploy": {
@@ -48,22 +49,31 @@ def parse_preview_yml(preview_path: Path) -> dict:
     if "php_version" in raw:
         config["php_version"] = str(raw["php_version"])
 
-    # Unified "database" property: "mysql:8.0", "mariadb:10.6", etc.
-    # Also supports legacy "mysql_version" and "mariadb" for backwards compat.
+    # Database property: "mysql:8.0", "mariadb:10.6", etc.
+    SUPPORTED_DB_ENGINES = ("mysql", "mariadb")
     if "database" in raw:
-        config["database"] = str(raw["database"])
-    elif "mariadb" in raw:
-        config["database"] = f"mariadb:{raw['mariadb']}"
-    elif "mysql_version" in raw:
-        db_val = str(raw["mysql_version"])
-        config["database"] = f"mysql:{db_val}" if ":" not in db_val else db_val
+        db_val = str(raw["database"])
+        engine = db_val.split(":")[0] if ":" in db_val else db_val
+        if engine not in SUPPORTED_DB_ENGINES:
+            raise ValueError(f"Unsupported database engine '{engine}'. Supported: {', '.join(SUPPORTED_DB_ENGINES)}")
+        config["database"] = db_val
     if "docroot" in raw:
         config["docroot"] = str(raw["docroot"])
 
-    if "services" in raw and isinstance(raw["services"], dict):
-        for svc in ("redis", "solr"):
-            if svc in raw["services"]:
-                config["services"][svc] = bool(raw["services"][svc])
+    # Services: redis, solr, valkey — defined at root level.
+    # false = disabled, version string = enabled with that version.
+    for svc in ("redis", "solr", "valkey"):
+        if svc in raw:
+            val = raw[svc]
+            if val is False or val is None:
+                config["services"][svc] = False
+            elif val is True:
+                config["services"][svc] = True
+            elif isinstance(val, (str, int, float)):
+                config["services"][svc] = str(val)
+    # Valkey and redis are mutually exclusive — valkey wins
+    if config["services"]["valkey"]:
+        config["services"]["redis"] = False
 
     if "env" in raw and isinstance(raw["env"], dict):
         config["env"].update({str(k): str(v) for k, v in raw["env"].items()})
@@ -81,7 +91,8 @@ def parse_preview_yml(preview_path: Path) -> dict:
         config["deploy"] = {"new": None, "update": None}
 
     logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
-                f"redis={config['services']['redis']}, solr={config['services']['solr']}, "
+                f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
+                f"solr={config['services']['solr']}, "
                 f"deploy.new={config['deploy']['new']}, deploy.update={config['deploy']['update']}")
     return config
 
@@ -141,7 +152,7 @@ def generate_docker_compose(
         "DOCUMENT_ROOT": f"/var/www/html/{config['docroot']}",
     }
 
-    if config["services"]["redis"]:
+    if config["services"]["redis"] or config["services"]["valkey"]:
         php_env["PREV_REDIS_HOST"] = f"{prefix}-redis"
 
     if config["services"]["solr"]:
@@ -199,17 +210,31 @@ def generate_docker_compose(
     }
 
     # Optional services
-    if config["services"]["redis"]:
+    redis_cfg = config["services"]["redis"]
+    valkey_cfg = config["services"]["valkey"]
+    solr_cfg = config["services"]["solr"]
+
+    if valkey_cfg:
+        valkey_ver = valkey_cfg if isinstance(valkey_cfg, str) else "8"
         compose["services"]["redis"] = {
-            "image": "redis:7-alpine",
+            "image": f"valkey/valkey:{valkey_ver}-alpine",
+            "container_name": f"{prefix}-redis",
+            "networks": [network_name],
+            "restart": "unless-stopped",
+        }
+    elif redis_cfg:
+        redis_ver = redis_cfg if isinstance(redis_cfg, str) else "7"
+        compose["services"]["redis"] = {
+            "image": f"redis:{redis_ver}-alpine",
             "container_name": f"{prefix}-redis",
             "networks": [network_name],
             "restart": "unless-stopped",
         }
 
-    if config["services"]["solr"]:
+    if solr_cfg:
+        solr_ver = solr_cfg if isinstance(solr_cfg, str) else "9"
         compose["services"]["solr"] = {
-            "image": "solr:9",
+            "image": f"solr:{solr_ver}",
             "container_name": f"{prefix}-solr",
             "volumes": ["solr_data:/var/solr"],
             "command": "solr-precreate drupal",

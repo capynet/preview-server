@@ -128,9 +128,7 @@ class PreviewDeployer:
 
         # Deploy header
         await self._log_raw(
-            f"\n{BOLD}{CYAN}╔══════════════════════════════════════════════════╗{RESET}\n"
-            f"{BOLD}{CYAN}║  {deploy_type} Deploy: {self.project_name}/{self.preview_name}{RESET}\n"
-            f"{BOLD}{CYAN}╚══════════════════════════════════════════════════╝{RESET}\n"
+            f"\n{BOLD}{CYAN}{deploy_type} Deploy: {self.project_name}/{self.preview_name}{RESET}\n"
             f"{DIM}Branch: {self.branch}  Commit: {self.commit_sha[:8]}{RESET}\n"
         )
 
@@ -400,15 +398,25 @@ if (getenv('PREV_IS_PREVIEW')) {
         )
 
     async def _import_db(self):
-        """Import database dump via gunzip piped to mysql."""
+        """Import database dump via gunzip piped to mysql, with progress."""
         db_path = f"/backups/{self.project_name}-base.sql.gz"
         db_container = f"{self.container_prefix}-db"
 
-        # Use shell pipe: gunzip | docker exec mysql
-        cmd = (
-            f"gunzip -c {db_path} | docker exec -i {db_container} "
-            f"mysql -u drupal -pdrupal drupal"
-        )
+        # Get file size for pv progress
+        db_file = Path(db_path)
+        if db_file.exists():
+            size_mb = db_file.stat().st_size / (1024 * 1024)
+            # pv -f forces output to stderr, shows progress bar with size
+            cmd = (
+                f"pv -f -s {db_file.stat().st_size} {db_path} "
+                f"| gunzip | docker exec -i {db_container} "
+                f"mysql -u drupal -pdrupal drupal"
+            )
+        else:
+            cmd = (
+                f"gunzip -c {db_path} | docker exec -i {db_container} "
+                f"mysql -u drupal -pdrupal drupal"
+            )
         await self._run_shell(cmd, step="import-db", timeout=TIMEOUT_IMPORT_DB)
 
     async def _import_files(self):
@@ -601,39 +609,85 @@ if (getenv('PREV_IS_PREVIEW')) {
         lines.append(f"{BOLD}{'─' * 50}{RESET}\n")
         await self._log_raw("".join(lines))
 
+    async def _stream_progress(self, proc, step: str, t0: float, timeout: int):
+        """Read stdout/stderr, streaming output lines in real-time."""
+        stdout_chunks = []
+        stderr_chunks = []
+        pending_lines = []
+
+        async def _read(stream, buf):
+            async for line in stream:
+                buf.append(line)
+                pending_lines.append(line)
+
+        read_task = asyncio.gather(
+            _read(proc.stdout, stdout_chunks),
+            _read(proc.stderr, stderr_chunks),
+        )
+
+        try:
+            while not read_task.done():
+                try:
+                    await asyncio.wait_for(asyncio.shield(read_task), timeout=0.1)
+                except asyncio.TimeoutError:
+                    if time.monotonic() - t0 > timeout:
+                        proc.kill()
+                        await read_task
+                        raise asyncio.TimeoutError()
+                # Flush any lines accumulated in the last second
+                if pending_lines:
+                    text = b"".join(pending_lines).decode(errors="replace")
+                    pending_lines.clear()
+                    await self._log_raw(text)
+        except asyncio.TimeoutError:
+            raise
+
+        # Flush remaining lines
+        if pending_lines:
+            text = b"".join(pending_lines).decode(errors="replace")
+            pending_lines.clear()
+            await self._log_raw(text)
+
+        await read_task
+        await proc.wait()
+        return (
+            b"".join(stdout_chunks).decode(errors="replace"),
+            b"".join(stderr_chunks).decode(errors="replace"),
+        )
+
     async def _run(self, *cmd: str, step: str, timeout: int = 120, env: dict | None = None) -> str:
         """Run a command inside the preview directory. Raises on failure."""
         logger.info(f"[{step}] Running: {' '.join(cmd)}")
         await self._log_step_start(step)
         t0 = time.monotonic()
 
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=str(self.preview_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(self.preview_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=env,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - t0
-            proc.kill()
             await self._log_step_end(step, elapsed, False, f"{RED}TIMEOUT after {timeout}s{RESET}")
             raise RuntimeError(f"[{step}] Timed out after {timeout}s")
 
         elapsed = time.monotonic() - t0
-        output = stdout.decode() + stderr.decode()
+        output = stdout + stderr
 
         if proc.returncode != 0:
-            await self._log_step_end(step, elapsed, False, output)
+            # Output already streamed; pass empty to avoid duplication
+            await self._log_step_end(step, elapsed, False, "")
             raise RuntimeError(
                 f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
             )
 
-        await self._log_step_end(step, elapsed, True, output)
+        # Output already streamed; pass empty to avoid duplication
+        await self._log_step_end(step, elapsed, True, "")
         logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
         return output
 
@@ -643,32 +697,30 @@ if (getenv('PREV_IS_PREVIEW')) {
         await self._log_step_start(step)
         t0 = time.monotonic()
 
+        proc = await asyncio.create_subprocess_shell(
+            cmd,
+            cwd=str(self.preview_path),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
         try:
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                cwd=str(self.preview_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout
-            )
+            stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
         except asyncio.TimeoutError:
             elapsed = time.monotonic() - t0
-            proc.kill()
             await self._log_step_end(step, elapsed, False, f"{RED}TIMEOUT after {timeout}s{RESET}")
             raise RuntimeError(f"[{step}] Timed out after {timeout}s")
 
         elapsed = time.monotonic() - t0
-        output = stdout.decode() + stderr.decode()
+        output = stdout + stderr
 
         if proc.returncode != 0:
-            await self._log_step_end(step, elapsed, False, output)
+            await self._log_step_end(step, elapsed, False, "")
             raise RuntimeError(
                 f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
             )
 
-        await self._log_step_end(step, elapsed, True, output)
+        await self._log_step_end(step, elapsed, True, "")
         logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
         return output
 
