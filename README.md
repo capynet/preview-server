@@ -120,3 +120,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Es posible permirir el uso de apache o OpenLiteSpeed indistintamente?
 - Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
 - Deberia automatizar el deploy de ansible o la generacion de version del cli cuando pusheo a master?
+- Agregar cron a los preview. 
