@@ -1,0 +1,20 @@
+[Unit]
+Description=Preview UI (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=preview-manager
+Group=preview-manager
+WorkingDirectory=/home/preview-manager/www/previews/preview-ui
+ExecStart=/usr/bin/node server.js
+Environment=PORT=3000
+Environment=HOSTNAME=0.0.0.0
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=preview-ui
+
+[Install]
+WantedBy=multi-user.target

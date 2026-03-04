@@ -29,6 +29,8 @@ services:
       caddy_1: "*.mr.{{ domain }}"
       caddy_1.tls.dns: "cloudflare {env.CLOUDFLARE_API_TOKEN}"
       caddy_1.reverse_proxy: "host.docker.internal:8000"
+      caddy_2: "{{ domain }}"
+      caddy_2.reverse_proxy: "host.docker.internal:3000"
 
 volumes:
   caddy_data:

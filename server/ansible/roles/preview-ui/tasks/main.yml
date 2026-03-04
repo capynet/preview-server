@@ -1,0 +1,125 @@
+---
+# Preview UI - Deployment Tasks
+
+- name: Install Node.js 22 LTS (NodeSource)
+  block:
+    - name: Check if Node.js 22 is installed
+      command: node --version
+      register: node_version
+      changed_when: false
+      failed_when: false
+
+    - name: Add NodeSource GPG key
+      shell: curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /usr/share/keyrings/nodesource.gpg
+      args:
+        creates: /usr/share/keyrings/nodesource.gpg
+      when: node_version.rc != 0 or 'v22' not in node_version.stdout
+
+    - name: Add NodeSource repository
+      copy:
+        content: "deb [signed-by=/usr/share/keyrings/nodesource.gpg] https://deb.nodesource.com/node_22.x nodistro main"
+        dest: /etc/apt/sources.list.d/nodesource.list
+      when: node_version.rc != 0 or 'v22' not in node_version.stdout
+
+    - name: Install Node.js
+      apt:
+        name: nodejs
+        state: present
+        update_cache: yes
+      when: node_version.rc != 0 or 'v22' not in node_version.stdout
+
+- name: Add GitHub Actions deploy key to authorized_keys
+  authorized_key:
+    user: root
+    key: "{{ vault_github_actions_ssh_public_key }}"
+    comment: "github-actions-preview-ui"
+    state: present
+
+- name: Create preview-ui directory
+  file:
+    path: /home/preview-manager/www/previews/preview-ui
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+
+- name: Sync standalone build
+  synchronize:
+    src: "{{ playbook_dir }}/../../../../preview-ui/.next/standalone/"
+    dest: /home/preview-manager/www/previews/preview-ui/
+    delete: yes
+    rsync_opts:
+      - "--exclude=.env"
+  notify: Restart preview-ui
+  tags: [ui]
+
+- name: Sync static assets
+  synchronize:
+    src: "{{ playbook_dir }}/../../../../preview-ui/.next/static/"
+    dest: /home/preview-manager/www/previews/preview-ui/.next/static/
+    delete: yes
+  notify: Restart preview-ui
+  tags: [ui]
+
+- name: Check if public directory exists locally
+  delegate_to: localhost
+  stat:
+    path: "{{ playbook_dir }}/../../../../preview-ui/public/"
+  register: public_dir
+  tags: [ui]
+
+- name: Sync public assets
+  synchronize:
+    src: "{{ playbook_dir }}/../../../../preview-ui/public/"
+    dest: /home/preview-manager/www/previews/preview-ui/public/
+    delete: yes
+  when: public_dir.stat.exists
+  notify: Restart preview-ui
+  tags: [ui]
+
+- name: Set ownership on preview-ui files
+  file:
+    path: /home/preview-manager/www/previews/preview-ui
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+    recurse: yes
+  tags: [ui]
+
+- name: Create systemd service file
+  template:
+    src: preview-ui.service.j2
+    dest: /etc/systemd/system/preview-ui.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify:
+    - Reload systemd
+    - Restart preview-ui
+
+- name: Enable and start preview-ui service
+  systemd:
+    name: preview-ui
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Wait for service to be ready
+  wait_for:
+    port: 3000
+    delay: 2
+    timeout: 30
+  tags: [ui]
+
+- name: Check service health
+  uri:
+    url: http://localhost:3000
+    method: GET
+    status_code: [200, 307]
+  register: health_check
+  tags: [ui]
+
+- name: Display health check result
+  debug:
+    msg: "Preview UI is running on port 3000 (status: {{ health_check.status }})"
+  tags: [ui]

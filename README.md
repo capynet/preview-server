@@ -121,3 +121,5 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
 - Deberia automatizar el deploy de ansible o la generacion de version del cli cuando pusheo a master?
 - Agregar cron a los preview. 
+- En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja. 
+- Usar github actions para compilar el cli, la ui
