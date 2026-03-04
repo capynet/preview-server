@@ -221,16 +221,18 @@ class PreviewDeployer:
             raise RuntimeError(f"Base files missing: {db}")
 
     def _write_internal_settings(self):
-        """Write settings.preview.internal.php with DB, file paths, and trusted hosts.
+        """Write settings.preview.internal.php and ensure settings.php includes it.
 
-        This file is injected by the deployer on every deploy (new and update)
+        This is injected by the deployer on every deploy (new and update)
         so it's always up-to-date, even if not committed to the repo.
         """
         docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
-        target = self.preview_path / docroot / "sites" / "default" / "settings.preview.internal.php"
-        target.parent.mkdir(parents=True, exist_ok=True)
+        settings_dir = self.preview_path / docroot / "sites" / "default"
+        settings_dir.mkdir(parents=True, exist_ok=True)
 
-        content = """\
+        # 1. Write settings.preview.internal.php
+        internal = settings_dir / "settings.preview.internal.php"
+        internal.write_text("""\
 <?php
 
 /**
@@ -269,9 +271,40 @@ $config['locale.settings']['translation']['path'] = getenv('PREV_FILE_TRANSLATIO
 if (empty($settings['hash_salt'])) {
   $settings['hash_salt'] = getenv('PREV_PROJECT_NAME') . '-preview';
 }
+""")
+        logger.info(f"Wrote {internal}")
+
+        # 2. Ensure settings.php has the preview include snippet
+        settings_php = settings_dir / "settings.php"
+        snippet = """
+// Preview environment settings.
+if (getenv('PREV_IS_PREVIEW')) {
+  include __DIR__ . '/settings.preview.internal.php';
+  if (file_exists(__DIR__ . '/settings.preview.php')) {
+    include __DIR__ . '/settings.preview.php';
+  }
+}
 """
-        target.write_text(content)
-        logger.info(f"Wrote {target}")
+        if settings_php.exists():
+            content = settings_php.read_text()
+            if "PREV_IS_PREVIEW" not in content:
+                settings_php.write_text(content.rstrip() + "\n" + snippet)
+                logger.info("Appended preview include snippet to settings.php")
+            elif "settings.preview.internal.php" not in content:
+                # Old-style include (only settings.preview.php) — upgrade it
+                old_include = "include __DIR__ . '/settings.preview.php';"
+                new_include = (
+                    "include __DIR__ . '/settings.preview.internal.php';\n"
+                    "  if (file_exists(__DIR__ . '/settings.preview.php')) {\n"
+                    "    include __DIR__ . '/settings.preview.php';\n"
+                    "  }"
+                )
+                content = content.replace(old_include, new_include)
+                settings_php.write_text(content)
+                logger.info("Upgraded preview include snippet in settings.php")
+        else:
+            settings_php.write_text("<?php\n" + snippet)
+            logger.info(f"Created {settings_php} with preview include snippet")
 
     async def _generate_compose(self):
         """Parse preview.yml and generate docker-compose.yml."""

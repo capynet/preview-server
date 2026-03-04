@@ -9,11 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Separate internal settings from user settings**: `setup project` now generates two files instead of one:
-  - `settings.preview.internal.php` — Injected automatically by the deployer on every deploy. Contains DB connection, file paths, trusted host patterns, and hash salt. Users never need to edit this.
-  - `settings.preview.php` — Empty file with comments, for user-specific preview overrides.
-- The include snippet in `settings.php` now loads both files in order (internal first, then user overrides).
-- Existing projects set up with older CLI versions continue to work unchanged.
+- **Separate internal settings from user settings**: `setup project` now only generates `settings.preview.php` as an empty file for user overrides. The deployer handles everything else automatically:
+  - `settings.preview.internal.php` — Written by the deployer on every deploy. Contains DB connection, file paths, trusted host patterns, and hash salt.
+  - The include snippet in `settings.php` — Injected by the deployer if missing, or upgraded from old format automatically.
+- `setup project` no longer modifies `settings.php` — the deployer manages it.
+- Existing projects with old-style includes are automatically upgraded on next deploy.
 
 ## [1.7.3] - 2026-03-04
 

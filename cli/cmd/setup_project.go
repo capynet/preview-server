@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -16,10 +15,13 @@ var setupProjectCmd = &cobra.Command{
 	Short: "Scaffold a Drupal project for preview environments",
 	Long: `Creates the necessary files for preview compatibility:
 
-  1. Adds a preview include snippet to web/sites/default/settings.php
-  2. Creates web/sites/default/settings.preview.php with DB config
-  3. Creates preview.yml template in the project root
-  4. Creates deploy script templates in scripts/preview/
+  1. Creates web/sites/default/settings.preview.php for custom overrides
+  2. Creates preview.yml template in the project root
+  3. Creates deploy script templates in scripts/preview/
+
+The preview include snippet in settings.php and the internal settings
+file (settings.preview.internal.php) are managed automatically by
+the deployer — you don't need to touch them.
 
 Run this command from the root of your Drupal project.
 Use --override to overwrite existing files with the latest templates.`,
@@ -50,28 +52,7 @@ func runSetupProject() error {
 		fmt.Println()
 	}
 
-	// 1. Add include snippet to settings.php
-	settingsPath := filepath.Join(settingsDir, "settings.php")
-	result, err := appendPreviewInclude(settingsPath)
-	if err != nil {
-		fmt.Printf("  ⚠ %s — could not write (permission denied)\n", settingsPath)
-		fmt.Println()
-		fmt.Println("  Add the following snippet manually to the end of your settings.php:")
-		fmt.Println()
-		for _, line := range strings.Split(strings.TrimSpace(previewIncludeSnippet), "\n") {
-			fmt.Printf("    %s\n", line)
-		}
-		fmt.Println()
-		skipped = append(skipped, settingsPath)
-	} else if result == "created" || result == "appended" {
-		created = append(created, settingsPath)
-		fmt.Printf("  ✓ %s — preview include added\n", settingsPath)
-	} else {
-		skipped = append(skipped, settingsPath)
-		fmt.Printf("  · %s — already configured\n", settingsPath)
-	}
-
-	// 2. Create settings.preview.php
+	// 1. Create settings.preview.php
 	previewSettingsPath := filepath.Join(settingsDir, "settings.preview.php")
 	wrote, err := writeFile(previewSettingsPath, settingsPreviewContent())
 	if err != nil {
@@ -89,7 +70,7 @@ func runSetupProject() error {
 		fmt.Printf("  · %s — already exists\n", previewSettingsPath)
 	}
 
-	// 3. Create preview.yml
+	// 2. Create preview.yml
 	wrote, err = writeFile("preview.yml", previewYmlContent())
 	if err != nil {
 		return fmt.Errorf("failed to create preview.yml: %w", err)
@@ -106,7 +87,7 @@ func runSetupProject() error {
 		fmt.Printf("  · preview.yml — already exists\n")
 	}
 
-	// 4. Create deploy scripts
+	// 3. Create deploy scripts
 	for _, phase := range []string{"new", "update"} {
 		scriptDir := filepath.Join("scripts", "preview", phase)
 		scriptPath := filepath.Join(scriptDir, "deploy.sh")
@@ -176,46 +157,6 @@ func detectDocroot() string {
 		}
 	}
 	return ""
-}
-
-const previewIncludeSnippet = `
-// Preview environment settings.
-if (getenv('PREV_IS_PREVIEW')) {
-  include __DIR__ . '/settings.preview.internal.php';
-  include __DIR__ . '/settings.preview.php';
-}
-`
-
-func appendPreviewInclude(settingsPath string) (string, error) {
-	data, err := os.ReadFile(settingsPath)
-	if os.IsNotExist(err) {
-		// No settings.php — create one with just the include
-		content := "<?php\n\n" + strings.TrimLeft(previewIncludeSnippet, "\n")
-		if err := os.WriteFile(settingsPath, []byte(content), 0644); err != nil {
-			return "", err
-		}
-		return "created", nil
-	}
-	if err != nil {
-		return "", err
-	}
-
-	// Check if already configured
-	if strings.Contains(string(data), "PREV_IS_PREVIEW") {
-		return "exists", nil
-	}
-
-	// Append the include snippet
-	f, err := os.OpenFile(settingsPath, os.O_APPEND|os.O_WRONLY, 0644)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
-	if _, err := f.WriteString(previewIncludeSnippet); err != nil {
-		return "", err
-	}
-	return "appended", nil
 }
 
 func settingsPreviewContent() string {
