@@ -160,6 +160,7 @@ async def _clone_and_deploy(
     commit_sha: str,
     triggered_by: str = "webhook",
     mr_iid: int | None = None,
+    force_new: bool = False,
 ):
     """Clone repo then run deployment (runs in background)."""
     from app.deployment import PreviewDeployer
@@ -212,6 +213,7 @@ async def _clone_and_deploy(
             mr_iid=mr_iid,
             deployment_id=early_deployment_id,
         )
+        deployer.force_new = force_new
         success = await deployer.deploy()
         if not success:
             logger.error(f"Deploy failed for {deploy_key}")

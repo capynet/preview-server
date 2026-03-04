@@ -74,6 +74,7 @@ class PreviewDeployer:
         self.triggered_by = triggered_by
         self.mr_iid = mr_iid
 
+        self.force_new = False
         self.preview_path = PreviewStateManager.get_preview_path(project_name, preview_name)
         self.container_prefix = f"{preview_name}-{project_name}"
         self.preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
@@ -88,6 +89,8 @@ class PreviewDeployer:
 
     async def is_new(self) -> bool:
         """Check if this is a first deploy (no previous successful deployment)."""
+        if self.force_new:
+            return True
         state = await PreviewStateManager.load_state(self.project_name, self.preview_name)
         if not state:
             return True
@@ -205,7 +208,6 @@ class PreviewDeployer:
         await self._generate_compose()
         self._write_internal_settings()
         await self._docker_up()
-        await self._composer_install()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
 

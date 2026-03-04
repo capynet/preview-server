@@ -571,6 +571,7 @@ async def rebuild_preview(
     project: str,
     preview_name: str,
     background_tasks: BackgroundTasks,
+    force_new: bool = False,
     user: UserWithRole = Depends(require_role(Role.manager)),
 ):
     """Re-clone the preview from GitLab (internal rebuild, no pipeline)."""
@@ -595,11 +596,12 @@ async def rebuild_preview(
         state.get("commit_sha", ""),
         "rebuild",
         state.get("mr_id"),
+        force_new,
     )
 
     return {
         "success": True,
-        "output": f"Rebuild started for {project}/{preview_name} (branch: {state['branch']})",
+        "output": f"Rebuild started for {project}/{preview_name} (branch: {state['branch']}, force_new={force_new})",
         "error": "",
     }
 
