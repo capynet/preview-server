@@ -265,6 +265,14 @@ $settings['file_private_path'] = getenv('PREV_FILE_PRIVATE_PATH');
 $settings['file_temp_path'] = getenv('PREV_FILE_TEMP_PATH');
 $config['locale.settings']['translation']['path'] = getenv('PREV_FILE_TRANSLATIONS_PATH');
 
+// Config sync directory — auto-detect common locations.
+foreach (['../config/sync', '../config', 'sites/default/config/sync'] as $_candidate) {
+  if (is_dir(DRUPAL_ROOT . '/' . $_candidate)) {
+    $settings['config_sync_directory'] = $_candidate;
+    break;
+  }
+}
+
 // Hash salt — override if not already set upstream.
 if (empty($settings['hash_salt'])) {
   $settings['hash_salt'] = getenv('PREV_PROJECT_NAME') . '-preview';
@@ -409,13 +417,13 @@ if (getenv('PREV_IS_PREVIEW')) {
             # pv -f forces output to stderr, shows progress bar with size
             cmd = (
                 f"pv -f -s {db_file.stat().st_size} {db_path} "
-                f"| gunzip | docker exec -i {db_container} "
-                f"mysql -u drupal -pdrupal drupal"
+                f"| gunzip | docker exec -e MYSQL_PWD=drupal -i {db_container} "
+                f"mysql -u drupal drupal"
             )
         else:
             cmd = (
-                f"gunzip -c {db_path} | docker exec -i {db_container} "
-                f"mysql -u drupal -pdrupal drupal"
+                f"gunzip -c {db_path} | docker exec -e MYSQL_PWD=drupal -i {db_container} "
+                f"mysql -u drupal drupal"
             )
         await self._run_shell(cmd, step="import-db", timeout=TIMEOUT_IMPORT_DB)
 
@@ -610,15 +618,18 @@ if (getenv('PREV_IS_PREVIEW')) {
         await self._log_raw("".join(lines))
 
     async def _stream_progress(self, proc, step: str, t0: float, timeout: int):
-        """Read stdout/stderr, streaming output lines in real-time."""
+        """Read stdout/stderr, streaming output chunks in real-time."""
         stdout_chunks = []
         stderr_chunks = []
-        pending_lines = []
+        pending_chunks = []
 
         async def _read(stream, buf):
-            async for line in stream:
-                buf.append(line)
-                pending_lines.append(line)
+            while True:
+                chunk = await stream.read(4096)
+                if not chunk:
+                    break
+                buf.append(chunk)
+                pending_chunks.append(chunk)
 
         read_task = asyncio.gather(
             _read(proc.stdout, stdout_chunks),
@@ -635,17 +646,17 @@ if (getenv('PREV_IS_PREVIEW')) {
                         await read_task
                         raise asyncio.TimeoutError()
                 # Flush any lines accumulated in the last second
-                if pending_lines:
-                    text = b"".join(pending_lines).decode(errors="replace")
-                    pending_lines.clear()
+                if pending_chunks:
+                    text = b"".join(pending_chunks).decode(errors="replace")
+                    pending_chunks.clear()
                     await self._log_raw(text)
         except asyncio.TimeoutError:
             raise
 
-        # Flush remaining lines
-        if pending_lines:
-            text = b"".join(pending_lines).decode(errors="replace")
-            pending_lines.clear()
+        # Flush remaining chunks
+        if pending_chunks:
+            text = b"".join(pending_chunks).decode(errors="replace")
+            pending_chunks.clear()
             await self._log_raw(text)
 
         await read_task
@@ -748,8 +759,9 @@ if (getenv('PREV_IS_PREVIEW')) {
         if not existing:
             fields["created_at"] = now
 
-        if status in ("active", "failed"):
+        if status == "active":
             fields["last_deployed_at"] = now
+        if status in ("active", "failed"):
             fields["last_deployment_status"] = status
             fields["last_deployment_completed_at"] = now
             if error:
