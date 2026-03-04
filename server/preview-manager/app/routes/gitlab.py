@@ -17,6 +17,7 @@ from app.auth.models import Role, UserWithRole
 from app.auth.oauth import GitLabOAuth
 from app import config_store
 from app.config_store import load_project_details
+from app.database import upsert_project
 
 logger = logging.getLogger(__name__)
 
@@ -471,6 +472,9 @@ async def enable_project_previews(project_id: int, body: EnableProjectRequest = 
         await config_store.save_enabled_project_id(project_id)
         if body.path_with_namespace:
             await config_store.save_project_path(project_id, body.path_with_namespace)
+            # Ensure the project exists in the projects table
+            slug = body.path_with_namespace.rsplit("/", 1)[-1]
+            await upsert_project(slug)
         # Save full project details for the enabled projects endpoint
         if body.name or body.path_with_namespace:
             await config_store.save_project_details(project_id, {

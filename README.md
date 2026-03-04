@@ -123,3 +123,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Agregar cron a los preview. 
 - En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja. 
 - Usar github actions para compilar el cli, la ui
+- en la visualizacion de uso del cpu me gustaria saber el indice de carga en los ultimos mins

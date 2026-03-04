@@ -13,9 +13,8 @@ from app.docker_compose import (
     write_docker_compose,
 )
 from app.state import PreviewStateManager
-from app.database import get_preview, create_deployment, finish_deployment
+from app.database import get_preview, get_project, create_deployment, finish_deployment
 from app.overlay import get_base_files_dir, mount_overlay
-from app import config_store
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -335,9 +334,12 @@ if (getenv('PREV_IS_PREVIEW')) {
         extra_env: dict[str, str] = {}
         try:
             import json
-            project_env_json = await config_store.get_config(f"env_vars_{self.project_name}")
-            if project_env_json:
-                extra_env.update(json.loads(project_env_json))
+            proj = await get_project(self.project_name)
+            if proj and proj.get("env_vars"):
+                project_env = proj["env_vars"]
+                if isinstance(project_env, str):
+                    project_env = json.loads(project_env)
+                extra_env.update(project_env)
 
             preview_row = await get_preview(self.project_name, self.preview_name)
             if preview_row and preview_row.get("env_vars"):

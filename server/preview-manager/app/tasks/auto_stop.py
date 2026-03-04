@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app import config_store
-from app.database import get_all_previews
+from app.database import get_all_previews, get_project
 from app.routes.previews import get_docker_status
 
 logger = logging.getLogger(__name__)
@@ -54,12 +54,11 @@ async def _check_and_stop():
             continue
 
         # Check per-project override
-        proj_enabled = await config_store.get_config(f"auto_stop_{project}_enabled")
-        if proj_enabled is not None:
-            if proj_enabled != "true":
+        proj = await get_project(project)
+        if proj and proj["auto_stop_enabled"] is not None:
+            if not proj["auto_stop_enabled"]:
                 continue
-            proj_minutes_str = await config_store.get_config(f"auto_stop_{project}_minutes")
-            threshold_minutes = int(proj_minutes_str) if proj_minutes_str else global_minutes
+            threshold_minutes = proj["auto_stop_minutes"] if proj["auto_stop_minutes"] else global_minutes
         else:
             threshold_minutes = global_minutes
 

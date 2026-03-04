@@ -9,6 +9,7 @@ from config.settings import settings
 from app.auth.dependencies import require_role
 from app.auth.models import Role, UserWithRole
 from app import config_store
+from app.database import get_project, upsert_project
 
 logger = logging.getLogger(__name__)
 
@@ -72,13 +73,14 @@ async def save_auto_stop_config(request: Request, user: UserWithRole = Depends(r
 @router.get("/api/config/auto-stop/{project}")
 async def get_project_auto_stop_config(project: str, user: UserWithRole = Depends(require_role(Role.viewer))):
     """Get per-project auto-stop configuration."""
-    enabled = await config_store.get_config(f"auto_stop_{project}_enabled")
-    minutes = await config_store.get_config(f"auto_stop_{project}_minutes")
-    return {
-        "override": enabled is not None,
-        "enabled": enabled == "true" if enabled is not None else None,
-        "minutes": int(minutes) if minutes else None,
-    }
+    proj = await get_project(project)
+    if proj and proj["auto_stop_enabled"] is not None:
+        return {
+            "override": True,
+            "enabled": bool(proj["auto_stop_enabled"]),
+            "minutes": proj["auto_stop_minutes"],
+        }
+    return {"override": False, "enabled": None, "minutes": None}
 
 
 @router.put("/api/config/auto-stop/{project}")
@@ -86,13 +88,11 @@ async def save_project_auto_stop_config(project: str, request: Request, user: Us
     """Save per-project auto-stop configuration."""
     body = await request.json()
     if body.get("override") is False:
-        # Remove overrides, use global
-        await config_store.delete_config(f"auto_stop_{project}_enabled")
-        await config_store.delete_config(f"auto_stop_{project}_minutes")
+        await upsert_project(project, auto_stop_enabled=None, auto_stop_minutes=None)
     else:
-        await config_store.set_config(f"auto_stop_{project}_enabled", "true" if body.get("enabled") else "false")
-        if "minutes" in body:
-            await config_store.set_config(f"auto_stop_{project}_minutes", str(int(body["minutes"])))
+        enabled = 1 if body.get("enabled") else 0
+        minutes = int(body["minutes"]) if "minutes" in body else None
+        await upsert_project(project, auto_stop_enabled=enabled, auto_stop_minutes=minutes)
     return {"success": True}
 
 
@@ -122,11 +122,11 @@ async def save_auto_erase_config(request: Request, user: UserWithRole = Depends(
 @router.get("/api/config/env-vars/{project}")
 async def get_project_env_vars(project: str, user: UserWithRole = Depends(require_role(Role.viewer))):
     """Get environment variables for a project."""
-    raw = await config_store.get_config(f"env_vars_{project}")
-    if not raw:
+    proj = await get_project(project)
+    if not proj or not proj.get("env_vars"):
         return {"env_vars": {}}
     try:
-        return {"env_vars": json.loads(raw)}
+        return {"env_vars": json.loads(proj["env_vars"])}
     except (json.JSONDecodeError, TypeError):
         return {"env_vars": {}}
 
@@ -138,11 +138,10 @@ async def save_project_env_vars(project: str, request: Request, user: UserWithRo
     env_vars = body.get("env_vars", {})
     if not isinstance(env_vars, dict):
         raise HTTPException(status_code=400, detail="env_vars must be an object")
-    # Validate all keys and values are strings
     for k, v in env_vars.items():
         if not isinstance(k, str) or not isinstance(v, str):
             raise HTTPException(status_code=400, detail="All keys and values must be strings")
-    await config_store.set_config(f"env_vars_{project}", json.dumps(env_vars))
+    await upsert_project(project, env_vars=json.dumps(env_vars))
 
     # Check if there are active previews that would need a rebuild
     from app.database import get_all_previews

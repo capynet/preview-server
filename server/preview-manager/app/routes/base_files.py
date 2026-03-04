@@ -56,44 +56,16 @@ def _file_info(path: Path) -> BaseFileInfo | None:
 
 
 def _dir_info(path: Path) -> BaseFileInfo | None:
-    """Get info about an extracted files directory from cached metadata."""
+    """Get info about base files from the compressed tar.gz (instant stat)."""
+    tar_path = path.parent / "files.tar.gz"
+    if tar_path.exists():
+        return _file_info(tar_path)
+    # Fallback: check if the extracted directory exists
     if not path.exists():
         return None
-    meta_path = path.parent / "meta.json"
-    if meta_path.exists():
-        try:
-            meta = json.loads(meta_path.read_text())
-            return BaseFileInfo(
-                exists=True,
-                size_bytes=meta.get("size_bytes", 0),
-                modified_at=meta.get("modified_at", ""),
-            )
-        except Exception:
-            pass
-    # Fallback: directory stat only (no recursive walk)
     stat = path.stat()
     mtime = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
     return BaseFileInfo(exists=True, size_bytes=0, modified_at=mtime)
-
-
-async def _generate_files_meta(base_dir: Path) -> None:
-    """Generate meta.json for an existing base files dir (one-time migration)."""
-    proc = await asyncio.create_subprocess_exec(
-        "du", "-sb", str(base_dir),
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, _ = await proc.communicate()
-    total_size = int(stdout.decode().split()[0]) if stdout else 0
-    mtime = datetime.fromtimestamp(
-        base_dir.stat().st_mtime, tz=timezone.utc
-    ).isoformat()
-    meta_path = base_dir.parent / "meta.json"
-    meta_path.write_text(json.dumps({
-        "size_bytes": total_size,
-        "modified_at": mtime,
-    }))
-    logger.info("Generated missing meta.json for %s (%d bytes)", base_dir, total_size)
 
 
 def _db_path(slug: str) -> Path:
@@ -106,9 +78,6 @@ async def get_base_files_status(
     user: UserWithRole = Depends(require_role(Role.viewer)),
 ):
     base_dir = get_base_files_dir(slug)
-    # Auto-generate metadata for existing projects that lack it
-    if base_dir.exists() and not (base_dir.parent / "meta.json").exists():
-        await _generate_files_meta(base_dir)
     return BaseFilesStatus(
         db=_file_info(_db_path(slug)),
         files=_dir_info(base_dir),
@@ -245,27 +214,11 @@ async def _process_files(slug: str, file_path: Path) -> dict:
 
         logger.info("Extracted base files to %s", base_dir)
 
-        # 6. Calculate size and save metadata
-        proc = await asyncio.create_subprocess_exec(
-            "du", "-sb", str(base_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate()
-        total_size = int(stdout.decode().split()[0]) if stdout else 0
-        upload_time = datetime.now(timezone.utc).isoformat()
-        meta_path = base_dir.parent / "meta.json"
-        meta_path.write_text(json.dumps({
-            "size_bytes": total_size,
-            "modified_at": upload_time,
-        }))
-        logger.info("Saved base files metadata: %d bytes", total_size)
-
-        # 7. Remount overlays for all active previews
+        # 6. Remount overlays for all active previews
         await remount_all_for_project(slug)
 
     finally:
-        # 7. Keep the tar.gz alongside extracted files for fast downloads
+        # Keep the tar.gz alongside extracted files for fast downloads
         tar_dest = get_base_files_dir(slug).parent / "files.tar.gz"
         if file_path.exists():
             shutil.move(str(file_path), str(tar_dest))

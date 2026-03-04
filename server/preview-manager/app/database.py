@@ -118,6 +118,17 @@ CREATE TABLE IF NOT EXISTS previews (
 );
 """
 
+PROJECTS_SCHEMA = """
+CREATE TABLE IF NOT EXISTS projects (
+    slug TEXT PRIMARY KEY,
+    auto_stop_enabled INTEGER,
+    auto_stop_minutes INTEGER,
+    env_vars TEXT DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+"""
+
 DEPLOYMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS deployments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -160,6 +171,7 @@ async def init_db():
         await db.executescript(DEPLOYMENTS_SCHEMA)
         await db.executescript(PROJECT_MEMBERS_SCHEMA)
         await db.executescript(CONFIG_SCHEMA)
+        await db.executescript(PROJECTS_SCHEMA)
 
         # Migration: rebuild previews table to make mr_id nullable and add preview_name
         cur = await db.execute("PRAGMA table_info(previews)")
@@ -223,6 +235,50 @@ async def init_db():
         if "project_slug" not in inv_cols:
             logger.info("Migrating invitations table: adding project_slug column")
             await db.execute("ALTER TABLE invitations ADD COLUMN project_slug TEXT")
+
+        # Migration: populate projects table from app_config keys
+        cur_proj = await db.execute("SELECT COUNT(*) FROM projects")
+        proj_count = (await cur_proj.fetchone())[0]
+        if proj_count == 0:
+            # Collect unique slugs from previews and project_members
+            cur_slugs = await db.execute(
+                "SELECT DISTINCT project AS slug FROM previews "
+                "UNION SELECT DISTINCT project_slug AS slug FROM project_members"
+            )
+            slugs = [row[0] for row in await cur_slugs.fetchall() if row[0]]
+            now = _now()
+            for slug in slugs:
+                cur_as_e = await db.execute(
+                    "SELECT value FROM app_config WHERE key = ?",
+                    (f"auto_stop_{slug}_enabled",),
+                )
+                row_as_e = await cur_as_e.fetchone()
+                as_enabled = None
+                if row_as_e and row_as_e[0] is not None:
+                    as_enabled = 1 if row_as_e[0] == "true" else 0
+
+                cur_as_m = await db.execute(
+                    "SELECT value FROM app_config WHERE key = ?",
+                    (f"auto_stop_{slug}_minutes",),
+                )
+                row_as_m = await cur_as_m.fetchone()
+                as_minutes = int(row_as_m[0]) if row_as_m and row_as_m[0] else None
+
+                cur_ev = await db.execute(
+                    "SELECT value FROM app_config WHERE key = ?",
+                    (f"env_vars_{slug}",),
+                )
+                row_ev = await cur_ev.fetchone()
+                env_vars = row_ev[0] if row_ev and row_ev[0] else "{}"
+
+                await db.execute(
+                    """INSERT OR IGNORE INTO projects
+                       (slug, auto_stop_enabled, auto_stop_minutes, env_vars, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (slug, as_enabled, as_minutes, env_vars, now, now),
+                )
+            if slugs:
+                logger.info(f"Migrated {len(slugs)} project(s) to projects table")
 
         await db.commit()
         logger.info(f"Database initialized at {_db_path}")
@@ -456,6 +512,67 @@ async def list_deployments(preview_id: int, limit: int = 50) -> list[dict]:
                LIMIT ?""",
             (preview_id, limit),
         )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+# ---- Project CRUD ----
+
+async def get_project(slug: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT * FROM projects WHERE slug = ?", (slug,))
+        row = await cur.fetchone()
+        return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def upsert_project(slug: str, **fields) -> dict:
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT * FROM projects WHERE slug = ?", (slug,))
+        existing = await cur.fetchone()
+        now = _now()
+
+        if existing:
+            sets = ["updated_at = ?"]
+            vals = [now]
+            for k, v in fields.items():
+                sets.append(f"{k} = ?")
+                vals.append(v)
+            vals.append(slug)
+            await db.execute(
+                f"UPDATE projects SET {', '.join(sets)} WHERE slug = ?",
+                vals,
+            )
+        else:
+            await db.execute(
+                """INSERT INTO projects
+                   (slug, auto_stop_enabled, auto_stop_minutes, env_vars, created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    slug,
+                    fields.get("auto_stop_enabled"),
+                    fields.get("auto_stop_minutes"),
+                    fields.get("env_vars", "{}"),
+                    now,
+                    now,
+                ),
+            )
+        await db.commit()
+        cur2 = await db.execute("SELECT * FROM projects WHERE slug = ?", (slug,))
+        return dict(await cur2.fetchone())
+    finally:
+        await db.close()
+
+
+async def get_all_projects() -> list[dict]:
+    db = await get_db()
+    try:
+        cur = await db.execute("SELECT * FROM projects ORDER BY slug")
         rows = await cur.fetchall()
         return [dict(r) for r in rows]
     finally:
