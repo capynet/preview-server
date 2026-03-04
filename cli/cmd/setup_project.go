@@ -142,10 +142,9 @@ func runSetupProject() error {
 
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Review the generated files, especially settings.preview.php")
-	fmt.Println("  2. Edit preview.yml to match your project's needs")
-	fmt.Println("  3. Customize the deploy scripts in scripts/preview/")
-	fmt.Println("  4. Commit everything to your repository")
+	fmt.Println("  1. Edit preview.yml to match your project's needs")
+	fmt.Println("  2. Customize the deploy scripts in scripts/preview/")
+	fmt.Println("  3. Commit everything to your repository")
 
 	return nil
 }
@@ -182,6 +181,7 @@ func detectDocroot() string {
 const previewIncludeSnippet = `
 // Preview environment settings.
 if (getenv('PREV_IS_PREVIEW')) {
+  include __DIR__ . '/settings.preview.internal.php';
   include __DIR__ . '/settings.preview.php';
 }
 `
@@ -223,63 +223,19 @@ func settingsPreviewContent() string {
 
 /**
  * @file
- * Preview environment settings.
+ * Preview environment overrides.
  *
- * This file is automatically included when running in a preview environment
- * (when the PREV_IS_PREVIEW environment variable is set).
+ * This file is loaded after the internal preview configuration
+ * (settings.preview.internal.php) which sets up the database connection,
+ * file paths, and trusted host patterns automatically.
  *
- * All preview environment variables use the PREV_ prefix:
- *   PREV_IS_PREVIEW  - Always "true" in preview environments
- *   PREV_DB_HOST     - Database hostname
- *   PREV_DB_NAME     - Database name
- *   PREV_DB_USER     - Database username
- *   PREV_DB_PASSWORD - Database password
- *   PREV_PROJECT_NAME - Project slug
- *   PREV_MR_IID      - Merge request IID
- *   PREV_BRANCH      - Git branch name
- *   PREV_COMMIT_SHA  - Git commit SHA
- *   PREV_URL         - Full preview URL (https://...)
- *   PREV_DOMAIN      - Preview domain (without protocol)
- *   PREV_FILE_PUBLIC_PATH - Public files path
- *   PREV_FILE_PRIVATE_PATH - Private files path
- *   PREV_FILE_TEMP_PATH - Temp files path
- *   PREV_FILE_TRANSLATIONS_PATH - Translations path
- *   PREV_REDIS_HOST  - Redis hostname (only if Redis is enabled)
- *   PREV_SOLR_HOST   - Solr hostname (only if Solr is enabled)
- *   PREV_SOLR_CORE   - Solr core name (only if Solr is enabled)
+ * Use this file to add or override any Drupal settings specifically
+ * for preview environments. For example:
+ *
+ *   $config['system.performance']['css']['preprocess'] = FALSE;
+ *   $config['system.performance']['js']['preprocess'] = FALSE;
+ *   $settings['my_custom_setting'] = 'preview-value';
  */
-
-// Database connection.
-// MySQL 8.0+ enables SSL by default with a self-signed certificate.
-// Disable SSL verification to avoid "self-signed certificate in certificate
-// chain" errors when Drush or Drupal connects to the database container.
-$databases['default']['default'] = [
-  'database' => getenv('PREV_DB_NAME'),
-  'username' => getenv('PREV_DB_USER'),
-  'password' => getenv('PREV_DB_PASSWORD'),
-  'host' => getenv('PREV_DB_HOST'),
-  'port' => '3306',
-  'driver' => 'mysql',
-  'prefix' => '',
-  'collation' => 'utf8mb4_general_ci',
-  'pdo' => [
-    \PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => FALSE,
-  ],
-];
-
-// Trusted host patterns — allow the preview domain.
-$settings['trusted_host_patterns'][] = '^' . preg_quote(getenv('PREV_DOMAIN')) . '$';
-
-// File system paths.
-$settings['file_public_path'] = getenv('PREV_FILE_PUBLIC_PATH');
-$settings['file_private_path'] = getenv('PREV_FILE_PRIVATE_PATH');
-$settings['file_temp_path'] = getenv('PREV_FILE_TEMP_PATH');
-$config['locale.settings']['translation']['path'] = getenv('PREV_FILE_TRANSLATIONS_PATH');
-
-// Hash salt — override if not already set upstream.
-if (empty($settings['hash_salt'])) {
-  $settings['hash_salt'] = getenv('PREV_PROJECT_NAME') . '-preview';
-}
 `
 }
 
@@ -299,6 +255,8 @@ php_version: "8.3"
 #   mysql:8.4   (≈ mariadb:11.4)
 #   mariadb:10.6
 #   mariadb:11.4
+#   percona:8.0
+#   percona:8.4
 database: mysql:8.0
 
 # Document root relative to the project root.

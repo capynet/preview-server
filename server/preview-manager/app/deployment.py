@@ -190,6 +190,7 @@ class PreviewDeployer:
     async def _deploy_new(self):
         self._verify_base_files()
         await self._generate_compose()
+        self._write_internal_settings()
         await self._docker_up()
         await self._wait_for_db()
         await self._composer_install()
@@ -204,6 +205,7 @@ class PreviewDeployer:
 
     async def _deploy_update(self):
         await self._generate_compose()
+        self._write_internal_settings()
         await self._docker_up()
         await self._composer_install()
         await self._run_deploy_steps("update")
@@ -217,6 +219,59 @@ class PreviewDeployer:
         db = Path(f"/backups/{self.project_name}-base.sql.gz")
         if not db.exists():
             raise RuntimeError(f"Base files missing: {db}")
+
+    def _write_internal_settings(self):
+        """Write settings.preview.internal.php with DB, file paths, and trusted hosts.
+
+        This file is injected by the deployer on every deploy (new and update)
+        so it's always up-to-date, even if not committed to the repo.
+        """
+        docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
+        target = self.preview_path / docroot / "sites" / "default" / "settings.preview.internal.php"
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+        content = """\
+<?php
+
+/**
+ * @file
+ * Internal preview environment settings — managed by Preview Manager.
+ *
+ * DO NOT EDIT. This file is overwritten on every deploy.
+ * Use settings.preview.php for custom overrides.
+ */
+
+// Database connection.
+$databases['default']['default'] = [
+  'database' => getenv('PREV_DB_NAME'),
+  'username' => getenv('PREV_DB_USER'),
+  'password' => getenv('PREV_DB_PASSWORD'),
+  'host' => getenv('PREV_DB_HOST'),
+  'port' => '3306',
+  'driver' => 'mysql',
+  'prefix' => '',
+  'collation' => 'utf8mb4_general_ci',
+  'pdo' => [
+    \\PDO::MYSQL_ATTR_SSL_VERIFY_SERVER_CERT => FALSE,
+  ],
+];
+
+// Trusted host patterns — allow the preview domain.
+$settings['trusted_host_patterns'][] = '^' . preg_quote(getenv('PREV_DOMAIN')) . '$';
+
+// File system paths.
+$settings['file_public_path'] = getenv('PREV_FILE_PUBLIC_PATH');
+$settings['file_private_path'] = getenv('PREV_FILE_PRIVATE_PATH');
+$settings['file_temp_path'] = getenv('PREV_FILE_TEMP_PATH');
+$config['locale.settings']['translation']['path'] = getenv('PREV_FILE_TRANSLATIONS_PATH');
+
+// Hash salt — override if not already set upstream.
+if (empty($settings['hash_salt'])) {
+  $settings['hash_salt'] = getenv('PREV_PROJECT_NAME') . '-preview';
+}
+"""
+        target.write_text(content)
+        logger.info(f"Wrote {target}")
 
     async def _generate_compose(self):
         """Parse preview.yml and generate docker-compose.yml."""
