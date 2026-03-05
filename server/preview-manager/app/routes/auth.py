@@ -216,6 +216,9 @@ async def verify_preview(request: Request):
     # For MR previews: mr-123-drupal-test.mr.preview-mr.com
     # For branch previews: branch-develop-drupal-test.mr.preview-mr.com
     host = request.headers.get("x-forwarded-host", "")
+    # Strip domain alias prefix if present (e.g. "at--branch-foo-soudal" → "branch-foo-soudal")
+    if "--" in host.split(".")[0]:
+        host = host.split("--", 1)[1]
     match = re.match(r"(.+?)\.mr\.preview-mr\.com", host)
     if match:
         subdomain = match.group(1)  # e.g. "mr-123-drupal-test" or "branch-develop-drupal-test"

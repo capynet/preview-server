@@ -410,7 +410,11 @@ async def delete_preview_from_db(project: str, preview_name: str):
 
 
 async def get_preview_by_domain(domain: str) -> Optional[dict]:
-    """Find a preview by its domain (e.g. 'branch-main-drupal-test.mr.preview-mr.com')."""
+    """Find a preview by its domain (e.g. 'branch-main-drupal-test.mr.preview-mr.com').
+
+    Also handles domain aliases: if the domain is '{prefix}--{base-domain}',
+    strips the alias prefix and looks up by the base domain.
+    """
     url = f"https://{domain}"
     db = await get_db()
     try:
@@ -419,7 +423,20 @@ async def get_preview_by_domain(domain: str) -> Optional[dict]:
             (url,),
         )
         row = await cur.fetchone()
-        return dict(row) if row else None
+        if row:
+            return dict(row)
+
+        # Try stripping alias prefix: {prefix}--{rest} → {rest}
+        if "--" in domain:
+            base_domain = domain.split("--", 1)[1]
+            cur = await db.execute(
+                "SELECT * FROM previews WHERE url = ?",
+                (f"https://{base_domain}",),
+            )
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+        return None
     finally:
         await db.close()
 
