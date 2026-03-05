@@ -257,8 +257,13 @@ $databases['default']['default'] = [
   ],
 ];
 
-// Trusted host patterns — allow the preview domain.
+// Trusted host patterns — allow the preview domain and any aliases.
 $settings['trusted_host_patterns'][] = '^' . preg_quote(getenv('PREV_DOMAIN')) . '$';
+if (getenv('PREV_DOMAIN_ALIASES')) {
+  foreach (explode(',', getenv('PREV_DOMAIN_ALIASES')) as $_alias) {
+    $settings['trusted_host_patterns'][] = '^' . preg_quote(trim($_alias)) . '$';
+  }
+}
 
 // File system paths.
 $settings['file_public_path'] = getenv('PREV_FILE_PUBLIC_PATH');

@@ -25,6 +25,7 @@ DEFAULTS = {
         "new": None,
         "update": None,
     },
+    "domain_aliases": [],
 }
 
 
@@ -89,6 +90,11 @@ def parse_preview_yml(preview_path: Path) -> dict:
     elif "deploy" in raw and raw["deploy"] is False:
         # deploy: false — explicitly disable all deploy scripts
         config["deploy"] = {"new": None, "update": None}
+
+    # Domain aliases — additional subdomain prefixes routed to this preview.
+    # Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com
+    if "domain_aliases" in raw and isinstance(raw["domain_aliases"], list):
+        config["domain_aliases"] = [str(a) for a in raw["domain_aliases"] if a]
 
     logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
@@ -159,6 +165,12 @@ def generate_docker_compose(
         php_env["PREV_SOLR_HOST"] = f"{prefix}-solr"
         php_env["PREV_SOLR_CORE"] = "drupal"
 
+    # Domain aliases — extra subdomains that route to this preview.
+    alias_prefixes = config.get("domain_aliases", [])
+    alias_domains = [f"{a}--{domain}" for a in alias_prefixes]
+    if alias_domains:
+        php_env["PREV_DOMAIN_ALIASES"] = ",".join(alias_domains)
+
     # Merge user env vars from preview.yml
     php_env.update(config["env"])
 
@@ -178,9 +190,16 @@ def generate_docker_compose(
                 "volumes": ["./:/var/www/html"],
                 "environment": php_env,
                 "labels": {
-                    "caddy": domain,
+                    "caddy": " ".join([domain] + alias_domains),
                     "caddy.reverse_proxy": "{{upstreams 80}}",
-                    "caddy.forward_auth": "host.docker.internal:8000",
+                    "caddy.@protected.not.path": (
+                        "*.css *.js *.map "
+                        "*.png *.jpg *.jpeg *.gif *.svg *.ico *.webp *.avif "
+                        "*.woff *.woff2 *.ttf *.eot *.otf "
+                        "*.json *.webmanifest *.xml *.txt "
+                        "/sites/default/files/*"
+                    ),
+                    "caddy.forward_auth": "@protected host.docker.internal:8000",
                     "caddy.forward_auth.uri": "/api/auth/verify-preview",
                     "caddy.forward_auth.header_up": "Host {http.request.host}",
                 },
@@ -190,6 +209,7 @@ def generate_docker_compose(
             "db": {
                 "image": db_image,
                 "container_name": f"{prefix}-db",
+                "command": "--innodb-flush-log-at-trx-commit=0",
                 "environment": {
                     "MYSQL_ROOT_PASSWORD": "root",
                     "MYSQL_DATABASE": "drupal",
