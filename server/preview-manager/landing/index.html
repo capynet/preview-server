@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview Manager — On-demand preview environments for Drupal</title>
+  <meta name="description" content="Automatically deploy preview environments for every merge request. Share live URLs with your team. Optimized for Drupal.">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0b;
+      --surface: #141416;
+      --border: #23232a;
+      --text: #e4e4e7;
+      --text-muted: #8b8b96;
+      --accent: #6d5cff;
+      --accent-hover: #8475ff;
+      --green: #22c55e;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+
+    /* Nav */
+    nav {
+      padding: 20px 0;
+    }
+    nav .container {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .logo span { color: var(--accent); }
+    .nav-link {
+      font-size: 14px;
+      padding: 8px 20px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .nav-link:hover { border-color: var(--accent); color: var(--text); }
+
+    /* Background canvas */
+    #nodes {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 0;
+    }
+    nav, .hero, .section, footer { position: relative; z-index: 1; }
+
+    /* Hero */
+    .hero {
+      padding: 100px 0 80px;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(36px, 5vw, 56px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: -0.03em;
+      margin-bottom: 20px;
+    }
+    .hero h1 em {
+      font-style: normal;
+      color: var(--accent);
+    }
+    .hero p {
+      font-size: 18px;
+      color: var(--text-muted);
+      max-width: 540px;
+      margin: 0 auto 40px;
+    }
+    .btn {
+      display: inline-block;
+      padding: 14px 32px;
+      background: var(--accent);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 600;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      background-clip: padding-box;
+      position: relative;
+    }
+    .btn::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 10px;
+      background: conic-gradient(from var(--border-angle, 135deg), #6d5cff, #b450dc, #6d5cff);
+      z-index: -1;
+    }
+    .btn:hover { color: #fff; }
+
+    /* How it works */
+    .section {
+      padding: 80px 0;
+    }
+    .section-title {
+      font-size: 14px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+    .section h2 {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 48px;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 32px;
+    }
+    .step {
+      background: var(--surface);
+      border: 1px solid transparent;
+      border-radius: 12px;
+      padding: 32px 24px;
+      background-clip: padding-box;
+      position: relative;
+    }
+    .step::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 14px;
+      background: conic-gradient(from var(--border-angle, 135deg), rgba(109,92,255,0.6), rgba(180,80,220,0.4), rgba(109,92,255,0.6));
+      z-index: -1;
+    }
+    .step-number {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--accent);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .step h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .step p {
+      font-size: 14px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* Features */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+    }
+    .feature {
+      padding: 24px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: var(--surface);
+      background-clip: padding-box;
+      position: relative;
+    }
+    .feature::before {
+      content: '';
+      position: absolute;
+      inset: -2px;
+      border-radius: 12px;
+      background: conic-gradient(from var(--border-angle, 135deg), rgba(109,92,255,0.4), rgba(180,80,220,0.2), rgba(109,92,255,0.4));
+      z-index: -1;
+    }
+    .feature-icon {
+      font-size: 24px;
+      margin-bottom: 12px;
+      display: block;
+    }
+    .feature h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    .feature p {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    /* Code block */
+    .code-block {
+      margin-top: 48px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px 28px;
+      overflow-x: auto;
+    }
+    .code-block code {
+      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.8;
+      color: var(--text-muted);
+    }
+    .code-block .cmd { color: var(--green); }
+    .code-block .comment { color: #555; }
+
+    /* Footer */
+    footer {
+      padding: 40px 0;
+      text-align: center;
+    }
+    footer p {
+      font-size: 14px;
+      color: var(--text-muted);
+    }
+
+    @media (max-width: 600px) {
+      .hero { padding: 60px 0 50px; }
+      .section { padding: 50px 0; }
+      .hero p { font-size: 16px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="container">
+    <div class="logo">preview<span>mr</span></div>
+    <a href="https://app.preview-mr.com" class="nav-link">Open App</a>
+  </div>
+</nav>
+
+<canvas id="nodes"></canvas>
+
+<section class="hero">
+  <div class="container">
+    <h1>Preview environments<br>for every <em>merge request</em></h1>
+    <p>Push a branch, get a live URL. Automatic deploy, automatic cleanup. Built for Drupal teams.</p>
+    <a href="https://app.preview-mr.com" class="btn">Get Started</a>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-title">How it works</div>
+    <h2>Three steps to a live preview</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-number">1</div>
+        <h3>Push a merge request</h3>
+        <p>Open or update an MR in GitLab. The CI pipeline triggers a preview deployment automatically.</p>
+      </div>
+      <div class="step">
+        <div class="step-number">2</div>
+        <h3>Environment spins up</h3>
+        <p>Docker containers launch with your code, database, and services. Caddy provisions SSL on the fly.</p>
+      </div>
+      <div class="step">
+        <div class="step-number">3</div>
+        <h3>Share the URL</h3>
+        <p>Each preview gets a unique URL like <code>mr-42-myproject.mr.preview-mr.com</code>. Share it with your team for review.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="container">
+    <div class="section-title">Features</div>
+    <h2>Everything you need</h2>
+    <div class="features-grid">
+      <div class="feature">
+        <span class="feature-icon">&#9889;</span>
+        <h3>Auto-deploy</h3>
+        <p>Previews deploy on every MR push. Merge or close the MR and the environment is cleaned up.</p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">&#9202;</span>
+        <h3>Auto-stop &amp; auto-erase</h3>
+        <p>Idle previews stop automatically to save resources. Old previews are erased after configurable days.</p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">&#128218;</span>
+        <h3>Multi-project</h3>
+        <p>Manage previews across multiple projects from a single dashboard. Per-project configuration and access control.</p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">&#62;&gt;_</span>
+        <h3>CLI tool</h3>
+        <p>List, start, stop, rebuild previews and run drush commands from your terminal. Push and pull databases and files.</p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">&#128268;</span>
+        <h3>Drupal-optimized</h3>
+        <p>First-class support for Composer, Drush, database imports, and file syncs. One-click login links via drush uli.</p>
+      </div>
+      <div class="feature">
+        <span class="feature-icon">&#128274;</span>
+        <h3>Auth &amp; access control</h3>
+        <p>OAuth login via GitLab or Google. Role-based access with admin, manager, and viewer roles. Project-level membership.</p>
+      </div>
+    </div>
+
+    <div class="code-block">
+      <code>
+        <span class="comment"># Install the CLI</span><br>
+        <span class="cmd">curl -fsSL https://api.preview-mr.com/api/cli/install.sh | bash</span><br><br>
+        <span class="comment"># Authenticate</span><br>
+        <span class="cmd">preview login</span><br><br>
+        <span class="comment"># List your previews</span><br>
+        <span class="cmd">preview list myproject</span><br><br>
+        <span class="comment"># Get a Drupal login link</span><br>
+        <span class="cmd">preview drush myproject/mr-42 uli</span>
+      </code>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="container">
+    <p><a href="https://app.preview-mr.com">Open Preview Manager</a></p>
+  </div>
+</footer>
+
+<script>
+(function() {
+  // --- Canvas setup ---
+  var c = document.getElementById('nodes');
+  var ctx = c.getContext('2d');
+  var dpr = window.devicePixelRatio || 1;
+  var nodes = [];
+  var COUNT = 65;
+  var LINK_DIST = 160;
+  var LINK_DIST_SQ = LINK_DIST * LINK_DIST;
+  var raf;
+  var mouse = { x: -1000, y: -1000, active: false };
+  var GRAVITY = 0.15;
+  var GRAVITY_DIST = 160;
+  var GRAVITY_DIST_SQ = GRAVITY_DIST * GRAVITY_DIST;
+  var MAX_SPEED_SQ = 0.64; // 0.8^2
+
+  // --- Border rotation setup ---
+  var BORDER_MAX_SPEED = 2.5;
+  var BORDER_ACCEL = 0.04;
+  var BORDER_DECEL = 0.02;
+  var borderItems = [];
+  var borderActive = 0;
+
+  document.querySelectorAll('.step, .feature, .btn').forEach(function(el) {
+    var state = { angle: 135, speed: 0, hovered: false };
+    borderItems.push({ el: el, state: state });
+    el.addEventListener('mouseenter', function() {
+      if (!state.hovered) { state.hovered = true; borderActive++; }
+    });
+    el.addEventListener('mouseleave', function() {
+      if (state.hovered) { state.hovered = false; borderActive--; }
+    });
+  });
+
+  // --- Mouse tracking ---
+  document.addEventListener('mousemove', function(e) {
+    mouse.x = e.clientX;
+    mouse.y = e.clientY;
+    mouse.active = true;
+  });
+  document.addEventListener('mouseleave', function() {
+    mouse.active = false;
+  });
+
+  function resize() {
+    c.width = window.innerWidth * dpr;
+    c.height = window.innerHeight * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function init() {
+    resize();
+    var w = window.innerWidth, h = window.innerHeight;
+    nodes = [];
+    for (var i = 0; i < COUNT; i++) {
+      nodes.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 0.3,
+        vy: (Math.random() - 0.5) * 0.3,
+        r: Math.random() * 1.5 + 1
+      });
+    }
+  }
+
+  // --- Opacity buckets for batching lines ---
+  var BUCKETS = 5;
+  var bucketPaths = new Array(BUCKETS);
+
+  function frame() {
+    var w = window.innerWidth, h = window.innerHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    // Reset bucket paths
+    for (var b = 0; b < BUCKETS; b++) bucketPaths[b] = null;
+
+    // Update nodes + collect lines into buckets
+    for (var i = 0; i < COUNT; i++) {
+      var a = nodes[i];
+
+      // Mouse gravity (sqrt only when within squared range)
+      if (mouse.active) {
+        var mdx = mouse.x - a.x, mdy = mouse.y - a.y;
+        var mdSq = mdx * mdx + mdy * mdy;
+        if (mdSq < GRAVITY_DIST_SQ && mdSq > 1) {
+          var md = Math.sqrt(mdSq);
+          var force = GRAVITY * (1 - md / GRAVITY_DIST);
+          a.vx += (mdx / md) * force;
+          a.vy += (mdy / md) * force;
+        }
+      }
+
+      // Clamp speed (avoid sqrt when under limit)
+      var speedSq = a.vx * a.vx + a.vy * a.vy;
+      if (speedSq > MAX_SPEED_SQ) {
+        var s = 0.8 / Math.sqrt(speedSq);
+        a.vx *= s; a.vy *= s;
+      }
+
+      a.x += a.vx; a.y += a.vy;
+      if (a.x < 0 || a.x > w) a.vx *= -1;
+      if (a.y < 0 || a.y > h) a.vy *= -1;
+
+      // Lines — use squared distance, only sqrt for opacity bucket
+      for (var j = i + 1; j < COUNT; j++) {
+        var n = nodes[j];
+        var dx = a.x - n.x, dy = a.y - n.y;
+        var dSq = dx * dx + dy * dy;
+        if (dSq < LINK_DIST_SQ) {
+          var bucket = (Math.sqrt(dSq) / LINK_DIST * BUCKETS) | 0;
+          if (bucket >= BUCKETS) bucket = BUCKETS - 1;
+          if (!bucketPaths[bucket]) bucketPaths[bucket] = new Path2D();
+          bucketPaths[bucket].moveTo(a.x, a.y);
+          bucketPaths[bucket].lineTo(n.x, n.y);
+        }
+      }
+    }
+
+    // Draw lines batched by opacity bucket
+    ctx.lineWidth = 0.8;
+    for (var b = 0; b < BUCKETS; b++) {
+      if (bucketPaths[b]) {
+        ctx.strokeStyle = 'rgba(160,150,255,' + (0.7 * (1 - b / BUCKETS)).toFixed(2) + ')';
+        ctx.stroke(bucketPaths[b]);
+      }
+    }
+
+    // Draw all dots in a single path
+    ctx.fillStyle = 'rgba(180,170,255,0.9)';
+    ctx.beginPath();
+    for (var i = 0; i < COUNT; i++) {
+      var a = nodes[i];
+      ctx.moveTo(a.x + a.r, a.y);
+      ctx.arc(a.x, a.y, a.r, 0, 6.2832);
+    }
+    ctx.fill();
+
+    // Border rotation — only iterate when something is spinning
+    if (borderActive > 0 || hasBorderMotion()) {
+      for (var i = 0; i < borderItems.length; i++) {
+        var st = borderItems[i].state;
+        if (st.hovered) {
+          st.speed = Math.min(st.speed + BORDER_ACCEL, BORDER_MAX_SPEED);
+        } else if (st.speed > 0) {
+          st.speed = Math.max(st.speed - BORDER_DECEL, 0);
+        }
+        if (st.speed > 0) {
+          st.angle = (st.angle + st.speed) % 360;
+          borderItems[i].el.style.setProperty('--border-angle', st.angle + 'deg');
+        }
+      }
+    }
+
+    raf = requestAnimationFrame(frame);
+  }
+
+  function hasBorderMotion() {
+    for (var i = 0; i < borderItems.length; i++) {
+      if (borderItems[i].state.speed > 0) return true;
+    }
+    return false;
+  }
+
+  init();
+  frame();
+
+  var resizeTimer;
+  window.addEventListener('resize', function() {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(init, 150);
+  });
+
+  document.addEventListener('visibilitychange', function() {
+    if (document.hidden) { cancelAnimationFrame(raf); }
+    else { frame(); }
+  });
+})();
+</script>
+</body>
+</html>

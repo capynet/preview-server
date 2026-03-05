@@ -88,7 +88,6 @@ app.add_middleware(
     allow_origins=[
         settings.frontend_url,
         "https://app.preview-mr.com",
-        "https://www.preview-mr.com",
         "https://preview-mr.com",
         "http://localhost:3000",
     ],

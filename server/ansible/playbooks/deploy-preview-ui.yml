@@ -1,38 +1,19 @@
 ---
-# Deploy Preview UI
+# Setup Preview UI infrastructure
+#
+# This sets up the server for GitHub Actions deployment:
+#   - Installs Node.js 22
+#   - Configures SSH key for GitHub Actions
+#   - Creates directory and systemd service
+#
+# The actual app deploy happens via GitHub Actions on push to main.
 #
 # Usage:
-#   # Full deploy (Node.js + app + service)
 #   ansible-playbook playbooks/deploy-preview-ui.yml
-#
-#   # Quick deploy (sync files + restart)
-#   ansible-playbook playbooks/deploy-preview-ui.yml --tags ui
 
-- name: Deploy Preview UI
+- name: Setup Preview UI
   hosts: preview-server
   become: yes
 
   roles:
     - preview-ui
-
-  post_tasks:
-    - name: Verify service is running
-      systemd:
-        name: preview-ui
-        state: started
-      register: service_state
-      tags: [ui]
-
-    - name: Display service status
-      debug:
-        msg: |
-          ================================================
-          PREVIEW UI DEPLOYED SUCCESSFULLY
-          ================================================
-
-          URL: https://{{ domain }}
-          Service: preview-ui ({{ service_state.status.ActiveState }})
-          Logs: sudo journalctl -u preview-ui -f
-
-          ================================================
-      tags: [ui]

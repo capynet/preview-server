@@ -14,6 +14,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - caddy_data:/data
       - caddy_config:/config
+      - /opt/preview-landing:/landing:ro
     networks:
       - preview-network
     environment:
@@ -29,8 +30,11 @@ services:
       caddy_1: "*.mr.{{ domain }}"
       caddy_1.tls.dns: "cloudflare {env.CLOUDFLARE_API_TOKEN}"
       caddy_1.reverse_proxy: "host.docker.internal:8000"
-      caddy_2: "{{ domain }}"
+      caddy_2: "app.{{ domain }}"
       caddy_2.reverse_proxy: "host.docker.internal:3000"
+      caddy_3: "{{ domain }}"
+      caddy_3.root: "* /landing"
+      caddy_3.file_server: ""
 
 volumes:
   caddy_data:

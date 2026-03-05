@@ -20,12 +20,14 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 # Track in-flight deploys to deduplicate concurrent webhook calls
 _deploy_locks: dict[str, asyncio.Lock] = {}
 
-# Files/dirs to preserve during rsync updates
+# Files/dirs to preserve during rsync updates.
+# --filter=':- .gitignore' makes rsync read .gitignore files and skip
+# matching entries (vendor/, node_modules/, build artifacts, etc.),
+# so --delete won't remove files generated during deployment.
 RSYNC_EXCLUDES = [
     "--exclude=docker-compose.yml",
     "--exclude=.overlay",
-    "--exclude=vendor/",
-    "--exclude=node_modules/",
+    "--filter=:- .gitignore",
 ]
 
 

@@ -38,6 +38,23 @@
     group: root
     mode: '0755'
 
+- name: Create landing page directory
+  file:
+    path: /opt/preview-landing
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: Copy landing page files
+  copy:
+    src: "{{ playbook_dir }}/../../preview-manager/landing/"
+    dest: /opt/preview-landing/
+    owner: root
+    group: root
+    mode: '0644'
+  register: landing_files
+
 - name: Copy Caddy Dockerfile
   copy:
     src: "{{ playbook_dir }}/../../preview-manager/docker/Dockerfile.caddy"

@@ -1,5 +1,7 @@
 ---
-# Preview UI - Deployment Tasks
+# Preview UI - Server setup for GitHub Actions deployment
+# The actual deploy happens via GitHub Actions (.github/workflows/deploy.yml)
+# This role only sets up the infrastructure needed for that workflow.
 
 - name: Install Node.js 22 LTS (NodeSource)
   block:
@@ -43,49 +45,6 @@
     group: preview-manager
     mode: '0775'
 
-- name: Sync standalone build
-  synchronize:
-    src: "{{ playbook_dir }}/../../../../preview-ui/.next/standalone/"
-    dest: /home/preview-manager/www/previews/preview-ui/
-    delete: yes
-    rsync_opts:
-      - "--exclude=.env"
-  notify: Restart preview-ui
-  tags: [ui]
-
-- name: Sync static assets
-  synchronize:
-    src: "{{ playbook_dir }}/../../../../preview-ui/.next/static/"
-    dest: /home/preview-manager/www/previews/preview-ui/.next/static/
-    delete: yes
-  notify: Restart preview-ui
-  tags: [ui]
-
-- name: Check if public directory exists locally
-  delegate_to: localhost
-  stat:
-    path: "{{ playbook_dir }}/../../../../preview-ui/public/"
-  register: public_dir
-  tags: [ui]
-
-- name: Sync public assets
-  synchronize:
-    src: "{{ playbook_dir }}/../../../../preview-ui/public/"
-    dest: /home/preview-manager/www/previews/preview-ui/public/
-    delete: yes
-  when: public_dir.stat.exists
-  notify: Restart preview-ui
-  tags: [ui]
-
-- name: Set ownership on preview-ui files
-  file:
-    path: /home/preview-manager/www/previews/preview-ui
-    owner: preview-manager
-    group: preview-manager
-    mode: '0775'
-    recurse: yes
-  tags: [ui]
-
 - name: Create systemd service file
   template:
     src: preview-ui.service.j2
@@ -97,29 +56,8 @@
     - Reload systemd
     - Restart preview-ui
 
-- name: Enable and start preview-ui service
+- name: Enable preview-ui service
   systemd:
     name: preview-ui
     enabled: yes
-    state: started
     daemon_reload: yes
-
-- name: Wait for service to be ready
-  wait_for:
-    port: 3000
-    delay: 2
-    timeout: 30
-  tags: [ui]
-
-- name: Check service health
-  uri:
-    url: http://localhost:3000
-    method: GET
-    status_code: [200, 307]
-  register: health_check
-  tags: [ui]
-
-- name: Display health check result
-  debug:
-    msg: "Preview UI is running on port 3000 (status: {{ health_check.status }})"
-  tags: [ui]

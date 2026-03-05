@@ -144,4 +144,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
     2. Importa el dump
     3. Hace docker commit → preview-db:{project}:latest
     4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
-
+- Deberia dar algun soporte para MCP para poder conectar con las previews desde local
