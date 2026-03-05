@@ -124,3 +124,24 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja. 
 - Usar github actions para compilar el cli, la ui
 - en la visualizacion de uso del cpu me gustaria saber el indice de carga en los ultimos mins
+- pregunta: se podria tener un snapshot de una imagen de docker preparada para ser reutilizada en segundos? por ejemplo el docker de la db siempre es el mismo en cada rebuild hasta que se     
+  carga una nueva db. RESPUESTA:
+  -  Sí, hay varias opciones. Para el caso de la DB:
+
+    1. Imagen pre-cargada con docker commit                                                                                                                                                       
+       Después de importar la base DB, hacer docker commit del container MySQL como imagen custom (preview-db-soudal:latest). Los nuevos previews usan esa imagen y arrancan con los datos ya
+       cargados. Problema: MySQL guarda datos en volumen, no en la capa del container, así que habría que ajustar eso.
+
+    2. Custom image con datos baked-in (más robusto)
+       Crear un Dockerfile que arranca MySQL, importa el dump, y guarda el datadir dentro de la imagen. Cada vez que se sube un nuevo base DB, se rebuilda la imagen. Los previews arrancan en
+       segundos con datos listos.
+
+    3. Volume snapshots (más rápido, más complejo)
+       Con ZFS o btrfs podés hacer snapshots instantáneos del volumen de datos. Clonar un volumen de 500MB toma milisegundos. Pero requiere que el servidor use esos filesystems.
+
+  La opción más práctica para tu caso sería la 2: cuando alguien sube un nuevo base DB via preview push db, el backend:
+    1. Levanta un container MySQL temporal
+    2. Importa el dump
+    3. Hace docker commit → preview-db:{project}:latest
+    4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
+

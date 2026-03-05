@@ -24,6 +24,8 @@ _deploy_locks: dict[str, asyncio.Lock] = {}
 RSYNC_EXCLUDES = [
     "--exclude=docker-compose.yml",
     "--exclude=.overlay",
+    "--exclude=vendor/",
+    "--exclude=node_modules/",
 ]
 
 

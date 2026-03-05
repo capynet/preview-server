@@ -594,7 +594,7 @@ async def rebuild_preview(
         preview_name,
         state["branch"],
         state.get("commit_sha", ""),
-        "rebuild",
+        "rebuild" if force_new else "update",
         state.get("mr_id"),
         force_new,
     )

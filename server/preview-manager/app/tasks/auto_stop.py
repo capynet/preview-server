@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from app import config_store
-from app.database import get_all_previews, get_project
+from app.database import get_all_previews, get_project, has_running_deployment
 from app.routes.previews import get_docker_status
 
 logger = logging.getLogger(__name__)
@@ -83,6 +83,10 @@ async def _check_and_stop():
         # Check if inactive
         idle_seconds = (now - last_activity).total_seconds()
         if idle_seconds < threshold_minutes * 60:
+            continue
+
+        # Skip if there's an active deployment
+        if await has_running_deployment(p["id"]):
             continue
 
         # Check if container is actually running

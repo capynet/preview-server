@@ -59,10 +59,22 @@ RUN LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
 # Install NVM (Node Version Manager) — no Node installed by default.
 # Projects use .nvmrc to specify their Node version.
 ENV NVM_DIR=/usr/local/nvm
+ENV BASH_ENV=/etc/nvm.sh
 RUN mkdir -p $NVM_DIR \
     && curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash \
+    && printf 'export NVM_DIR=/usr/local/nvm\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' > /etc/nvm.sh \
     && echo 'export NVM_DIR=/usr/local/nvm' >> /etc/bash.bashrc \
     && echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> /etc/bash.bashrc
+
+# Create wrapper scripts so nvm/node/npm/npx work from #!/bin/sh scripts.
+# nvm is a bash function, so sh scripts cannot source it directly.
+# These wrappers invoke bash, load nvm, then exec the real command.
+RUN printf '#!/bin/bash\nexport NVM_DIR=/usr/local/nvm\n. "$NVM_DIR/nvm.sh"\nnvm "$@"\n' > /usr/local/bin/nvm \
+    && chmod +x /usr/local/bin/nvm \
+    && for cmd in node npm npx; do \
+        printf '#!/bin/bash\nexport NVM_DIR=/usr/local/nvm\n. "$NVM_DIR/nvm.sh"\nexec %s "$@"\n' "$cmd" > /usr/local/bin/$cmd \
+        && chmod +x /usr/local/bin/$cmd; \
+    done
 
 # Install Composer
 COPY --from=composer /usr/bin/composer /usr/bin/composer
