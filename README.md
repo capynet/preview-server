@@ -145,3 +145,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
     3. Hace docker commit → preview-db:{project}:latest
     4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
 - Deberia dar algun soporte para MCP para poder conectar con las previews desde local
+- voy a necesitar poder especificar en preview push db/files un db o dir files arbitrario y un .sql o .sql.hz o files.tgz o tar.gz 

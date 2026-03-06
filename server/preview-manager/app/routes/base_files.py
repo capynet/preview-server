@@ -171,6 +171,11 @@ async def _process_db(slug: str, file_path: Path) -> dict:
     dest = _db_path(slug)
     BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
     shutil.move(str(file_path), str(dest))
+
+    # Invalidate DB volume cache — the dump changed, cached volumes are stale
+    from app.db_cache import invalidate_cache
+    invalidate_cache(slug)
+
     logger.info("Uploaded base DB %s (%d bytes)", dest, dest.stat().st_size)
     return {"success": True, "path": str(dest), "size_bytes": dest.stat().st_size}
 

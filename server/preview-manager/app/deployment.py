@@ -191,10 +191,26 @@ class PreviewDeployer:
         self._verify_base_files()
         await self._generate_compose()
         self._write_internal_settings()
-        await self._docker_up()
-        await self._wait_for_db()
+
+        # DB volume cache: skip SQL import if a cached volume exists
+        from app.db_cache import compute_cache_key, cache_exists, import_volume, export_volume
+        db_spec = self._preview_config["database"]
+        dump_path = Path(f"/backups/{self.project_name}-base.sql.gz")
+        cache_key = compute_cache_key(self.project_name, db_spec, dump_path)
+        volume_name = f"{self.container_prefix}_db_data"
+        use_cache = cache_exists(self.project_name, cache_key)
+
+        if use_cache:
+            await self._restore_db_cache(volume_name, cache_key)
+            await self._docker_up()
+            await self._wait_for_db()
+        else:
+            await self._docker_up()
+            await self._wait_for_db()
+            await self._import_db()
+            await self._create_db_cache(volume_name, cache_key)
+
         await self._composer_install()
-        await self._import_db()
         await self._import_files()
         await self._run_deploy_steps("new")
         await self._run_project_deploy_script("new")
@@ -468,6 +484,62 @@ if (getenv('PREV_IS_PREVIEW')) {
         await self._log_step_end(
             step, elapsed, True,
             f"{DIM}Mounted overlay (base: {base_dir}){RESET}",
+        )
+
+    async def _restore_db_cache(self, volume_name: str, cache_key: str):
+        """Pre-populate the DB volume from cache before docker compose up."""
+        from app.db_cache import import_volume, get_cache_path
+        step = "restore-db-cache"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        cache_path = get_cache_path(self.project_name, cache_key)
+        size_mb = cache_path.stat().st_size / (1024 * 1024)
+
+        await import_volume(volume_name, self.project_name, cache_key)
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(
+            step, elapsed, True,
+            f"{DIM}Restored from cache ({size_mb:.1f} MB){RESET}",
+        )
+
+    async def _create_db_cache(self, volume_name: str, cache_key: str):
+        """Export the DB volume to cache after first import."""
+        from app.db_cache import export_volume
+        step = "create-db-cache"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        # Stop DB container for a clean snapshot
+        db_container = f"{self.container_prefix}-db"
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "stop", db_container,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await proc.communicate()
+
+        try:
+            cache_path = await export_volume(
+                volume_name, self.project_name, cache_key
+            )
+            size_mb = cache_path.stat().st_size / (1024 * 1024)
+        finally:
+            # Restart DB container
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "start", db_container,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            # Wait for DB to be ready again
+            await self._wait_for_db()
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(
+            step, elapsed, True,
+            f"{DIM}Cached for future previews ({size_mb:.1f} MB){RESET}",
         )
 
     async def _drush(self, *args):

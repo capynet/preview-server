@@ -64,6 +64,52 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         except (json.JSONDecodeError, TypeError):
             env_vars = {}
 
+    # Extract exposed services and stack info from docker-compose.yml
+    exposed_services: dict[str, str] = {}
+    stack: dict[str, str] = {}
+    preview_path = state.get("path", "")
+    if preview_path:
+        compose_file = Path(preview_path) / "docker-compose.yml"
+        if compose_file.exists():
+            try:
+                import yaml
+                compose = yaml.safe_load(compose_file.read_text()) or {}
+                services = compose.get("services", {})
+                preview_domain = state["url"].replace("https://", "").replace("http://", "")
+
+                # Exposed services (Caddy subdomain labels)
+                for svc_name, svc in services.items():
+                    caddy_label = (svc.get("labels") or {}).get("caddy", "")
+                    if caddy_label and "--" in caddy_label and caddy_label.endswith(preview_domain):
+                        exposed_services[svc_name] = f"https://{caddy_label}"
+
+                # Stack: PHP version from image tag
+                php_image = (services.get("php") or {}).get("image", "")
+                if ":php" in php_image:
+                    stack["PHP"] = php_image.split(":php")[-1]
+
+                # Stack: Database from db image
+                db_image = (services.get("db") or {}).get("image", "")
+                if db_image:
+                    stack["Database"] = db_image  # e.g. "mysql:8.0" or "mariadb:10.6"
+
+                # Stack: Redis/Valkey from redis service image
+                redis_image = (services.get("redis") or {}).get("image", "")
+                if redis_image:
+                    if "valkey" in redis_image:
+                        ver = redis_image.split(":")[-1].replace("-alpine", "") if ":" in redis_image else ""
+                        stack["Valkey"] = ver or redis_image
+                    else:
+                        ver = redis_image.split(":")[-1].replace("-alpine", "") if ":" in redis_image else ""
+                        stack["Redis"] = ver or redis_image
+
+                # Stack: Solr from solr service image
+                solr_image = (services.get("solr") or {}).get("image", "")
+                if solr_image and ":" in solr_image:
+                    stack["Solr"] = solr_image.split(":")[-1]
+            except Exception:
+                pass
+
     return PreviewInfo(
         preview_name=state["preview_name"],
         project=state["project"],
@@ -79,6 +125,8 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         auto_update=bool(state.get("auto_update", 1)),
         pinned=bool(state.get("pinned", 0)),
         env_vars=env_vars,
+        exposed_services=exposed_services,
+        stack=stack,
     )
 
 

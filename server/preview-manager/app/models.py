@@ -23,3 +23,5 @@ class PreviewInfo(BaseModel):
     env_vars: dict[str, str] = {}
     mr_title: Optional[str] = None
     mr_url: Optional[str] = None
+    exposed_services: dict[str, str] = {}  # service_name → public URL
+    stack: dict[str, str] = {}  # php, database, redis/valkey, solr — name → version
