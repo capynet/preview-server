@@ -26,6 +26,7 @@ DEFAULTS = {
         "update": None,
     },
     "domain_aliases": [],
+    "expose": {},
 }
 
 
@@ -99,6 +100,11 @@ def parse_preview_yml(preview_path: Path) -> dict:
     # Solr configset — path relative to project root with schema.xml etc.
     if "solr_configset" in raw and raw["solr_configset"]:
         config["solr_configset"] = str(raw["solr_configset"])
+
+    # Expose — map service names to ports for subdomain routing via Caddy.
+    # e.g. expose: { solr: 8983 } → solr--{preview-domain} routes to container:8983
+    if "expose" in raw and isinstance(raw["expose"], dict):
+        config["expose"] = {str(k): int(v) for k, v in raw["expose"].items() if v}
 
     logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
@@ -283,6 +289,21 @@ def generate_docker_compose(
         solr_service["volumes"] = solr_volumes
         compose["services"]["solr"] = solr_service
         compose["volumes"]["solr_data"] = None
+
+    # Expose — add Caddy labels to services for subdomain routing.
+    # Each exposed service gets a {service}--{domain} subdomain with auth.
+    for svc_name, port in config.get("expose", {}).items():
+        if svc_name not in compose["services"]:
+            logger.warning(f"expose: service '{svc_name}' not found in compose, skipping")
+            continue
+        svc = compose["services"][svc_name]
+        expose_domain = f"{svc_name}--{domain}"
+        svc.setdefault("labels", {})
+        svc["labels"]["caddy"] = expose_domain
+        svc["labels"]["caddy.reverse_proxy"] = "{{upstreams " + str(port) + "}}"
+        svc["labels"]["caddy.forward_auth"] = "host.docker.internal:8000"
+        svc["labels"]["caddy.forward_auth.uri"] = "/api/auth/verify-preview"
+        svc["labels"]["caddy.forward_auth.header_up"] = "Host {http.request.host}"
 
     return compose
 

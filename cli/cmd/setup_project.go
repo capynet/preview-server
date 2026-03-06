@@ -209,11 +209,32 @@ redis: false          # e.g. "7", "6"
 valkey: false         # e.g. "8", "7" (Redis-compatible fork)
 solr: false           # e.g. "9", "8"
 
+# Solr configset — path relative to the project root containing schema.xml,
+# solrconfig.xml, and language-specific files. If not set, Solr uses its
+# default config. Generate one with: drush search-api-solr:get-server-config
+# solr_configset: "etc/solr"
+
 # Custom environment variables injected into the PHP container.
 # These are available in settings.preview.php via getenv().
 # env:
 #   APP_ENV: preview
 #   MY_CUSTOM_VAR: some-value
+
+# Expose service ports via authenticated subdomain routing.
+# Each entry maps a service name (as defined above) to its port.
+# The service becomes accessible at {service}--{preview-domain}.mr.preview-mr.com
+# Protected by the same authentication as the preview itself.
+# expose:
+#   solr: 8983
+
+# Domain aliases — additional subdomains that route to this preview.
+# Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com
+# Useful for multi-site setups where the app expects different hostnames.
+# The list is available as PREV_DOMAIN_ALIASES env var.
+# domain_aliases:
+#   - admin
+#   - fr
+#   - de
 
 # Deploy scripts — executed inside the PHP container after setup.
 # Paths are relative to the project root.
