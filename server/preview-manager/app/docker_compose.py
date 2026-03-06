@@ -96,6 +96,10 @@ def parse_preview_yml(preview_path: Path) -> dict:
     if "domain_aliases" in raw and isinstance(raw["domain_aliases"], list):
         config["domain_aliases"] = [str(a) for a in raw["domain_aliases"] if a]
 
+    # Solr configset — path relative to project root with schema.xml etc.
+    if "solr_configset" in raw and raw["solr_configset"]:
+        config["solr_configset"] = str(raw["solr_configset"])
+
     logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
                 f"solr={config['services']['solr']}, "
@@ -253,11 +257,18 @@ def generate_docker_compose(
 
     if solr_cfg:
         solr_ver = solr_cfg if isinstance(solr_cfg, str) else "9"
+        solr_volumes = ["solr_data:/var/solr"]
+        solr_command = "solr-precreate drupal"
+        # Mount custom configset if specified in preview.yml
+        configset_path = config.get("solr_configset")
+        if configset_path:
+            solr_volumes.append(f"./{configset_path}:/opt/solr-conf:ro")
+            solr_command = "solr-precreate drupal /opt/solr-conf"
         compose["services"]["solr"] = {
             "image": f"solr:{solr_ver}",
             "container_name": f"{prefix}-solr",
-            "volumes": ["solr_data:/var/solr"],
-            "command": "solr-precreate drupal",
+            "volumes": solr_volumes,
+            "command": solr_command,
             "networks": [network_name],
             "restart": "unless-stopped",
         }
