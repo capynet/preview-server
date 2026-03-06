@@ -146,3 +146,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
     4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
 - Deberia dar algun soporte para MCP para poder conectar con las previews desde local
 - voy a necesitar poder especificar en preview push db/files un db o dir files arbitrario y un .sql o .sql.hz o files.tgz o tar.gz 
+- Cuando dse crea el cache de la db se hace a la hora de crear el primer preview. Me pregunto si es posible sacar ese caso a un proceso en backgrround para no bloquear la generacion del preview. Y si no es posible por lo menos dar un poco mas de info "creando cache de esta db apras er usadaen las siguientes preview." ademas si se puede informar el progreso mejor que mejor.

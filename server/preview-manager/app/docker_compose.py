@@ -27,6 +27,7 @@ DEFAULTS = {
     },
     "domain_aliases": [],
     "expose": {},
+    "litespeed_cache": False,
 }
 
 
@@ -106,9 +107,13 @@ def parse_preview_yml(preview_path: Path) -> dict:
     if "expose" in raw and isinstance(raw["expose"], dict):
         config["expose"] = {str(k): int(v) for k, v in raw["expose"].items() if v}
 
+    # LiteSpeed Cache — enable OLS built-in cache module
+    if "litespeed_cache" in raw:
+        config["litespeed_cache"] = bool(raw["litespeed_cache"])
+
     logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
-                f"solr={config['services']['solr']}, "
+                f"solr={config['services']['solr']}, litespeed_cache={config['litespeed_cache']}, "
                 f"deploy.new={config['deploy']['new']}, deploy.update={config['deploy']['update']}")
     return config
 
@@ -167,6 +172,9 @@ def generate_docker_compose(
         "PREV_FILE_TRANSLATIONS_PATH": "sites/default/files/translations",
         "DOCUMENT_ROOT": f"/var/www/html/{config['docroot']}",
     }
+
+    if config.get("litespeed_cache"):
+        php_env["PREV_LITESPEED_CACHE"] = "1"
 
     if config["services"]["redis"] or config["services"]["valkey"]:
         php_env["PREV_REDIS_HOST"] = f"{prefix}-redis"

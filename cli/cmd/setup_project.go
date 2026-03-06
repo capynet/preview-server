@@ -236,6 +236,11 @@ solr: false           # e.g. "9", "8"
 #   - fr
 #   - de
 
+# LiteSpeed Cache — enable the built-in OLS cache module.
+# Works like Varnish but integrated into the webserver. Requires the
+# Drupal "lite_speed_cache" module to be installed in your project.
+# litespeed_cache: true
+
 # Deploy scripts — executed inside the PHP container after setup.
 # Paths are relative to the project root.
 # If not defined or set to false, no deploy script runs for that phase.

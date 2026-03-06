@@ -36,6 +36,7 @@
   loop:
     - /home/preview-manager/www/previews/server/preview-manager
     - /var/www/preview-manager
+    - /var/www/preview-manager/db-cache
 
 - name: Copy preview-manager application files
   synchronize:

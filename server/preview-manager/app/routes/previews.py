@@ -77,16 +77,19 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                 services = compose.get("services", {})
                 preview_domain = state["url"].replace("https://", "").replace("http://", "")
 
-                # Exposed services (Caddy subdomain labels)
+                # Exposed services (Caddy subdomain labels), excluding the main php service
                 for svc_name, svc in services.items():
+                    if svc_name == "php":
+                        continue
                     caddy_label = (svc.get("labels") or {}).get("caddy", "")
                     if caddy_label and "--" in caddy_label and caddy_label.endswith(preview_domain):
                         exposed_services[svc_name] = f"https://{caddy_label}"
 
-                # Stack: PHP version from image tag
+                # Stack: PHP version and webserver from image tag
                 php_image = (services.get("php") or {}).get("image", "")
                 if ":php" in php_image:
                     stack["PHP"] = php_image.split(":php")[-1]
+                    stack["Webserver"] = "OpenLiteSpeed"
 
                 # Stack: Database from db image
                 db_image = (services.get("db") or {}).get("image", "")
@@ -107,6 +110,11 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                 solr_image = (services.get("solr") or {}).get("image", "")
                 if solr_image and ":" in solr_image:
                     stack["Solr"] = solr_image.split(":")[-1]
+
+                # Stack: LiteSpeed Cache
+                php_env = (services.get("php") or {}).get("environment", {})
+                if php_env.get("PREV_LITESPEED_CACHE") == "1":
+                    stack["LSCache"] = "Enabled"
             except Exception:
                 pass
 
@@ -429,6 +437,7 @@ async def delete_preview_internal(project: str, preview_name: str):
         logger.warning(f"Error unmounting overlay for {project}/{preview_name}: {e}")
 
     # Stop and remove Docker containers
+    container_prefix = f"{preview_name}-{project}"
     if preview_path.exists() and (preview_path / "docker-compose.yml").exists():
         try:
             process = await asyncio.create_subprocess_exec(
@@ -441,6 +450,26 @@ async def delete_preview_internal(project: str, preview_name: str):
             logger.info(f"Docker containers stopped for {project}/{preview_name}")
         except Exception as e:
             logger.warning(f"Error stopping Docker containers: {e}")
+
+    # Clean up any orphaned volumes (e.g. if compose down failed or file was missing)
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "docker", "volume", "ls", "-q", "--filter", f"name={container_prefix}_",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+        volumes = [v.strip() for v in stdout.decode().splitlines() if v.strip()]
+        for vol in volumes:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "volume", "rm", "-f", vol,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+            logger.info(f"Removed orphaned volume: {vol}")
+    except Exception as e:
+        logger.warning(f"Error cleaning up volumes for {project}/{preview_name}: {e}")
 
     # Delete from DB
     await PreviewStateManager.delete_state(project, preview_name)

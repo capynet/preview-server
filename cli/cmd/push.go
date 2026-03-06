@@ -25,8 +25,8 @@ var pushCmd = &cobra.Command{
 var pushDBCmd = &cobra.Command{
 	Use:   "db [file.sql.gz]",
 	Short: "Export and upload the base database",
-	Long: `Export the database using ddev drush sql-dump and upload it as the base
-database for previews.
+	Long: `Export the database using mysqldump (via ddev) and upload it as the base
+database for previews. Cache tables (cache_*) are excluded automatically.
 
 If a file path is given, upload that file instead of generating a dump.
 The project is detected automatically from the git remote in the current directory.`,
@@ -197,6 +197,50 @@ func ensureDdevRunning() error {
 	return nil
 }
 
+// getDrupalDBCredentials returns the database credentials from Drupal's configuration
+// by running ddev drush sql:conf --format=json.
+type dbCredentials struct {
+	Host     string
+	Database string
+	Username string
+	Password string
+}
+
+func getDrupalDBCredentials() (*dbCredentials, error) {
+	out, err := exec.Command("ddev", "drush", "sql:conf", "--format=json").Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to run ddev drush sql:conf: %w", err)
+	}
+
+	var conf map[string]interface{}
+	if err := json.Unmarshal(out, &conf); err != nil {
+		return nil, fmt.Errorf("failed to parse drush sql:conf output: %w", err)
+	}
+
+	getString := func(key string) string {
+		if v, ok := conf[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+
+	creds := &dbCredentials{
+		Host:     getString("host"),
+		Database: getString("database"),
+		Username: getString("username"),
+		Password: getString("password"),
+	}
+
+	if creds.Database == "" {
+		return nil, fmt.Errorf("drush sql:conf did not return a database name")
+	}
+	if creds.Username == "" {
+		creds.Username = "root"
+	}
+
+	return creds, nil
+}
+
 // getDrupalFilesDir uses ddev drush status to detect the public files directory.
 // Returns a path relative to the project root (e.g. "docroot/sites/default/files").
 func getDrupalFilesDir() (string, error) {
@@ -240,7 +284,7 @@ func getDrupalFilesDir() (string, error) {
 }
 
 func generateAndUploadDB(slug string) error {
-	fmt.Fprintln(os.Stderr, "Generating database dump via ddev drush sql-dump...")
+	fmt.Fprintln(os.Stderr, "Generating database dump via mysqldump...")
 
 	// Ensure ddev is running before piping stdout, so startup messages
 	// don't get mixed into the SQL dump
@@ -248,11 +292,70 @@ func generateAndUploadDB(slug string) error {
 		return err
 	}
 
-	// Create a pipe: drush sql-dump | pigz/gzip -> upload
-	drush := exec.Command("ddev", "drush", "sql-dump")
-	drush.Stderr = os.Stderr
+	// Get database credentials from Drupal's configuration
+	creds, err := getDrupalDBCredentials()
+	if err != nil {
+		return fmt.Errorf("could not detect database credentials: %w", err)
+	}
 
-	drushOut, err := drush.StdoutPipe()
+	// In DDEV, the db container always has root/root access.
+	// Use root to avoid issues with empty passwords from drush sql:conf.
+	dbUser := "root"
+	dbPass := "root"
+
+	// Query cache_* tables so we can dump their structure without data.
+	// This avoids dumping large cache data that gets rebuilt by drush cr,
+	// while keeping the CREATE TABLE statements so MySQL doesn't end up
+	// with orphaned tablespaces on import.
+	listCmd := exec.Command("ddev", "exec", "-s", "db",
+		"bash", "-c", fmt.Sprintf("MYSQL_PWD=%s mysql -u%s -N -D %s -e \"SHOW TABLES LIKE 'cache_%%'\"",
+			dbPass, dbUser, creds.Database))
+	cacheTablesOut, err := listCmd.Output()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Warning: could not list cache tables, proceeding without exclusions")
+	}
+
+	var cacheTables []string
+	if cacheTablesOut != nil {
+		for _, t := range strings.Split(strings.TrimSpace(string(cacheTablesOut)), "\n") {
+			t = strings.TrimSpace(t)
+			if t != "" {
+				cacheTables = append(cacheTables, t)
+			}
+		}
+	}
+
+	if len(cacheTables) > 0 {
+		fmt.Fprintf(os.Stderr, "Dumping %d cache tables as structure-only (no data)\n", len(cacheTables))
+	}
+
+	// Two mysqldump passes concatenated into a single stream:
+	// 1. Full dump minus cache tables (structure + data)
+	// 2. Cache tables structure only (--no-data)
+	mysqlAuth := fmt.Sprintf("-u%s", dbUser)
+	mysqlEnv := fmt.Sprintf("MYSQL_PWD=%s", dbPass)
+	baseFlags := fmt.Sprintf("--single-transaction --quick --no-tablespaces")
+
+	var ignoreArgs string
+	for _, t := range cacheTables {
+		ignoreArgs += fmt.Sprintf(" --ignore-table=%s.%s", creds.Database, t)
+	}
+
+	shellCmd := fmt.Sprintf(
+		"%s mysqldump %s %s%s %s",
+		mysqlEnv, mysqlAuth, baseFlags, ignoreArgs, creds.Database,
+	)
+	if len(cacheTables) > 0 {
+		shellCmd += fmt.Sprintf(
+			" && %s mysqldump %s %s --no-data %s %s",
+			mysqlEnv, mysqlAuth, baseFlags, creds.Database, strings.Join(cacheTables, " "),
+		)
+	}
+
+	dumper := exec.Command("ddev", "exec", "-s", "db", "bash", "-c", shellCmd)
+	dumper.Stderr = os.Stderr
+
+	dumperOut, err := dumper.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create pipe: %w", err)
 	}
@@ -266,7 +369,7 @@ func generateAndUploadDB(slug string) error {
 	} else {
 		compressor = exec.Command("gzip", "-6", "-c")
 	}
-	compressor.Stdin = drushOut
+	compressor.Stdin = dumperOut
 	compressor.Stderr = os.Stderr
 
 	compressedOut, err := compressor.StdoutPipe()
@@ -274,8 +377,8 @@ func generateAndUploadDB(slug string) error {
 		return fmt.Errorf("failed to create %s pipe: %w", compressorName, err)
 	}
 
-	if err := drush.Start(); err != nil {
-		return fmt.Errorf("failed to start drush: %w", err)
+	if err := dumper.Start(); err != nil {
+		return fmt.Errorf("failed to start mysqldump: %w", err)
 	}
 	if err := compressor.Start(); err != nil {
 		return fmt.Errorf("failed to start %s: %w", compressorName, err)
@@ -291,8 +394,8 @@ func generateAndUploadDB(slug string) error {
 	if err := compressor.Wait(); err != nil {
 		return fmt.Errorf("%s failed: %w", compressorName, err)
 	}
-	if err := drush.Wait(); err != nil {
-		return fmt.Errorf("drush sql-dump failed: %w", err)
+	if err := dumper.Wait(); err != nil {
+		return fmt.Errorf("mysqldump failed: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Done! Base database for %q updated.\n", slug)

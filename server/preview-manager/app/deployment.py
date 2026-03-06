@@ -214,6 +214,7 @@ class PreviewDeployer:
         await self._import_files()
         await self._run_deploy_steps("new")
         await self._run_project_deploy_script("new")
+        await self._reload_webserver()
 
     # ------------------------------------------------------------------
     # Update preview
@@ -225,6 +226,7 @@ class PreviewDeployer:
         await self._docker_up()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
+        await self._reload_webserver()
 
     # ------------------------------------------------------------------
     # Steps
@@ -392,7 +394,7 @@ if (getenv('PREV_IS_PREVIEW')) {
         )
 
     async def _wait_for_db(self):
-        """Wait for MySQL to be ready to accept connections."""
+        """Wait for MySQL to be ready to accept connections (including app user)."""
         step = "wait-for-db"
         await self._log_step_start(step)
         t0 = time.monotonic()
@@ -400,13 +402,25 @@ if (getenv('PREV_IS_PREVIEW')) {
         db_container = f"{self.container_prefix}-db"
         for attempt in range(30):
             try:
+                # First check: MySQL process is up (root ping)
                 proc = await asyncio.create_subprocess_exec(
                     "docker", "exec", db_container,
                     "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot",
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+                if proc.returncode != 0:
+                    raise RuntimeError("ping failed")
+
+                # Second check: app user is ready (MYSQL_USER init may lag behind)
+                proc = await asyncio.create_subprocess_exec(
+                    "docker", "exec", "-e", "MYSQL_PWD=drupal", db_container,
+                    "mysql", "-u", "drupal", "-e", "SELECT 1", "drupal",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
                 if proc.returncode == 0:
                     elapsed = time.monotonic() - t0
                     await self._log_step_end(
@@ -506,7 +520,7 @@ if (getenv('PREV_IS_PREVIEW')) {
 
     async def _create_db_cache(self, volume_name: str, cache_key: str):
         """Export the DB volume to cache after first import."""
-        from app.db_cache import export_volume
+        from app.db_cache import export_volume, compute_cache_key, get_cache_path
         step = "create-db-cache"
         await self._log_step_start(step)
         t0 = time.monotonic()
@@ -525,6 +539,19 @@ if (getenv('PREV_IS_PREVIEW')) {
                 volume_name, self.project_name, cache_key
             )
             size_mb = cache_path.stat().st_size / (1024 * 1024)
+
+            # Guard against race: if the dump was replaced during deploy,
+            # the cache we just created is stale — discard it.
+            db_spec = self._preview_config["database"]
+            dump_path = Path(f"/backups/{self.project_name}-base.sql.gz")
+            if dump_path.exists():
+                current_key = compute_cache_key(self.project_name, db_spec, dump_path)
+                if current_key != cache_key:
+                    get_cache_path(self.project_name, cache_key).unlink(missing_ok=True)
+                    logger.warning(
+                        "DB dump changed during deploy — discarded stale cache"
+                    )
+                    size_mb = 0
         finally:
             # Restart DB container
             proc = await asyncio.create_subprocess_exec(
@@ -537,10 +564,31 @@ if (getenv('PREV_IS_PREVIEW')) {
             await self._wait_for_db()
 
         elapsed = time.monotonic() - t0
-        await self._log_step_end(
-            step, elapsed, True,
-            f"{DIM}Cached for future previews ({size_mb:.1f} MB){RESET}",
-        )
+        if size_mb:
+            await self._log_step_end(
+                step, elapsed, True,
+                f"{DIM}Cached for future previews ({size_mb:.1f} MB){RESET}",
+            )
+        else:
+            await self._log_step_end(
+                step, elapsed, True,
+                f"{YELLOW}Cache discarded (DB dump changed during deploy){RESET}",
+            )
+
+    async def _reload_webserver(self):
+        """Send graceful restart to LiteSpeed so it re-reads .htaccess."""
+        php_container = f"{self.container_prefix}-php"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker", "exec", php_container,
+                "/usr/local/lsws/bin/lswsctrl", "restart",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+            logger.info("[reload-webserver] LiteSpeed reloaded")
+        except Exception as e:
+            logger.warning(f"[reload-webserver] Failed (non-fatal): {e}")
 
     async def _drush(self, *args):
         await self._docker_exec(

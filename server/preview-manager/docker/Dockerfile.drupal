@@ -238,6 +238,11 @@ sed "s|%%DOCUMENT_ROOT%%|${DOCUMENT_ROOT}|g" \
     /usr/local/lsws/conf/vhosts/drupal/vhconf.conf.tpl \
     > /usr/local/lsws/conf/vhosts/drupal/vhconf.conf
 
+# Enable LiteSpeed Cache module if requested
+if [ "${PREV_LITESPEED_CACHE}" = "1" ]; then
+    sed -i 's/ls_enabled              0/ls_enabled              1/' /usr/local/lsws/conf/httpd_config.conf
+fi
+
 # Ensure runtime dirs exist
 mkdir -p /tmp/lshttpd/swap
 chown -R www-data:www-data /tmp/lshttpd

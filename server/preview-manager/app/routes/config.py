@@ -24,6 +24,12 @@ async def get_app_config(user: UserWithRole = Depends(require_role(Role.admin)))
     }
 
 
+@router.get("/api/config/gitlab-url")
+async def get_gitlab_url(user: UserWithRole = Depends(require_role(Role.viewer))):
+    """Get GitLab URL (available to all authenticated users)."""
+    return {"gitlab_url": settings.gitlab_url}
+
+
 @router.post("/api/config")
 async def save_app_config(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
     """Save application configuration"""

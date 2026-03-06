@@ -341,7 +341,7 @@ func (c *Client) uploadChunked(slug, kind, filePath, filename string, totalSize 
 	json.NewDecoder(resp.Body).Decode(&initResult)
 	resp.Body.Close()
 
-	fmt.Fprintf(os.Stderr, "Uploading %s in %d chunks of %s...\n", formatBytes(totalSize), totalChunks, formatBytes(chunkSize))
+	fmt.Fprintf(os.Stderr, "Uploading %s...\n", formatBytes(totalSize))
 
 	// Upload chunks
 	f, err := os.Open(filePath)
