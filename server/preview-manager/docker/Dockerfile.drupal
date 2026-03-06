@@ -164,6 +164,16 @@ virtualhost drupal {
   restrained              0
 }
 
+security {
+  fileAccessControl {
+    followSymbolLink        1
+    checkSymbolLink         0
+    forceStrictOwnership    0
+    requiredPermissionMask  000
+    restrictedPermissionMask 000
+  }
+}
+
 module cache {
   ls_enabled              0
 }
