@@ -1,4 +1,4 @@
-"""Preview CRUD and action endpoints"""
+"""Preview CRUD and action endpoints — cloud VM version."""
 
 import asyncio
 import json
@@ -19,12 +19,15 @@ from app.database import (
     get_all_previews, get_preview, delete_preview_from_db,
     list_deployments as db_list_deployments,
     get_deployment as db_get_deployment,
+    update_preview_vm, update_preview_volume,
 )
 from app.auth.dependencies import require_role
 from app.auth.models import Role, UserWithRole, has_min_role
 from app.auth import database as auth_db
 from app import config_store
-from app.overlay import umount_overlay, mount_overlay, get_overlay_dir
+from app.cloud import cloud_manager
+from app.caddy_api import caddy_manager
+from app.remote import RemoteExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +35,7 @@ router = APIRouter()
 
 
 def _sanitize_branch_name(branch: str) -> str:
-    """Sanitize a branch name for use in preview_name.
-
-    Replaces / with --, removes non-alphanumeric chars except -.
-    """
+    """Sanitize a branch name for use in preview_name."""
     sanitized = branch.replace("/", "--")
     sanitized = re.sub(r"[^a-zA-Z0-9\-]", "", sanitized)
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
@@ -56,7 +56,6 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         if state.get("last_deployment_duration") is not None:
             last_deployment["duration_seconds"] = state["last_deployment_duration"]
 
-    # Parse env_vars from JSON string if needed
     env_vars = state.get("env_vars", "{}")
     if isinstance(env_vars, str):
         try:
@@ -64,7 +63,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         except (json.JSONDecodeError, TypeError):
             env_vars = {}
 
-    # Extract exposed services and stack info from docker-compose.yml
+    # Extract stack info from docker-compose.yml (local copy)
     exposed_services: dict[str, str] = {}
     stack: dict[str, str] = {}
     preview_path = state.get("path", "")
@@ -77,26 +76,27 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                 services = compose.get("services", {})
                 preview_domain = state["url"].replace("https://", "").replace("http://", "")
 
-                # Exposed services (Caddy subdomain labels), excluding the main php service
+                # Exposed services (port mappings on non-php services)
                 for svc_name, svc in services.items():
                     if svc_name == "php":
                         continue
-                    caddy_label = (svc.get("labels") or {}).get("caddy", "")
-                    if caddy_label and "--" in caddy_label and caddy_label.endswith(preview_domain):
-                        exposed_services[svc_name] = f"https://{caddy_label}"
+                    if svc.get("ports"):
+                        for port_map in svc["ports"]:
+                            port = str(port_map).split(":")[0]
+                            exposed_services[svc_name] = f"https://{svc_name}--{preview_domain}"
 
-                # Stack: PHP version and webserver from image tag
+                # Stack: PHP version
                 php_image = (services.get("php") or {}).get("image", "")
                 if ":php" in php_image:
                     stack["PHP"] = php_image.split(":php")[-1]
                     stack["Webserver"] = "OpenLiteSpeed"
 
-                # Stack: Database from db image
+                # Stack: Database
                 db_image = (services.get("db") or {}).get("image", "")
                 if db_image:
-                    stack["Database"] = db_image  # e.g. "mysql:8.0" or "mariadb:10.6"
+                    stack["Database"] = db_image
 
-                # Stack: Redis/Valkey from redis service image
+                # Stack: Redis/Valkey
                 redis_image = (services.get("redis") or {}).get("image", "")
                 if redis_image:
                     if "valkey" in redis_image:
@@ -106,7 +106,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                         ver = redis_image.split(":")[-1].replace("-alpine", "") if ":" in redis_image else ""
                         stack["Redis"] = ver or redis_image
 
-                # Stack: Solr from solr service image
+                # Stack: Solr
                 solr_image = (services.get("solr") or {}).get("image", "")
                 if solr_image and ":" in solr_image:
                     stack["Solr"] = solr_image.split(":")[-1]
@@ -139,7 +139,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
 
 
 # ---------------------------------------------------------------------------
-# Branch preview creation (must be before {preview_name} routes)
+# Branch preview creation
 # ---------------------------------------------------------------------------
 
 
@@ -158,19 +158,16 @@ async def create_branch_preview(
     import httpx
     from app.routes.gitlab import _get_gitlab_token
 
-    # Verify project is enabled
     enabled_ids = await config_store.load_enabled_project_ids()
     if not enabled_ids:
         raise HTTPException(status_code=400, detail="No projects are enabled")
 
-    # Sanitize branch name
     sanitized = _sanitize_branch_name(body.branch)
     if not sanitized:
         raise HTTPException(status_code=400, detail="Invalid branch name")
 
     preview_name = f"branch-{sanitized}"
 
-    # Check if preview already exists
     existing = await get_preview(project, preview_name)
     if existing:
         raise HTTPException(
@@ -178,7 +175,6 @@ async def create_branch_preview(
             detail=f"Preview {preview_name} already exists for project {project}"
         )
 
-    # Get the latest commit from the branch via GitLab API
     token = await _get_gitlab_token()
     project_path = await config_store.get_project_path_by_slug(project)
     if not project_path:
@@ -204,7 +200,6 @@ async def create_branch_preview(
 
     commit_sha = branch_data["commit"]["id"]
 
-    # Pre-create the preview record with auto_update=0 for branch previews
     await PreviewStateManager.save_state(
         project, preview_name,
         branch=body.branch,
@@ -215,7 +210,6 @@ async def create_branch_preview(
         auto_update=0,
     )
 
-    # Launch clone + deploy in background
     from app.routes.webhooks import _clone_and_deploy
     background_tasks.add_task(
         _clone_and_deploy,
@@ -237,21 +231,15 @@ async def create_branch_preview(
 
 
 # ---------------------------------------------------------------------------
-# Preview CRUD (uses {preview_name} path param)
+# Preview CRUD
 # ---------------------------------------------------------------------------
 
 
 @router.get("/api/previews/{project}/{preview_name}", response_model=PreviewInfo)
 async def get_preview_endpoint(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Get preview information"""
     state = await PreviewStateManager.load_state(project, preview_name)
-
     if not state:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Preview {project}/{preview_name} not found"
-        )
-
+        raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
     return _build_preview_info(state)
 
 
@@ -268,7 +256,6 @@ async def update_preview_endpoint(
     body: UpdatePreviewRequest,
     user: UserWithRole = Depends(require_role(Role.manager)),
 ):
-    """Update preview settings (e.g. auto_update)."""
     state = await PreviewStateManager.load_state(project, preview_name)
     if not state:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
@@ -287,73 +274,26 @@ async def update_preview_endpoint(
     updated = await PreviewStateManager.load_state(project, preview_name)
     result = _build_preview_info(updated)
 
-    # If env_vars changed and preview is running, signal that rebuild is needed
     if body.env_vars is not None:
         return {**result.model_dump(), "needs_rebuild": True}
 
     return result
 
 
-async def get_docker_status(preview_path: Path) -> str:
-    """Get container status via docker compose ps."""
-    try:
-        process = await asyncio.create_subprocess_exec(
-            "docker", "compose", "ps", "--format", "json",
-            cwd=str(preview_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=5)
-        except asyncio.TimeoutError:
-            process.kill()
-            logger.warning(f"Timeout checking Docker status for {preview_path}")
-            return "unknown"
-
-        if process.returncode != 0:
-            return "stopped"
-
-        stdout_str = stdout.decode().strip()
-        if not stdout_str:
-            return "stopped"
-
-        # docker compose ps --format json outputs one JSON object per line
-        all_running = True
-        has_containers = False
-        for line in stdout_str.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                container = json.loads(line)
-                has_containers = True
-                state = container.get("State", "").lower()
-                if state != "running":
-                    all_running = False
-            except json.JSONDecodeError:
-                continue
-
-        if not has_containers:
-            return "stopped"
-        return "running" if all_running else "stopped"
-
-    except Exception as e:
-        logger.warning(f"Error checking Docker status for {preview_path}: {e}")
-        return "unknown"
+def _get_preview_status(preview: dict) -> str:
+    """Determine preview status based on VM state."""
+    if preview.get("vm_id"):
+        return "running"
+    elif preview.get("volume_id"):
+        return "stopped"
+    elif preview.get("status") in ("creating", "pending"):
+        return preview["status"]
+    else:
+        return preview.get("status", "unknown")
 
 
 async def get_preview_list_base(include_docker_status: bool = True) -> dict:
-    """
-    Core logic to list all previews (query DB + optionally Docker status).
-
-    Args:
-        include_docker_status: If True, run docker compose ps for each preview.
-                               If False, return previews with status from DB (fast).
-
-    Returns:
-        dict with "previews" list and "total" count
-    """
+    """Core logic to list all previews with cloud VM status."""
     t_total = time.monotonic()
 
     rows = await get_all_previews()
@@ -367,7 +307,6 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
         if latest_dep_id:
             latest_status = row.get("latest_deployment_status")
             if latest_status and row.get("latest_deployment_completed_at"):
-                # Deployment completed — use its actual status
                 last_deployment = {
                     "id": latest_dep_id,
                     "status": latest_status,
@@ -378,14 +317,16 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
                 if row.get("last_deployment_duration") is not None:
                     last_deployment["duration_seconds"] = row["last_deployment_duration"]
             else:
-                # Deploy in progress (not yet completed)
                 last_deployment = {"id": latest_dep_id, "status": "running"}
+
+        # Determine status from VM state
+        status = _get_preview_status(row)
 
         previews.append({
             "name": row["preview_name"],
             "project": row["project"],
             "mr_id": row.get("mr_id"),
-            "status": row["status"] if not include_docker_status else "unknown",
+            "status": status,
             "url": row["url"],
             "branch": row["branch"],
             "commit_sha": row["commit_sha"],
@@ -393,30 +334,7 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
             "last_deployment": last_deployment,
             "auto_update": bool(row.get("auto_update", 1)),
             "pinned": bool(row.get("pinned", 0)),
-            "_path": row["path"],
         })
-
-    async def update_preview_status(preview):
-        if "_path" in preview:
-            preview_path = Path(preview["_path"])
-            if preview_path.exists() and (preview_path / "docker-compose.yml").exists():
-                t_docker = time.monotonic()
-                status = await get_docker_status(preview_path)
-                logger.info(f"[TIMING] Docker status {preview['name']}: {time.monotonic() - t_docker:.3f}s -> {status}")
-                preview["status"] = status
-            elif not preview_path.exists():
-                preview["status"] = "missing"
-            else:
-                preview["status"] = "stopped"
-
-    if include_docker_status and previews:
-        t_docker_all = time.monotonic()
-        await asyncio.gather(*[update_preview_status(p) for p in previews])
-        logger.info(f"[TIMING] Docker status (all {len(previews)} parallel): {time.monotonic() - t_docker_all:.3f}s")
-
-    # Strip _path for external consumers
-    for preview in previews:
-        preview.pop("_path", None)
 
     logger.info(f"[TIMING] get_preview_list_base TOTAL: {time.monotonic() - t_total:.3f}s")
 
@@ -427,90 +345,49 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
 
 
 async def delete_preview_internal(project: str, preview_name: str):
-    """Core delete logic: stop containers, remove state from DB, remove directory.
+    """Core delete logic: destroy VM, delete volume, remove from DB."""
+    preview = await get_preview(project, preview_name)
 
-    Raises on failure. Used by the REST endpoint and the webhook handler.
-    """
-    preview_path = PreviewStateManager.get_preview_path(project, preview_name)
-
-    # Unmount overlay filesystem if present
-    try:
-        await umount_overlay(preview_path)
-    except Exception as e:
-        logger.warning(f"Error unmounting overlay for {project}/{preview_name}: {e}")
-
-    # Stop and remove Docker containers
-    container_prefix = f"{preview_name}-{project}"
-    if preview_path.exists() and (preview_path / "docker-compose.yml").exists():
+    # Destroy VM if running
+    if preview and preview.get("vm_id"):
         try:
-            process = await asyncio.create_subprocess_exec(
-                "docker", "compose", "down", "-v",
-                cwd=str(preview_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(process.communicate(), timeout=60)
-            logger.info(f"Docker containers stopped for {project}/{preview_name}")
+            await cloud_manager.destroy_vm(preview["vm_id"])
+            logger.info(f"Destroyed VM for {project}/{preview_name}")
         except Exception as e:
-            logger.warning(f"Error stopping Docker containers: {e}")
+            logger.warning(f"Error destroying VM for {project}/{preview_name}: {e}")
 
-    # Clean up any orphaned volumes (e.g. if compose down failed or file was missing)
+    # Remove Caddy routes
     try:
-        process = await asyncio.create_subprocess_exec(
-            "docker", "volume", "ls", "-q", "--filter", f"name={container_prefix}_",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=10)
-        volumes = [v.strip() for v in stdout.decode().splitlines() if v.strip()]
-        for vol in volumes:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "volume", "rm", "-f", vol,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=10)
-            logger.info(f"Removed orphaned volume: {vol}")
+        await caddy_manager.remove_preview_routes(preview_name, project)
     except Exception as e:
-        logger.warning(f"Error cleaning up volumes for {project}/{preview_name}: {e}")
+        logger.warning(f"Error removing Caddy routes for {project}/{preview_name}: {e}")
+
+    # Delete volume if exists
+    if preview and preview.get("volume_id"):
+        try:
+            await cloud_manager.delete_volume(preview["volume_id"])
+            logger.info(f"Deleted volume for {project}/{preview_name}")
+        except Exception as e:
+            logger.warning(f"Error deleting volume for {project}/{preview_name}: {e}")
 
     # Delete from DB
     await PreviewStateManager.delete_state(project, preview_name)
 
-    # Delete directory — files created by Docker (root-owned) can't be removed
-    # by preview-user directly, so we use a throwaway container to rm -rf.
+    # Clean up local preview directory (compose files etc.)
+    preview_path = PreviewStateManager.get_preview_path(project, preview_name)
     if preview_path.exists():
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "docker", "run", "--rm",
-                "-v", f"{preview_path}:/target",
-                "alpine:3.20", "rm", "-rf", "/target",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(process.communicate(), timeout=120)
-        except Exception as e:
-            logger.warning(f"Docker rm failed, falling back to shutil: {e}")
-        # Clean up any remaining files or the empty mount point
-        if preview_path.exists():
-            import shutil
-            shutil.rmtree(preview_path, ignore_errors=True)
-        logger.info(f"Preview directory deleted: {preview_path}")
-    else:
-        logger.info(f"Preview {project}/{preview_name} directory already absent")
+        import shutil
+        shutil.rmtree(preview_path, ignore_errors=True)
+        logger.info(f"Cleaned up local directory: {preview_path}")
+
+    logger.info(f"Preview {project}/{preview_name} fully deleted")
 
 
 @router.delete("/api/previews/{project}/{preview_name}")
 async def delete_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Delete a preview (DANGEROUS - removes directory)"""
-    preview_path = PreviewStateManager.get_preview_path(project, preview_name)
     state = await PreviewStateManager.load_state(project, preview_name)
-
-    if not preview_path.exists() and not state:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Preview {project}/{preview_name} not found"
-        )
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
 
     try:
         await delete_preview_internal(project, preview_name)
@@ -530,15 +407,8 @@ async def delete_preview(project: str, preview_name: str, user: UserWithRole = D
 
 @router.get("/api/previews")
 async def list_previews(status: bool = True, user: UserWithRole = Depends(require_role(Role.viewer))):
-    """
-    List all previews (REST endpoint).
-
-    Query params:
-        status: If true (default), include Docker container status (slower).
-    """
     result = await get_preview_list_base(include_docker_status=status)
 
-    # Non-admin users only see previews for projects they are assigned to
     if not has_min_role(user.role, Role.admin):
         allowed_slugs = set(await auth_db.get_user_project_slugs(user.id))
         result["previews"] = [p for p in result["previews"] if p["project"] in allowed_slugs]
@@ -547,103 +417,134 @@ async def list_previews(status: bool = True, user: UserWithRole = Depends(requir
     return result
 
 
-def _get_preview_dir(project: str, preview_name: str) -> Path:
-    """Resolve preview directory or raise 404."""
-    preview_path = PreviewStateManager.get_preview_path(project, preview_name)
-    if not preview_path.exists():
+async def _get_executor(project: str, preview_name: str) -> tuple[RemoteExecutor, dict]:
+    """Get a RemoteExecutor for the preview's VM. Raises 503 if no VM."""
+    preview = await get_preview(project, preview_name)
+    if not preview:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
-    return preview_path
-
-
-async def _run_docker_command(
-    command: list[str],
-    cwd: Path,
-    timeout: int = 120,
-) -> dict:
-    """Run a docker compose command and return {success, output, error}."""
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(cwd),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            process.kill()
-            return {"success": False, "output": "", "error": f"Timeout after {timeout}s"}
-
-        stdout_str = stdout.decode()
-        stderr_str = stderr.decode()
-        success = process.returncode == 0
-
-        return {
-            "success": success,
-            "output": stdout_str,
-            "error": stderr_str if not success else "",
-        }
-    except Exception as e:
-        logger.error(f"Error running command {command}: {e}", exc_info=True)
-        return {"success": False, "output": "", "error": str(e)}
+    if not preview.get("vm_id") or not preview.get("vm_ip"):
+        raise HTTPException(status_code=503, detail="Preview VM is not running. Visit the preview URL to wake it up.")
+    return RemoteExecutor(preview["vm_ip"]), preview
 
 
 @router.post("/api/previews/{project}/{preview_name}/stop")
 async def stop_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Stop a preview (docker compose stop)."""
-    preview_path = _get_preview_dir(project, preview_name)
-    return await _run_docker_command(["docker", "compose", "stop"], preview_path, timeout=60)
+    """Stop a preview (destroy VM, keep volume)."""
+    preview = await get_preview(project, preview_name)
+    if not preview:
+        raise HTTPException(status_code=404, detail="Preview not found")
+
+    if not preview.get("vm_id"):
+        return {"success": True, "output": "Preview already stopped", "error": ""}
+
+    try:
+        await cloud_manager.destroy_vm(preview["vm_id"])
+        await caddy_manager.remove_preview_routes(preview_name, project)
+        await update_preview_vm(project, preview_name, None, None)
+        return {"success": True, "output": "VM destroyed, volume kept", "error": ""}
+    except Exception as e:
+        return {"success": False, "output": "", "error": str(e)}
 
 
 @router.post("/api/previews/{project}/{preview_name}/start")
 async def start_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Start a preview (docker compose up -d)."""
-    preview_path = _get_preview_dir(project, preview_name)
-    # Ensure overlay is mounted (may have been lost after server reboot)
-    if get_overlay_dir(preview_path).exists():
-        try:
-            await mount_overlay(project, preview_path)
-        except Exception as e:
-            logger.warning(f"Failed to ensure overlay mount on start: {e}")
-    return await _run_docker_command(["docker", "compose", "up", "-d"], preview_path, timeout=120)
+    """Start a preview (create VM, attach volume)."""
+    preview = await get_preview(project, preview_name)
+    if not preview:
+        raise HTTPException(status_code=404, detail="Preview not found")
+
+    if preview.get("vm_id"):
+        return {"success": True, "output": "Preview already running", "error": ""}
+
+    if not preview.get("volume_id"):
+        return {"success": False, "output": "", "error": "No volume found"}
+
+    try:
+        vm_name = f"prev-{project}-{preview_name}"
+        server = await cloud_manager.create_vm(vm_name, preview["volume_id"])
+        vm_id = server.data_model.id
+        vm_ip = server.data_model.public_net.ipv4.ip
+
+        executor = RemoteExecutor(vm_ip)
+        await executor.wait_for_ssh(timeout=120)
+
+        # Mount volume and start containers
+        setup_cmd = (
+            "VOLDIR=$(ls -d /mnt/HC_Volume* 2>/dev/null | head -1) && "
+            "ln -sfn \"$VOLDIR\" /var/www/preview && "
+            "cd /var/www/preview/code && "
+            "docker compose up -d"
+        )
+        proc = await executor.run_shell(setup_cmd)
+        stdout, stderr = await proc.communicate()
+
+        await update_preview_vm(project, preview_name, vm_id, vm_ip)
+        await caddy_manager.add_preview_routes(preview_name, project, vm_ip)
+
+        return {"success": True, "output": f"VM created (IP: {vm_ip})", "error": ""}
+    except Exception as e:
+        return {"success": False, "output": "", "error": str(e)}
 
 
 @router.post("/api/previews/{project}/{preview_name}/restart")
 async def restart_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Restart a preview (docker compose restart)."""
-    preview_path = _get_preview_dir(project, preview_name)
-    return await _run_docker_command(["docker", "compose", "restart"], preview_path, timeout=120)
+    """Restart containers on the VM."""
+    executor, preview = await _get_executor(project, preview_name)
+    try:
+        proc = await executor.run_shell(
+            "cd /var/www/preview/code && docker compose restart"
+        )
+        stdout, stderr = await proc.communicate()
+        success = proc.returncode == 0
+        return {
+            "success": success,
+            "output": stdout.decode() if isinstance(stdout, bytes) else stdout,
+            "error": stderr.decode() if isinstance(stderr, bytes) else stderr if not success else "",
+        }
+    except Exception as e:
+        return {"success": False, "output": "", "error": str(e)}
 
 
 @router.post("/api/previews/{project}/{preview_name}/drush-uli")
 async def drush_uli(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Get a one-time login link (drush uli)."""
-    preview_path = _get_preview_dir(project, preview_name)
+    """Get a one-time login link (drush uli) via SSH."""
+    executor, preview = await _get_executor(project, preview_name)
     preview_url = f"https://{preview_name}-{project}.mr.preview-mr.com"
     php_container = f"{preview_name}-{project}-php"
-    return await _run_docker_command(
-        ["docker", "exec", php_container, "vendor/bin/drush", "uli", f"--uri={preview_url}"],
-        preview_path,
-        timeout=30,
+
+    proc = await executor.run_shell(
+        f"docker exec {php_container} vendor/bin/drush uli --uri={preview_url}"
     )
+    stdout, stderr = await proc.communicate()
+    success = proc.returncode == 0
+    return {
+        "success": success,
+        "output": stdout.decode().strip() if isinstance(stdout, bytes) else stdout,
+        "error": stderr.decode() if isinstance(stderr, bytes) else stderr if not success else "",
+    }
 
 
 @router.post("/api/previews/{project}/{preview_name}/drush")
 async def drush_command(project: str, preview_name: str, request: Request, user: UserWithRole = Depends(require_role(Role.manager))):
-    """
-    Run an arbitrary drush command.
-
-    Body: {"args": "cr"} or {"args": "status"}
-    """
+    """Run an arbitrary drush command via SSH."""
     body = await request.json()
     args_str = body.get("args", "")
     if not args_str:
         raise HTTPException(status_code=400, detail="Missing 'args' in request body")
 
-    preview_path = _get_preview_dir(project, preview_name)
+    executor, preview = await _get_executor(project, preview_name)
     php_container = f"{preview_name}-{project}-php"
-    command = ["docker", "exec", php_container, "vendor/bin/drush"] + args_str.split()
-    return await _run_docker_command(command, preview_path, timeout=120)
+
+    proc = await executor.run_shell(
+        f"docker exec {php_container} vendor/bin/drush {args_str}"
+    )
+    stdout, stderr = await proc.communicate()
+    success = proc.returncode == 0
+    return {
+        "success": success,
+        "output": stdout.decode() if isinstance(stdout, bytes) else stdout,
+        "error": stderr.decode() if isinstance(stderr, bytes) else stderr if not success else "",
+    }
 
 
 @router.post("/api/previews/{project}/{preview_name}/rebuild")
@@ -654,11 +555,11 @@ async def rebuild_preview(
     force_new: bool = False,
     user: UserWithRole = Depends(require_role(Role.manager)),
 ):
-    """Re-clone the preview from GitLab (internal rebuild, no pipeline)."""
-    _get_preview_dir(project, preview_name)
-
+    """Re-clone the preview from GitLab (internal rebuild)."""
     state = await PreviewStateManager.load_state(project, preview_name)
-    if not state or not state.get("branch"):
+    if not state:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    if not state.get("branch"):
         raise HTTPException(status_code=400, detail="Cannot determine branch for this preview")
 
     project_path = await config_store.get_project_path_by_slug(project)
@@ -692,7 +593,6 @@ async def list_preview_deployments(
     limit: int = 50,
     user: UserWithRole = Depends(require_role(Role.viewer)),
 ):
-    """List deployments for a preview (without log_output)."""
     preview = await get_preview(project, preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
@@ -705,11 +605,9 @@ async def get_preview_deployment(
     project: str, preview_name: str, deployment_id: int,
     user: UserWithRole = Depends(require_role(Role.viewer)),
 ):
-    """Get a single deployment with full log output."""
     deployment = await db_get_deployment(deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
-    # Verify it belongs to the right preview
     preview = await get_preview(project, preview_name)
     if not preview or deployment["preview_id"] != preview["id"]:
         raise HTTPException(status_code=404, detail="Deployment not found for this preview")
@@ -722,18 +620,12 @@ async def get_deployment_live_logs(
     offset: int = 0,
     user: UserWithRole = Depends(require_role(Role.viewer)),
 ):
-    """Poll deployment logs. Returns lines from offset onward.
-
-    For running deployments: reads from the in-memory broadcaster buffer.
-    For completed deployments: reads from the DB log_output field.
-    """
     from app.websockets import deployment_log_broadcaster
 
     preview = await get_preview(project, preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
 
-    # Check broadcaster first (running deployment)
     entry = deployment_log_broadcaster.get(deployment_id)
     if entry:
         lines = entry["logs"][offset:]
@@ -744,13 +636,11 @@ async def get_deployment_live_logs(
             "status": "complete" if entry["complete"] else "running",
         }
 
-    # Fallback to DB (completed deployment)
     deployment = await db_get_deployment(deployment_id)
     if not deployment or deployment["preview_id"] != preview["id"]:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
     log_output = deployment.get("log_output") or ""
-    # Return as single chunk if offset is 0, empty if already fetched
     lines = [log_output] if offset == 0 and log_output else []
     return {
         "lines": lines,
@@ -762,28 +652,20 @@ async def get_deployment_live_logs(
 
 @router.get("/api/previews/{project}/{preview_name}/db/download")
 async def download_db(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Stream a gzipped SQL dump of the preview database."""
-    preview_path = _get_preview_dir(project, preview_name)
+    """Stream a gzipped SQL dump from the preview VM."""
+    executor, preview = await _get_executor(project, preview_name)
     php_container = f"{preview_name}-{project}-php"
 
     async def generate():
-        process = await asyncio.create_subprocess_exec(
-            "docker", "exec", php_container, "vendor/bin/drush", "sql-dump",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(preview_path),
+        proc = await executor.run_shell(
+            f"docker exec {php_container} vendor/bin/drush sql-dump | gzip"
         )
-        import zlib
-        compress = zlib.compressobj(9, zlib.DEFLATED, 31)
-
         while True:
-            chunk = await process.stdout.read(64 * 1024)
+            chunk = await proc.stdout.read(64 * 1024)
             if not chunk:
                 break
-            yield compress.compress(chunk)
-
-        yield compress.flush(zlib.Z_FINISH)
-        await process.wait()
+            yield chunk
+        await proc.wait()
 
     filename = f"{project}-{preview_name}.sql.gz"
     return StreamingResponse(
@@ -795,30 +677,22 @@ async def download_db(project: str, preview_name: str, user: UserWithRole = Depe
 
 @router.get("/api/previews/{project}/{preview_name}/files/download")
 async def download_files(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Stream a tar.gz of the preview's Drupal files directory."""
-    preview_path = _get_preview_dir(project, preview_name)
+    """Stream a tar.gz of the preview's files directory from the VM."""
+    executor, preview = await _get_executor(project, preview_name)
 
-    # Drupal public files are typically in web/sites/default/files
-    files_dir = preview_path / "web" / "sites" / "default" / "files"
-    if not files_dir.exists():
-        raise HTTPException(status_code=404, detail="Files directory not found")
-
-    # Exclude Drupal cache directories (regenerable on cache rebuild)
-    tar_excludes = ["--exclude=./css", "--exclude=./js", "--exclude=./php"]
+    tar_excludes = "--exclude=./css --exclude=./js --exclude=./php"
+    files_dir = "/var/www/preview/code/web/sites/default/files"
 
     async def generate():
-        process = await asyncio.create_subprocess_exec(
-            "tar", "czf", "-", *tar_excludes, "-C", str(files_dir), ".",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=str(preview_path),
+        proc = await executor.run_shell(
+            f"tar czf - {tar_excludes} -C {files_dir} ."
         )
         while True:
-            chunk = await process.stdout.read(64 * 1024)
+            chunk = await proc.stdout.read(64 * 1024)
             if not chunk:
                 break
             yield chunk
-        await process.wait()
+        await proc.wait()
 
     filename = f"{project}-{preview_name}-files.tar.gz"
     return StreamingResponse(
@@ -826,5 +700,3 @@ async def download_files(project: str, preview_name: str, user: UserWithRole = D
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
-
-

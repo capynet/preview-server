@@ -1,8 +1,7 @@
-"""Middleware to wake up stopped previews when accessed via browser."""
+"""Middleware to wake up stopped cloud previews when accessed via browser."""
 
 import asyncio
 import logging
-from pathlib import Path
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, RedirectResponse
@@ -10,7 +9,10 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from config.settings import settings
 from app.auth.dependencies import SESSION_COOKIE
 from app.auth import database as auth_db
-from app.database import get_preview_by_domain, update_last_accessed, has_running_deployment
+from app.database import (
+    get_preview_by_domain, update_last_accessed, has_running_deployment,
+    update_preview_vm,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,7 @@ WAKE_PAGE_HTML = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="refresh" content="5">
+    <meta http-equiv="refresh" content="15">
     <title>Waking up preview...</title>
     <style>
         body {{
@@ -69,7 +71,7 @@ WAKE_PAGE_HTML = """<!DOCTYPE html>
         <div class="spinner"></div>
         <h1>Waking up preview</h1>
         <p>{preview_name} &mdash; {project}</p>
-        <p>This page will refresh automatically...</p>
+        <p>Starting a new VM... This page will refresh automatically (~30-40s).</p>
     </div>
 </body>
 </html>"""
@@ -136,9 +138,9 @@ BUILDING_PAGE_HTML = """<!DOCTYPE html>
 class WakePreviewMiddleware(BaseHTTPMiddleware):
     """Intercept requests to *.mr.preview-mr.com that hit the API fallback.
 
-    When Caddy has no specific route for a preview domain (container stopped),
-    the wildcard fallback proxies the request here. We check the DB, wake the
-    preview, and return a waiting page that auto-refreshes.
+    When Caddy has no specific route for a preview domain (VM destroyed),
+    the wildcard fallback proxies the request here. We check the DB,
+    create a new VM + attach existing volume, and return a waiting page.
     """
 
     async def dispatch(self, request: Request, call_next):
@@ -167,9 +169,8 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
         project = preview["project"]
         preview_name = preview["preview_name"]
-        preview_path = Path(preview["path"]) if preview.get("path") else None
 
-        # Check if a deployment is running — show building page instead of waking
+        # Check if a deployment is running — show building page
         if preview.get("id"):
             try:
                 building = await has_running_deployment(preview["id"])
@@ -184,17 +185,27 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
 
-        if not preview_path or not preview_path.exists():
+        # If VM is already running, something else is wrong — show error
+        if preview.get("vm_id") and preview.get("vm_ip"):
             return HTMLResponse(
-                content="<h1>Preview not found</h1><p>Preview directory does not exist.</p>",
+                content="<h1>Preview error</h1><p>VM is running but route is missing. Try refreshing in a few seconds.</p>",
+                status_code=503,
+            )
+
+        # No volume means preview was fully deleted
+        if not preview.get("volume_id"):
+            return HTMLResponse(
+                content="<h1>Preview not available</h1><p>This preview has been fully deleted.</p>",
                 status_code=404,
             )
 
-        # Start containers in background (if not already waking)
+        # Start VM in background (if not already waking)
         wake_key = f"{project}/{preview_name}"
         if wake_key not in _waking_up:
             _waking_up.add(wake_key)
-            asyncio.create_task(self._wake_containers(wake_key, preview_path, project, preview_name))
+            asyncio.create_task(
+                self._wake_cloud_preview(wake_key, project, preview_name, preview)
+            )
 
         # Update last_accessed_at
         try:
@@ -208,25 +219,59 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         )
 
     @staticmethod
-    async def _wake_containers(wake_key: str, preview_path: Path, project: str, preview_name: str):
-        """Run docker compose up -d in the background."""
+    async def _wake_cloud_preview(
+        wake_key: str, project: str, preview_name: str, preview: dict
+    ):
+        """Create a new VM, attach the existing volume, start containers."""
+        from app.cloud import cloud_manager
+        from app.caddy_api import caddy_manager
+        from app.remote import RemoteExecutor
+
         try:
-            logger.info(f"Waking up {project}/{preview_name}")
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "compose", "up", "-d",
-                cwd=str(preview_path),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            logger.info(f"Waking up cloud preview {project}/{preview_name}")
+            volume_id = preview["volume_id"]
+
+            # Create VM with volume attached
+            vm_name = f"prev-{project}-{preview_name}"
+            server = await cloud_manager.create_vm(vm_name, volume_id)
+            vm_id = server.data_model.id
+            vm_ip = server.data_model.public_net.ipv4.ip
+
+            # Wait for SSH
+            executor = RemoteExecutor(vm_ip)
+            await executor.wait_for_ssh(timeout=120)
+
+            # Mount volume and start containers
+            setup_cmd = (
+                "VOLDIR=$(ls -d /mnt/HC_Volume* 2>/dev/null | head -1) && "
+                "if [ -z \"$VOLDIR\" ]; then echo 'No volume found' >&2; exit 1; fi && "
+                "ln -sfn \"$VOLDIR\" /var/www/preview && "
+                "cd /var/www/preview/code && "
+                "docker compose up -d"
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            proc = await executor.run_shell(setup_cmd)
+            stdout, stderr = await proc.communicate()
+
             if proc.returncode == 0:
-                logger.info(f"Woke up {project}/{preview_name} successfully")
+                # Update DB with VM info
+                await update_preview_vm(project, preview_name, vm_id, vm_ip)
+
+                # Add Caddy route
+                await caddy_manager.add_preview_routes(
+                    preview_name, project, vm_ip
+                )
+
+                logger.info(f"Woke up {project}/{preview_name} (VM {vm_id}, IP {vm_ip})")
             else:
-                logger.error(f"Failed to wake {project}/{preview_name}: {stderr.decode()}")
-        except asyncio.TimeoutError:
-            logger.error(f"Timeout waking {project}/{preview_name}")
+                logger.error(
+                    f"Failed to start containers for {project}/{preview_name}: "
+                    f"{stderr.decode()}"
+                )
+                # Clean up VM since containers failed
+                await cloud_manager.destroy_vm(vm_id)
+
         except Exception as e:
-            logger.error(f"Error waking {project}/{preview_name}: {e}")
+            logger.error(f"Error waking cloud preview {project}/{preview_name}: {e}")
         finally:
             _waking_up.discard(wake_key)
 

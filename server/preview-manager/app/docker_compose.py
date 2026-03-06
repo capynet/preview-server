@@ -135,7 +135,6 @@ def generate_docker_compose(
     prefix = _container_prefix(project_name, preview_name)
     domain = f"{prefix}.mr.preview-mr.com"
     url = f"https://{domain}"
-    network_name = settings.docker_network
 
     # Determine DB image from unified "database" property (e.g. "mysql:8.0", "mariadb:10.6")
     db_spec = config["database"]
@@ -207,21 +206,7 @@ def generate_docker_compose(
                 "container_name": f"{prefix}-php",
                 "volumes": ["./:/var/www/html"],
                 "environment": php_env,
-                "labels": {
-                    "caddy": " ".join([domain] + alias_domains),
-                    "caddy.reverse_proxy": "{{upstreams 80}}",
-                    "caddy.@protected.not.path": (
-                        "*.css *.js *.map "
-                        "*.png *.jpg *.jpeg *.gif *.svg *.ico *.webp *.avif "
-                        "*.woff *.woff2 *.ttf *.eot *.otf "
-                        "*.json *.webmanifest *.xml *.txt "
-                        "/sites/default/files/*"
-                    ),
-                    "caddy.forward_auth": "@protected host.docker.internal:8000",
-                    "caddy.forward_auth.uri": "/api/auth/verify-preview",
-                    "caddy.forward_auth.header_up": "Host {http.request.host}",
-                },
-                "networks": [network_name],
+                "ports": ["80:80"],
                 "restart": "unless-stopped",
             },
             "db": {
@@ -235,15 +220,11 @@ def generate_docker_compose(
                     "MYSQL_PASSWORD": "drupal",
                 },
                 "volumes": ["db_data:/var/lib/mysql"],
-                "networks": [network_name],
                 "restart": "unless-stopped",
             },
         },
         "volumes": {
             "db_data": None,
-        },
-        "networks": {
-            network_name: {"external": True},
         },
     }
 
@@ -257,7 +238,6 @@ def generate_docker_compose(
         compose["services"]["redis"] = {
             "image": f"valkey/valkey:{valkey_ver}-alpine",
             "container_name": f"{prefix}-redis",
-            "networks": [network_name],
             "restart": "unless-stopped",
         }
     elif redis_cfg:
@@ -265,7 +245,6 @@ def generate_docker_compose(
         compose["services"]["redis"] = {
             "image": f"redis:{redis_ver}-alpine",
             "container_name": f"{prefix}-redis",
-            "networks": [network_name],
             "restart": "unless-stopped",
         }
 
@@ -275,7 +254,6 @@ def generate_docker_compose(
         solr_service: dict[str, Any] = {
             "image": f"solr:{solr_ver}",
             "container_name": f"{prefix}-solr",
-            "networks": [network_name],
             "restart": "unless-stopped",
         }
         # Mount custom configset if specified in preview.yml.
@@ -298,20 +276,15 @@ def generate_docker_compose(
         compose["services"]["solr"] = solr_service
         compose["volumes"]["solr_data"] = None
 
-    # Expose — add Caddy labels to services for subdomain routing.
-    # Each exposed service gets a {service}--{domain} subdomain with auth.
+    # Expose — map host ports for exposed services.
+    # Caddy routes are managed dynamically via the Admin API.
     for svc_name, port in config.get("expose", {}).items():
         if svc_name not in compose["services"]:
             logger.warning(f"expose: service '{svc_name}' not found in compose, skipping")
             continue
         svc = compose["services"][svc_name]
-        expose_domain = f"{svc_name}--{domain}"
-        svc.setdefault("labels", {})
-        svc["labels"]["caddy"] = expose_domain
-        svc["labels"]["caddy.reverse_proxy"] = "{{upstreams " + str(port) + "}}"
-        svc["labels"]["caddy.forward_auth"] = "host.docker.internal:8000"
-        svc["labels"]["caddy.forward_auth.uri"] = "/api/auth/verify-preview"
-        svc["labels"]["caddy.forward_auth.header_up"] = "Host {http.request.host}"
+        svc.setdefault("ports", [])
+        svc["ports"].append(f"{port}:{port}")
 
     return compose
 

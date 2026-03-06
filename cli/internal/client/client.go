@@ -236,7 +236,8 @@ const chunkSize = 50 * 1024 * 1024 // 50MB
 
 // UploadBaseFileChunked copies the reader to a temp file, then uploads using
 // single request (if <50MB) or chunked upload (if >=50MB) with a progress bar.
-func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, filename string) error {
+// uncompressedSize is the original size before compression (0 if unknown).
+func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, filename string, uncompressedSize int64) error {
 	// 1. Copy stream to temp file to know size and allow chunking.
 	// Use current directory instead of os.TempDir() because /tmp may be
 	// a tmpfs (RAM-backed) on Linux, which can't handle large files.
@@ -259,12 +260,12 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 
 	// 2. Decide: single or chunked
 	if written < chunkSize {
-		return c.uploadSingleWithProgress(slug, kind, tmpPath, filename, written)
+		return c.uploadSingleWithProgress(slug, kind, tmpPath, filename, written, uncompressedSize)
 	}
-	return c.uploadChunked(slug, kind, tmpPath, filename, written)
+	return c.uploadChunked(slug, kind, tmpPath, filename, written, uncompressedSize)
 }
 
-func (c *Client) uploadSingleWithProgress(slug, kind, filePath, filename string, totalSize int64) error {
+func (c *Client) uploadSingleWithProgress(slug, kind, filePath, filename string, totalSize, uncompressedSize int64) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return err
@@ -275,6 +276,11 @@ func (c *Client) uploadSingleWithProgress(slug, kind, filePath, filename string,
 	writer := multipart.NewWriter(pw)
 
 	go func() {
+		if uncompressedSize > 0 {
+			if fw, err := writer.CreateFormField("uncompressed_size"); err == nil {
+				fmt.Fprintf(fw, "%d", uncompressedSize)
+			}
+		}
 		part, err := writer.CreateFormFile("file", filename)
 		if err != nil {
 			pw.CloseWithError(err)
@@ -316,7 +322,7 @@ func (c *Client) uploadSingleWithProgress(slug, kind, filePath, filename string,
 	return nil
 }
 
-func (c *Client) uploadChunked(slug, kind, filePath, filename string, totalSize int64) error {
+func (c *Client) uploadChunked(slug, kind, filePath, filename string, totalSize, uncompressedSize int64) error {
 	totalChunks := int((totalSize + chunkSize - 1) / chunkSize)
 
 	// Init
@@ -387,7 +393,10 @@ func (c *Client) uploadChunked(slug, kind, filePath, filename string, totalSize 
 
 	// Complete
 	fmt.Fprintf(os.Stderr, "Finalizing upload...\n")
-	completeBody, _ := json.Marshal(map[string]string{"upload_id": initResult.UploadID})
+	completeBody, _ := json.Marshal(map[string]interface{}{
+		"upload_id":         initResult.UploadID,
+		"uncompressed_size": uncompressedSize,
+	})
 	resp2, err := c.doRequest("POST",
 		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/complete", c.BaseURL, slug, kind),
 		bytes.NewReader(completeBody))

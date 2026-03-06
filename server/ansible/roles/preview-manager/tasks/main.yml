@@ -74,28 +74,36 @@
     chdir: /home/preview-manager/www/previews/server/preview-manager
   become_user: preview-manager
 
-- name: Install requirements
+- name: Install requirements from requirements.txt
   pip:
-    name:
-      - fastapi
-      - uvicorn
-      - websockets
-      - pydantic
-      - pydantic-settings
-      - python-multipart
-      - pyyaml
-      - httpx
-      - aiosqlite
-      - python-jose[cryptography]
-      - itsdangerous
-      - bcrypt
-      - psutil
-      - ptyprocess
+    requirements: /home/preview-manager/www/previews/server/preview-manager/requirements.txt
     virtualenv: /home/preview-manager/www/previews/server/preview-manager/venv
     virtualenv_command: python3 -m venv
   become_user: preview-manager
 
-- name: Create .env file file
+- name: Create .ssh directory for preview-manager
+  file:
+    path: /home/preview-manager/.ssh
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0700'
+
+- name: Generate SSH key pair for VM access
+  community.crypto.openssh_keypair:
+    path: /home/preview-manager/.ssh/preview-vm
+    type: ed25519
+    comment: "preview-manager VM access"
+    owner: preview-manager
+    group: preview-manager
+    mode: '0600'
+
+- name: Read SSH public key
+  slurp:
+    src: /home/preview-manager/.ssh/preview-vm.pub
+  register: ssh_public_key_content
+
+- name: Create .env file
   template:
     src: env.j2
     dest: /home/preview-manager/www/previews/server/preview-manager/.env
@@ -131,26 +139,6 @@
     owner: preview-manager
     group: preview-manager
     mode: '0755'
-
-- name: Create base-files directory for OverlayFS
-  file:
-    path: /var/www/previews/.base-files
-    state: directory
-    owner: preview-manager
-    group: preview-manager
-    mode: '0775'
-
-- name: Install sudoers rule for overlay mounts
-  copy:
-    dest: /etc/sudoers.d/preview-overlay
-    content: |
-      # Allow preview-user to mount/unmount overlay filesystems for previews
-      preview-user ALL=(root) NOPASSWD: /usr/bin/mount -t overlay *
-      preview-user ALL=(root) NOPASSWD: /usr/bin/umount /var/www/previews/*
-    owner: root
-    group: root
-    mode: '0440'
-    validate: 'visudo -cf %s'
 
 - name: Ensure database directory has correct permissions
   file:

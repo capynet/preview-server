@@ -129,6 +129,23 @@ CREATE TABLE IF NOT EXISTS projects (
 );
 """
 
+CLOUD_RESOURCES_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cloud_resources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project TEXT NOT NULL,
+    preview_name TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id INTEGER NOT NULL,
+    resource_name TEXT NOT NULL,
+    spec TEXT DEFAULT '{}',
+    price_hourly REAL DEFAULT 0,
+    price_monthly REAL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    destroyed_at TEXT,
+    duration_seconds INTEGER
+);
+"""
+
 DEPLOYMENTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS deployments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -169,6 +186,7 @@ async def init_db():
         await db.executescript(AUTH_SCHEMA)
         await db.executescript(PREVIEWS_SCHEMA)
         await db.executescript(DEPLOYMENTS_SCHEMA)
+        await db.executescript(CLOUD_RESOURCES_SCHEMA)
         await db.executescript(PROJECT_MEMBERS_SCHEMA)
         await db.executescript(CONFIG_SCHEMA)
         await db.executescript(PROJECTS_SCHEMA)
@@ -228,6 +246,13 @@ async def init_db():
         if "env_vars" not in col_names:
             logger.info("Migrating previews table: adding env_vars column")
             await db.execute("ALTER TABLE previews ADD COLUMN env_vars TEXT DEFAULT '{}'")
+
+        # Migration: add cloud VM columns
+        if "vm_id" not in col_names:
+            logger.info("Migrating previews table: adding cloud VM columns")
+            await db.execute("ALTER TABLE previews ADD COLUMN vm_id INTEGER")
+            await db.execute("ALTER TABLE previews ADD COLUMN vm_ip TEXT")
+            await db.execute("ALTER TABLE previews ADD COLUMN volume_id INTEGER")
 
         # Migration: add project_slug column to invitations if missing
         cur3 = await db.execute("PRAGMA table_info(invitations)")
@@ -587,6 +612,171 @@ async def upsert_project(slug: str, **fields) -> dict:
         await db.commit()
         cur2 = await db.execute("SELECT * FROM projects WHERE slug = ?", (slug,))
         return dict(await cur2.fetchone())
+    finally:
+        await db.close()
+
+
+async def get_previews_with_active_vms() -> list[dict]:
+    """Get all previews that have a VM running (vm_id is not NULL)."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT * FROM previews WHERE vm_id IS NOT NULL"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def update_preview_vm(
+    project: str, preview_name: str,
+    vm_id: int | None, vm_ip: str | None,
+) -> None:
+    """Update VM info for a preview."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE previews SET vm_id = ?, vm_ip = ? WHERE project = ? AND preview_name = ?",
+            (vm_id, vm_ip, project, preview_name),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def update_preview_volume(
+    project: str, preview_name: str, volume_id: int | None,
+) -> None:
+    """Update volume ID for a preview."""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE previews SET volume_id = ? WHERE project = ? AND preview_name = ?",
+            (volume_id, project, preview_name),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def log_cloud_resource(
+    project: str,
+    preview_name: str,
+    resource_type: str,
+    resource_id: int,
+    resource_name: str,
+    spec: str = "{}",
+    price_hourly: float = 0,
+    price_monthly: float = 0,
+) -> int:
+    """Log creation of a cloud resource (VM or volume). Returns record ID."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """INSERT INTO cloud_resources
+               (project, preview_name, resource_type, resource_id, resource_name,
+                spec, price_hourly, price_monthly, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (project, preview_name, resource_type, resource_id, resource_name,
+             spec, price_hourly, price_monthly, _now()),
+        )
+        await db.commit()
+        return cur.lastrowid
+    finally:
+        await db.close()
+
+
+async def finish_cloud_resource(resource_type: str, resource_id: int) -> None:
+    """Mark a cloud resource as destroyed and calculate duration."""
+    db = await get_db()
+    try:
+        now = _now()
+        cur = await db.execute(
+            """SELECT id, created_at FROM cloud_resources
+               WHERE resource_type = ? AND resource_id = ? AND destroyed_at IS NULL
+               ORDER BY id DESC LIMIT 1""",
+            (resource_type, resource_id),
+        )
+        row = await cur.fetchone()
+        if row:
+            created = datetime.fromisoformat(row["created_at"])
+            duration = int((datetime.now(timezone.utc) - created).total_seconds())
+            await db.execute(
+                """UPDATE cloud_resources
+                   SET destroyed_at = ?, duration_seconds = ?
+                   WHERE id = ?""",
+                (now, duration, row["id"]),
+            )
+            await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_cloud_resources(
+    project: str | None = None,
+    resource_type: str | None = None,
+    include_active: bool = True,
+    limit: int = 200,
+) -> list[dict]:
+    """Get cloud resource logs, optionally filtered by project/type."""
+    db = await get_db()
+    try:
+        conditions = []
+        params = []
+        if project:
+            conditions.append("project = ?")
+            params.append(project)
+        if resource_type:
+            conditions.append("resource_type = ?")
+            params.append(resource_type)
+        if not include_active:
+            conditions.append("destroyed_at IS NOT NULL")
+
+        where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+        params.append(limit)
+
+        cur = await db.execute(
+            f"""SELECT * FROM cloud_resources {where}
+                ORDER BY created_at DESC LIMIT ?""",
+            params,
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+async def get_cloud_cost_summary(project: str | None = None) -> list[dict]:
+    """Get cost summary grouped by project."""
+    db = await get_db()
+    try:
+        if project:
+            cur = await db.execute(
+                """SELECT project, resource_type,
+                          COUNT(*) as total_resources,
+                          SUM(CASE WHEN destroyed_at IS NULL THEN 1 ELSE 0 END) as active_resources,
+                          SUM(COALESCE(duration_seconds, 0)) as total_seconds,
+                          SUM(COALESCE(duration_seconds, 0) * price_hourly / 3600.0) as estimated_cost
+                   FROM cloud_resources
+                   WHERE project = ?
+                   GROUP BY project, resource_type
+                   ORDER BY project, resource_type""",
+                (project,),
+            )
+        else:
+            cur = await db.execute(
+                """SELECT project, resource_type,
+                          COUNT(*) as total_resources,
+                          SUM(CASE WHEN destroyed_at IS NULL THEN 1 ELSE 0 END) as active_resources,
+                          SUM(COALESCE(duration_seconds, 0)) as total_seconds,
+                          SUM(COALESCE(duration_seconds, 0) * price_hourly / 3600.0) as estimated_cost
+                   FROM cloud_resources
+                   GROUP BY project, resource_type
+                   ORDER BY project, resource_type""",
+            )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
     finally:
         await db.close()
 

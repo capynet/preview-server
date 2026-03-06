@@ -46,6 +46,19 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     invitation_from_email: str = "Preview Manager <noreply@preview-mr.com>"
 
+    # Hetzner Cloud
+    hetzner_api_token: str = ""
+    hetzner_location: str = "fsn1"
+    hetzner_snapshot_id: int = 0
+    hetzner_ssh_private_key_path: str = ""
+    hetzner_ssh_public_key: str = ""
+
+    # Hetzner Object Storage (S3)
+    hetzner_s3_endpoint: str = ""
+    hetzner_s3_access_key: str = ""
+    hetzner_s3_secret_key: str = ""
+    hetzner_s3_bucket: str = "preview-manager"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

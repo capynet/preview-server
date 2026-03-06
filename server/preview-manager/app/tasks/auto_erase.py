@@ -1,4 +1,7 @@
-"""Background task: auto-erase previews after prolonged inactivity."""
+"""Background task: auto-erase previews after prolonged inactivity.
+
+For cloud previews: destroy VM (if any) + delete volume + clean DB.
+"""
 
 import asyncio
 import logging

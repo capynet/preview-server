@@ -578,16 +578,18 @@ async def _stream_subprocess_with_action(
     command: list[str],
     cwd: str,
     running_action: RunningAction,
-    timeout: int = 120
+    timeout: int = 120,
+    process: asyncio.subprocess.Process | None = None,
 ) -> tuple[bool, str]:
     """Execute a subprocess, buffer logs in RunningAction and broadcast to subscribers."""
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=cwd
-        )
+        if process is None:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=cwd
+            )
 
         async def read_stream(stream, stream_type):
             async for line in stream:
@@ -657,14 +659,24 @@ async def websocket_terminal(
 
     container_name = f"{preview_name}-{project_name}-{container}"
 
-    # Verify container is running
+    # Look up preview to get VM IP
+    from app.database import get_preview as db_get_preview_for_term
+    preview_data = await db_get_preview_for_term(project_name, preview_name)
+    if not preview_data or not preview_data.get("vm_ip"):
+        await websocket.send_json({"type": "error", "message": "Preview VM is not running"})
+        await websocket.close()
+        return
+
+    vm_ip = preview_data["vm_ip"]
+
+    # Verify container is running on the VM
+    from app.remote import RemoteExecutor
+    executor = RemoteExecutor(vm_ip)
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "inspect", "-f", "{{.State.Running}}", container_name,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        proc = await executor.run_shell(
+            f"docker inspect -f '{{{{.State.Running}}}}' {container_name}"
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
         if proc.returncode != 0 or stdout.decode().strip() != "true":
             await websocket.send_json({"type": "error", "message": f"Container '{container_name}' is not running"})
             await websocket.close()
@@ -674,12 +686,24 @@ async def websocket_terminal(
         await websocket.close()
         return
 
-    # Spawn PTY with docker exec
+    # Spawn PTY with SSH + docker exec on the remote VM
     pty = None
     try:
-        logger.info(f"Spawning terminal PTY for container {container_name}")
+        ssh_key = settings.hetzner_ssh_private_key_path
+        ssh_opts = [
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "LogLevel=ERROR",
+            "-t",  # Force PTY allocation
+        ]
+        ssh_cmd = [
+            "ssh", "-i", ssh_key, *ssh_opts,
+            f"root@{vm_ip}", "--",
+            "docker", "exec", "-it", container_name, "bash",
+        ]
+        logger.info(f"Spawning terminal PTY via SSH for container {container_name} on {vm_ip}")
         pty = ptyprocess.PtyProcess.spawn(
-            ["docker", "exec", "-it", container_name, "bash"],
+            ssh_cmd,
             dimensions=(24, 80),
         )
         logger.info(f"PTY spawned, pid={pty.pid}, alive={pty.isalive()}")
@@ -809,10 +833,10 @@ async def websocket_preview_action(
                 pass
             return
 
-        # Find preview path directly using project_name
-        preview_path = Path(settings.previews_base_path) / project_name / preview_name
-
-        if not preview_path.is_dir():
+        # Look up preview to get VM IP for SSH execution
+        from app.database import get_preview as db_get_preview
+        preview = await db_get_preview(project_name, preview_name)
+        if not preview:
             await websocket.send_json({
                 "type": "error",
                 "message": f"Preview '{preview_name}' not found"
@@ -820,21 +844,60 @@ async def websocket_preview_action(
             await websocket.close()
             return
 
+        vm_ip = preview.get("vm_ip")
+
         # Build command based on action
         php_container = f"{preview_name}-{project_name}-php"
         if action == "stop":
-            command = ["docker", "compose", "stop"]
-            timeout = 60
-        elif action == "start":
-            command = ["docker", "compose", "up", "-d"]
-            timeout = 120
-        elif action == "restart":
-            command = ["docker", "compose", "restart"]
-            timeout = 120
-        elif action == "drush-uli":
-            preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
-            command = ["docker", "exec", php_container, "vendor/bin/drush", "uli", f"--uri={preview_url}"]
-            timeout = 30
+            # For cloud: use REST endpoint to destroy VM
+            from app.routes.previews import stop_preview as _stop_preview_internal
+            running_action = action_manager.start(action_key, action, "stop VM")
+            await running_action.add_subscriber(websocket)
+            try:
+                from app.cloud import cloud_manager
+                from app.caddy_api import caddy_manager
+                from app.database import update_preview_vm
+                if preview.get("vm_id"):
+                    await cloud_manager.destroy_vm(preview["vm_id"])
+                    await caddy_manager.remove_preview_routes(preview_name, project_name)
+                    await update_preview_vm(project_name, preview_name, None, None)
+                success, message = True, "VM destroyed, volume kept"
+            except Exception as e:
+                success, message = False, str(e)
+        elif action in ("start", "restart", "drush-uli"):
+            if not vm_ip:
+                await websocket.send_json({
+                    "type": "error",
+                    "message": "Preview VM is not running. Visit the preview URL to wake it up."
+                })
+                await websocket.close()
+                return
+
+            from app.remote import RemoteExecutor
+            executor = RemoteExecutor(vm_ip)
+            if action == "start":
+                ssh_cmd = "cd /var/www/preview/code && docker compose up -d"
+                timeout = 120
+            elif action == "restart":
+                ssh_cmd = "cd /var/www/preview/code && docker compose restart"
+                timeout = 120
+            else:  # drush-uli
+                preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
+                ssh_cmd = f"docker exec {php_container} vendor/bin/drush uli --uri={preview_url}"
+                timeout = 30
+
+            running_action = action_manager.start(action_key, action, ssh_cmd)
+            await running_action.add_subscriber(websocket)
+
+            proc = await executor.run_shell(ssh_cmd)
+            command_for_stream = executor._ssh_base() + ["--", ssh_cmd]
+            success, message = await _stream_subprocess_with_action(
+                command=command_for_stream,
+                cwd="/tmp",
+                running_action=running_action,
+                timeout=timeout,
+                process=proc,
+            )
         else:
             await websocket.send_json({
                 "type": "error",
@@ -842,17 +905,6 @@ async def websocket_preview_action(
             })
             await websocket.close()
             return
-
-        # Register running action and add this client as first subscriber
-        running_action = action_manager.start(action_key, action, " ".join(command))
-        await running_action.add_subscriber(websocket)
-
-        success, message = await _stream_subprocess_with_action(
-            command=command,
-            cwd=str(preview_path),
-            running_action=running_action,
-            timeout=timeout
-        )
 
         complete_msg = {
             "type": "complete",

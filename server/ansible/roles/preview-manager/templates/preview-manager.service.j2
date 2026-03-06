@@ -5,8 +5,8 @@ Requires=docker.service
 
 [Service]
 Type=simple
-User=preview-user
-Group=preview-user
+User=preview-manager
+Group=preview-manager
 WorkingDirectory=/home/preview-manager/www/previews/server/preview-manager
 Environment="PATH=/home/preview-manager/www/previews/server/preview-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 ExecStart=/home/preview-manager/www/previews/server/preview-manager/venv/bin/python main.py
@@ -17,13 +17,7 @@ StandardError=journal
 SyslogIdentifier=preview-manager
 
 # Security
-# NoNewPrivileges=false required for overlay mount (sudo mount -t overlay)
-NoNewPrivileges=false
 PrivateTmp=true
-
-# Resource limits
-# MemoryLimit=2G
-# CPUQuota=200%
 
 [Install]
 WantedBy=multi-user.target

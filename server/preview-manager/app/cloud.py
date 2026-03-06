@@ -1,0 +1,287 @@
+"""Hetzner Cloud manager — create/destroy VMs and volumes for previews."""
+
+import asyncio
+import logging
+from functools import partial
+
+from hcloud import Client
+from hcloud.images import Image
+from hcloud.locations import Location
+from hcloud.server_types import ServerType
+from hcloud.servers import Server
+from hcloud.ssh_keys import SSHKey
+from hcloud.volumes import Volume
+
+from config.settings import settings
+
+logger = logging.getLogger(__name__)
+
+
+def _get_client() -> Client:
+    return Client(token=settings.hetzner_api_token)
+
+
+async def _run(func, *args, **kwargs):
+    """Run a blocking hcloud SDK call in a thread."""
+    return await asyncio.to_thread(partial(func, *args, **kwargs))
+
+
+class HetznerCloudManager:
+    """Manage ephemeral VMs and persistent volumes on Hetzner Cloud."""
+
+    def __init__(self):
+        self._ssh_key_id: int | None = None
+
+    async def _ensure_ssh_key(self, client: Client) -> SSHKey:
+        """Ensure our SSH public key exists in Hetzner, create if needed."""
+        if self._ssh_key_id:
+            key = await _run(client.ssh_keys.get_by_id, self._ssh_key_id)
+            if key:
+                return key
+
+        name = "preview-manager"
+        existing = await _run(client.ssh_keys.get_by_name, name)
+        if existing:
+            self._ssh_key_id = existing.data_model.id
+            return existing
+        key = await _run(
+            client.ssh_keys.create,
+            name=name,
+            public_key=settings.hetzner_ssh_public_key,
+        )
+        self._ssh_key_id = key.data_model.id
+        logger.info("Created SSH key in Hetzner: %s (id=%d)", name, key.data_model.id)
+        return key
+
+    async def select_cheapest_type(
+        self, client: Client, min_vcpus: int = 2, min_memory_gb: float = 4
+    ) -> ServerType:
+        """Select the cheapest server type meeting minimum requirements."""
+        types = await _run(client.server_types.get_all)
+        candidates = [
+            t for t in types
+            if t.data_model.cores >= min_vcpus
+            and t.data_model.memory >= min_memory_gb
+            and t.data_model.architecture == "x86"
+            and not t.data_model.deprecated
+        ]
+        if not candidates:
+            raise RuntimeError(
+                f"No server type found with >= {min_vcpus} vCPUs and >= {min_memory_gb} GB RAM"
+            )
+        cheapest = min(candidates, key=lambda t: t.data_model.prices[0]["price_hourly"]["gross"])
+        logger.info(
+            "Selected server type: %s (%d vCPUs, %.0f GB RAM)",
+            cheapest.data_model.name,
+            cheapest.data_model.cores,
+            cheapest.data_model.memory,
+        )
+        return cheapest
+
+    async def create_vm(
+        self,
+        name: str,
+        volume_id: int | None = None,
+    ) -> Server:
+        """Create a VM from snapshot, optionally attaching a volume."""
+        client = _get_client()
+        ssh_key = await self._ensure_ssh_key(client)
+        server_type = await self.select_cheapest_type(client)
+        location = Location(name=settings.hetzner_location)
+
+        automount = volume_id is not None
+        volumes = []
+        if volume_id:
+            volumes.append(Volume(id=volume_id))
+
+        response = await _run(
+            client.servers.create,
+            name=name,
+            server_type=server_type,
+            image=Image(id=settings.hetzner_snapshot_id),
+            location=location,
+            ssh_keys=[ssh_key],
+            volumes=volumes if volumes else None,
+            automount=automount,
+        )
+        server = response.server
+        logger.info(
+            "Created VM: %s (id=%d, ip=%s, type=%s)",
+            name, server.data_model.id,
+            server.data_model.public_net.ipv4.ip,
+            server_type.data_model.name,
+        )
+
+        # Wait for all actions to complete
+        for action in response.actions if hasattr(response, 'actions') else []:
+            await _run(action.wait_until_finished)
+
+        # Log resource for billing
+        import json
+        from app.database import log_cloud_resource
+        project, preview = self._parse_vm_name(name)
+        price_hourly = float(server_type.data_model.prices[0]["price_hourly"]["gross"])
+        price_monthly = float(server_type.data_model.prices[0]["price_monthly"]["gross"])
+        spec = json.dumps({
+            "type": server_type.data_model.name,
+            "vcpus": server_type.data_model.cores,
+            "memory_gb": server_type.data_model.memory,
+            "disk_gb": server_type.data_model.disk,
+            "ip": server.data_model.public_net.ipv4.ip,
+        })
+        await log_cloud_resource(
+            project=project, preview_name=preview,
+            resource_type="vm", resource_id=server.data_model.id,
+            resource_name=name, spec=spec,
+            price_hourly=price_hourly, price_monthly=price_monthly,
+        )
+
+        return server
+
+    async def destroy_vm(self, server_id: int) -> None:
+        """Destroy a VM."""
+        client = _get_client()
+        server = await _run(client.servers.get_by_id, server_id)
+        if not server:
+            logger.warning("VM %d not found, already destroyed?", server_id)
+            return
+        await _run(server.delete)
+        logger.info("Destroyed VM: id=%d", server_id)
+
+        # Log resource destruction for billing
+        from app.database import finish_cloud_resource
+        await finish_cloud_resource("vm", server_id)
+
+    async def get_vm(self, server_id: int) -> Server | None:
+        """Get VM by ID, returns None if not found."""
+        client = _get_client()
+        try:
+            return await _run(client.servers.get_by_id, server_id)
+        except Exception:
+            return None
+
+    async def create_volume(self, name: str, size_gb: int) -> Volume:
+        """Create a block storage volume."""
+        client = _get_client()
+        location = Location(name=settings.hetzner_location)
+        response = await _run(
+            client.volumes.create,
+            name=name,
+            size=size_gb,
+            location=location,
+            format="ext4",
+        )
+        volume = response.volume
+        logger.info("Created volume: %s (id=%d, %d GB)", name, volume.data_model.id, size_gb)
+
+        if response.action:
+            await _run(response.action.wait_until_finished)
+
+        # Log resource for billing
+        import json
+        from app.database import log_cloud_resource
+        project, preview = self._parse_volume_name(name)
+        # Hetzner volume pricing: ~0.052 EUR/GB/month
+        price_monthly = size_gb * 0.052
+        price_hourly = price_monthly / 730  # avg hours per month
+        spec = json.dumps({"size_gb": size_gb})
+        await log_cloud_resource(
+            project=project, preview_name=preview,
+            resource_type="volume", resource_id=volume.data_model.id,
+            resource_name=name, spec=spec,
+            price_hourly=price_hourly, price_monthly=price_monthly,
+        )
+
+        return volume
+
+    async def attach_volume(self, server_id: int, volume_id: int, automount: bool = True) -> None:
+        """Attach a volume to a server."""
+        client = _get_client()
+        volume = await _run(client.volumes.get_by_id, volume_id)
+        if not volume:
+            raise RuntimeError(f"Volume {volume_id} not found")
+        server = await _run(client.servers.get_by_id, server_id)
+        if not server:
+            raise RuntimeError(f"Server {server_id} not found")
+        action = await _run(volume.attach, server, automount=automount)
+        await _run(action.wait_until_finished)
+        logger.info("Attached volume %d to server %d", volume_id, server_id)
+
+    async def detach_volume(self, volume_id: int) -> None:
+        """Detach a volume from its server."""
+        client = _get_client()
+        volume = await _run(client.volumes.get_by_id, volume_id)
+        if not volume:
+            raise RuntimeError(f"Volume {volume_id} not found")
+        if volume.data_model.server is None:
+            return  # Already detached
+        action = await _run(volume.detach)
+        await _run(action.wait_until_finished)
+        logger.info("Detached volume %d", volume_id)
+
+    async def delete_volume(self, volume_id: int) -> None:
+        """Delete a volume permanently."""
+        client = _get_client()
+        volume = await _run(client.volumes.get_by_id, volume_id)
+        if not volume:
+            logger.warning("Volume %d not found, already deleted?", volume_id)
+            return
+        # Detach first if attached
+        if volume.data_model.server:
+            action = await _run(volume.detach)
+            await _run(action.wait_until_finished)
+        await _run(volume.delete)
+        logger.info("Deleted volume %d", volume_id)
+
+        # Log resource destruction for billing
+        from app.database import finish_cloud_resource
+        await finish_cloud_resource("volume", volume_id)
+
+    async def wait_for_vm_ready(self, server_id: int, timeout: int = 120) -> str:
+        """Wait until SSH is reachable on the VM. Returns the IP address."""
+        client = _get_client()
+        server = await _run(client.servers.get_by_id, server_id)
+        if not server:
+            raise RuntimeError(f"Server {server_id} not found")
+        ip = server.data_model.public_net.ipv4.ip
+
+        from app.remote import RemoteExecutor
+        executor = RemoteExecutor(ip)
+        await executor.wait_for_ssh(timeout=timeout)
+        return ip
+
+    @staticmethod
+    def _parse_vm_name(name: str) -> tuple[str, str]:
+        """Parse 'prev-{project}-{preview}' into (project, preview)."""
+        # name format: prev-{project}-{preview_name}
+        if name.startswith("prev-"):
+            rest = name[5:]  # remove "prev-"
+            # preview_name is the part before the last project segment
+            # Since both can contain dashes, we rely on the known pattern
+            # prev-{project}-{preview_name} where preview_name = mr-N or branch-X
+            parts = rest.split("-", 1)
+            if len(parts) == 2:
+                # This is tricky since project can have dashes too
+                # We'll just return the full rest and let callers handle it
+                return parts[0], parts[1] if len(parts) > 1 else ""
+        return name, ""
+
+    @staticmethod
+    def _parse_volume_name(name: str) -> tuple[str, str]:
+        """Parse 'vol-{project}-{preview}' into (project, preview)."""
+        if name.startswith("vol-"):
+            rest = name[4:]
+            parts = rest.split("-", 1)
+            if len(parts) == 2:
+                return parts[0], parts[1]
+        return name, ""
+
+    async def get_active_vms(self) -> list[Server]:
+        """List all VMs with the prev- prefix."""
+        client = _get_client()
+        servers = await _run(client.servers.get_all, name="prev-")
+        return [s for s in servers if s.data_model.name.startswith("prev-")]
+
+
+# Singleton
+cloud_manager = HetznerCloudManager()

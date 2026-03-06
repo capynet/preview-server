@@ -1,0 +1,27 @@
+{
+	admin 0.0.0.0:2019
+}
+
+# API backend
+api.{{ domain }} {
+	reverse_proxy host.docker.internal:8000
+}
+
+# Frontend app
+app.{{ domain }} {
+	reverse_proxy host.docker.internal:3000
+}
+
+# Wildcard for preview domains — fallback to API for wake-up
+*.mr.{{ domain }} {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	reverse_proxy host.docker.internal:8000
+}
+
+# Landing page
+{{ domain }} {
+	root * /landing
+	file_server
+}

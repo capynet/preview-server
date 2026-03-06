@@ -1,34 +1,5 @@
 ---
-# Caddy as Docker container with caddy-docker-proxy + cloudflare DNS
-
-- name: Create Docker preview network
-  command: docker network create preview-network
-  register: network_result
-  changed_when: network_result.rc == 0
-  failed_when: network_result.rc != 0 and 'already exists' not in network_result.stderr
-
-- name: Stop and disable old systemd caddy (if exists)
-  systemd:
-    name: caddy
-    state: stopped
-    enabled: no
-  ignore_errors: yes
-
-- name: Remove old systemd Caddyfile
-  file:
-    path: /etc/caddy/Caddyfile
-    state: absent
-
-- name: Remove old systemd caddy service override
-  file:
-    path: /etc/systemd/system/caddy.service
-    state: absent
-  register: caddy_service_removed
-
-- name: Reload systemd if service file was removed
-  systemd:
-    daemon_reload: yes
-  when: caddy_service_removed.changed
+# Caddy as Docker container with cloudflare DNS + Admin API
 
 - name: Create caddy docker directory
   file:
@@ -64,6 +35,15 @@
     mode: '0644'
   register: caddy_dockerfile
 
+- name: Generate Caddyfile
+  template:
+    src: Caddyfile.j2
+    dest: /opt/preview-caddy/Caddyfile
+    owner: root
+    group: root
+    mode: '0644'
+  register: caddy_caddyfile
+
 - name: Copy Caddy docker-compose
   template:
     src: docker-compose.caddy.yml.j2
@@ -77,8 +57,7 @@
   command: docker compose build --no-cache
   args:
     chdir: /opt/preview-caddy
-  when: caddy_dockerfile.changed
-  register: caddy_build
+  when: caddy_dockerfile.changed or caddy_caddyfile.changed
 
 - name: Remove stale Caddy container (if exists outside compose)
   command: docker rm -f preview-caddy

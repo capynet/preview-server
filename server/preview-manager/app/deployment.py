@@ -1,7 +1,10 @@
-"""Preview deployment logic — executed after webhook clones the repo."""
+"""Preview deployment logic — deploy previews on ephemeral Hetzner Cloud VMs."""
 
 import asyncio
+import hashlib
 import logging
+import math
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,8 +16,14 @@ from app.docker_compose import (
     write_docker_compose,
 )
 from app.state import PreviewStateManager
-from app.database import get_preview, get_project, create_deployment, finish_deployment
-from app.overlay import get_base_files_dir, mount_overlay
+from app.database import (
+    get_preview, get_project, create_deployment, finish_deployment,
+    update_preview_vm, update_preview_volume,
+)
+from app.cloud import cloud_manager
+from app.storage import storage_manager
+from app.remote import RemoteExecutor
+from app.caddy_api import caddy_manager
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -28,8 +37,11 @@ TIMEOUT_DRUSH = 300
 TIMEOUT_DEPLOY_SCRIPT = 600
 TIMEOUT_DEPLOY_STEP = 300
 
-# Path to custom deploy step scripts
+# Path to custom deploy step scripts (local on coordinator)
 DEPLOY_STEPS_DIR = Path(__file__).resolve().parent.parent / "scripts" / "deploy-steps"
+
+# Preview working directory inside the VM
+VM_PREVIEW_DIR = "/var/www/preview"
 
 # ANSI color codes for log output
 BOLD = "\033[1m"
@@ -50,8 +62,18 @@ def _fmt_duration(seconds: float) -> str:
     return f"{m}m {s}s"
 
 
+def _compute_db_cache_key(project: str, db_spec: str, dump_path: Path) -> str:
+    """Compute a cache key for a DB dump (local file)."""
+    h = hashlib.md5()
+    with open(dump_path, "rb") as f:
+        while chunk := f.read(65536):
+            h.update(chunk)
+    sanitized = db_spec.replace(":", "-").replace("/", "-")
+    return f"{sanitized}-{h.hexdigest()[:16]}"
+
+
 class PreviewDeployer:
-    """Deploy a preview environment using Docker Compose.
+    """Deploy a preview environment on a Hetzner Cloud VM.
 
     Handles both new previews (full setup) and updates (code-only refresh).
     """
@@ -77,10 +99,15 @@ class PreviewDeployer:
         self.preview_path = PreviewStateManager.get_preview_path(project_name, preview_name)
         self.container_prefix = f"{preview_name}-{project_name}"
         self.preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
+        self.domain = f"{preview_name}-{project_name}.mr.preview-mr.com"
         self._preview_config: dict | None = None
         self._log_buffer: list[str] = []
         self._deployment_id: int | None = deployment_id
-        self._step_timings: list[tuple[str, float, str]] = []  # (step, duration, status)
+        self._step_timings: list[tuple[str, float, str]] = []
+        self._executor: RemoteExecutor | None = None
+        self._vm_id: int | None = None
+        self._vm_ip: str | None = None
+        self._volume_id: int | None = None
 
     # ------------------------------------------------------------------
     # Public
@@ -93,7 +120,6 @@ class PreviewDeployer:
         state = await PreviewStateManager.load_state(self.project_name, self.preview_name)
         if not state:
             return True
-        # If there's a previous successful deployment, this is an update
         return not state.get("last_deployed_at")
 
     async def is_creating(self) -> bool:
@@ -184,64 +210,630 @@ class PreviewDeployer:
             return False
 
     # ------------------------------------------------------------------
-    # New preview
+    # New preview (cloud)
     # ------------------------------------------------------------------
 
     async def _deploy_new(self):
-        self._verify_base_files()
+        # 1. Verify base files exist in S3
+        await self._verify_base_files()
+
+        # 2. Calculate volume size from S3 metadata
+        db_uncompressed = await storage_manager.get_base_db_uncompressed_size(self.project_name)
+        files_uncompressed = await storage_manager.get_base_files_uncompressed_size(self.project_name)
+        total_uncompressed = db_uncompressed + files_uncompressed
+        # Volume size: 2x uncompressed data, minimum 10 GB, rounded up to 10
+        volume_gb = max(10, math.ceil(total_uncompressed / (1024**3) * 2 / 10) * 10)
+
+        # 3. Create volume
+        vol_name = f"vol-{self.project_name}-{self.preview_name}"
+        volume = await self._step_create_volume(vol_name, volume_gb)
+        self._volume_id = volume.data_model.id
+        await update_preview_volume(self.project_name, self.preview_name, self._volume_id)
+
+        # 4. Create VM + attach volume
+        vm_name = f"prev-{self.project_name}-{self.preview_name}"
+        server = await self._step_create_vm(vm_name, self._volume_id)
+        self._vm_id = server.data_model.id
+        self._vm_ip = server.data_model.public_net.ipv4.ip
+        self._executor = RemoteExecutor(self._vm_ip)
+        await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
+
+        # 5. Wait for SSH
+        await self._step_wait_ssh()
+
+        # 6. Mount volume + setup workspace
+        await self._step_setup_vm()
+
+        # 7. Clone repo via SSH
+        await self._step_clone_repo()
+
+        # 8. Generate and upload docker-compose.yml
         await self._generate_compose()
         self._write_internal_settings()
+        await self._upload_compose_and_settings()
 
-        # DB volume cache: skip SQL import if a cached volume exists
-        from app.db_cache import compute_cache_key, cache_exists, import_volume, export_volume
+        # 9. Check DB cache in S3
         db_spec = self._preview_config["database"]
-        dump_path = Path(f"/backups/{self.project_name}-base.sql.gz")
-        cache_key = compute_cache_key(self.project_name, db_spec, dump_path)
-        volume_name = f"{self.container_prefix}_db_data"
-        use_cache = cache_exists(self.project_name, cache_key)
+        # Download base DB to temp for cache key computation
+        tmp_db = Path(tempfile.mktemp(suffix=".sql.gz"))
+        try:
+            await storage_manager.download_base_db(self.project_name, tmp_db)
+            cache_key = _compute_db_cache_key(self.project_name, db_spec, tmp_db)
+        finally:
+            tmp_db.unlink(missing_ok=True)
+
+        use_cache = await storage_manager.db_cache_exists(self.project_name, cache_key)
 
         if use_cache:
-            await self._restore_db_cache(volume_name, cache_key)
+            await self._restore_db_cache(cache_key)
             await self._docker_up()
             await self._wait_for_db()
         else:
             await self._docker_up()
             await self._wait_for_db()
             await self._import_db()
-            await self._create_db_cache(volume_name, cache_key)
+            await self._create_db_cache(cache_key)
 
+        # 10. Composer install
         await self._composer_install()
+
+        # 11. Import files from S3
         await self._import_files()
+
+        # 12. Deploy steps and deploy script
         await self._run_deploy_steps("new")
         await self._run_project_deploy_script("new")
         await self._reload_webserver()
 
+        # 13. Add Caddy route
+        await self._step_add_caddy_route()
+
     # ------------------------------------------------------------------
-    # Update preview
+    # Update preview (cloud)
     # ------------------------------------------------------------------
 
     async def _deploy_update(self):
+        # Load existing VM info from DB
+        preview = await get_preview(self.project_name, self.preview_name)
+        self._vm_id = preview.get("vm_id") if preview else None
+        self._vm_ip = preview.get("vm_ip") if preview else None
+        self._volume_id = preview.get("volume_id") if preview else None
+
+        if not self._vm_id:
+            # No VM running — create one with existing volume
+            if not self._volume_id:
+                raise RuntimeError("No volume found for update deploy — cannot proceed")
+
+            vm_name = f"prev-{self.project_name}-{self.preview_name}"
+            server = await self._step_create_vm(vm_name, self._volume_id)
+            self._vm_id = server.data_model.id
+            self._vm_ip = server.data_model.public_net.ipv4.ip
+            await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
+            await self._step_wait_ssh()
+            await self._step_setup_vm()
+
+        self._executor = RemoteExecutor(self._vm_ip)
+
+        # Git pull
+        await self._step_git_pull()
+
+        # Generate and upload compose + settings
         await self._generate_compose()
         self._write_internal_settings()
+        await self._upload_compose_and_settings()
+
+        # Docker up + deploy
         await self._docker_up()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
         await self._reload_webserver()
 
+        # Update Caddy route (IP may have changed)
+        await self._step_add_caddy_route()
+
     # ------------------------------------------------------------------
-    # Steps
+    # Cloud infrastructure steps
     # ------------------------------------------------------------------
 
-    def _verify_base_files(self):
-        db = Path(f"/backups/{self.project_name}-base.sql.gz")
-        if not db.exists():
-            raise RuntimeError(f"Base files missing: {db}")
+    async def _step_create_volume(self, name: str, size_gb: int):
+        step = "create-volume"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+        volume = await cloud_manager.create_volume(name, size_gb)
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, f"{DIM}{size_gb} GB{RESET}")
+        return volume
+
+    async def _step_create_vm(self, name: str, volume_id: int | None = None):
+        step = "create-vm"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+        server = await cloud_manager.create_vm(name, volume_id)
+        elapsed = time.monotonic() - t0
+        ip = server.data_model.public_net.ipv4.ip
+        await self._log_step_end(step, elapsed, True, f"{DIM}IP: {ip}{RESET}")
+        return server
+
+    async def _step_wait_ssh(self):
+        step = "wait-ssh"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+        await self._executor.wait_for_ssh(timeout=120)
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, f"{DIM}SSH ready{RESET}")
+
+    async def _step_setup_vm(self):
+        """Mount volume and create workspace directory on the VM."""
+        step = "setup-vm"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        # The volume is auto-mounted by Hetzner at /mnt/HC_VolumeXXX
+        # Create a symlink at /var/www/preview pointing to it
+        setup_cmd = (
+            "VOLDIR=$(ls -d /mnt/HC_Volume* 2>/dev/null | head -1) && "
+            "if [ -z \"$VOLDIR\" ]; then echo 'No volume found' >&2; exit 1; fi && "
+            f"ln -sfn \"$VOLDIR\" {VM_PREVIEW_DIR} && "
+            f"mkdir -p {VM_PREVIEW_DIR}/code"
+        )
+        proc = await self._executor.run_shell(setup_cmd)
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"VM setup failed: {stderr.decode().strip()}")
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, "")
+
+    async def _step_clone_repo(self):
+        """Clone the repository on the VM."""
+        step = "clone-repo"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        from app.routes.gitlab import _get_gitlab_token
+        from urllib.parse import urlparse
+        token = await _get_gitlab_token()
+        parsed = urlparse(settings.gitlab_url)
+
+        project_path = None
+        from app import config_store
+        project_path = await config_store.get_project_path_by_slug(self.project_name)
+        if not project_path:
+            raise RuntimeError(f"Project path not found for {self.project_name}")
+
+        clone_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
+        code_dir = f"{VM_PREVIEW_DIR}/code"
+
+        clone_cmd = (
+            f"rm -rf {code_dir}/* {code_dir}/.* 2>/dev/null; "
+            f"git clone --depth 1 --branch {self.branch} '{clone_url}' {code_dir} && "
+            f"rm -rf {code_dir}/.git"
+        )
+        proc = await self._executor.run_shell(clone_cmd)
+        stdout, stderr = await self._stream_progress(proc, step, t0, 120)
+        elapsed = time.monotonic() - t0
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            raise RuntimeError(f"[{step}] Clone failed (exit {proc.returncode})")
+
+        await self._log_step_end(step, elapsed, True, "")
+
+    async def _step_git_pull(self):
+        """Update code on the VM via fresh clone."""
+        # For updates, we re-clone since we don't keep .git
+        await self._step_clone_repo()
+
+    async def _upload_compose_and_settings(self):
+        """Upload docker-compose.yml and settings files to the VM."""
+        step = "upload-config"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        compose_file = self.preview_path / "docker-compose.yml"
+        if compose_file.exists():
+            await self._executor.upload_file(
+                str(compose_file),
+                f"{VM_PREVIEW_DIR}/code/docker-compose.yml",
+            )
+
+        # Upload settings files
+        docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
+        settings_dir = self.preview_path / docroot / "sites" / "default"
+
+        for fname in ("settings.preview.internal.php", "settings.php"):
+            local_file = settings_dir / fname
+            if local_file.exists():
+                remote_dir = f"{VM_PREVIEW_DIR}/code/{docroot}/sites/default"
+                # Ensure remote dir exists
+                await self._executor.run_shell(f"mkdir -p {remote_dir}")
+                proc = await (await self._executor.run_shell(f"mkdir -p {remote_dir}")).communicate() if False else None
+                await self._executor.upload_file(
+                    str(local_file),
+                    f"{remote_dir}/{fname}",
+                )
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, "")
+
+    async def _step_add_caddy_route(self):
+        """Add Caddy route pointing to VM IP."""
+        step = "caddy-route"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        alias_domains = []
+        expose_services = {}
+        if self._preview_config:
+            alias_prefixes = self._preview_config.get("domain_aliases", [])
+            alias_domains = [f"{a}--{self.domain}" for a in alias_prefixes]
+            expose_services = self._preview_config.get("expose", {})
+
+        await caddy_manager.add_preview_routes(
+            self.preview_name, self.project_name, self._vm_ip,
+            alias_domains=alias_domains,
+            expose_services=expose_services,
+        )
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, f"{DIM}{self.domain} -> {self._vm_ip}{RESET}")
+
+    # ------------------------------------------------------------------
+    # Docker steps (executed on VM via SSH)
+    # ------------------------------------------------------------------
+
+    async def _docker_up(self):
+        await self._run_remote(
+            "docker", "compose", "up", "-d", "--pull", "missing",
+            step="docker-up",
+            timeout=TIMEOUT_DOCKER_UP,
+            cwd=f"{VM_PREVIEW_DIR}/code",
+        )
+
+    async def _wait_for_db(self):
+        """Wait for MySQL to be ready on the VM."""
+        step = "wait-for-db"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        db_container = f"{self.container_prefix}-db"
+        for attempt in range(30):
+            # Root ping
+            proc = await self._executor.run_shell(
+                f"docker exec {db_container} mysqladmin ping -h localhost -u root -proot 2>/dev/null"
+            )
+            await proc.communicate()
+            if proc.returncode != 0:
+                await asyncio.sleep(2)
+                continue
+
+            # App user check
+            proc = await self._executor.run_shell(
+                f"docker exec -e MYSQL_PWD=drupal {db_container} mysql -u drupal -e 'SELECT 1' drupal 2>/dev/null"
+            )
+            await proc.communicate()
+            if proc.returncode == 0:
+                elapsed = time.monotonic() - t0
+                await self._log_step_end(
+                    step, elapsed, True,
+                    f"{DIM}MySQL ready after {attempt + 1} attempt(s){RESET}",
+                )
+                return
+
+            await asyncio.sleep(2)
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, False, "MySQL not ready after 60s")
+        raise RuntimeError("[wait-for-db] MySQL not ready after 60s")
+
+    async def _composer_install(self):
+        await self._docker_exec(
+            "composer", "install", "--no-interaction", "--no-progress",
+            step="composer-install",
+            timeout=TIMEOUT_COMPOSER,
+        )
+
+    async def _import_db(self):
+        """Download base DB from S3 to VM and import into MySQL."""
+        step = "import-db"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        db_container = f"{self.container_prefix}-db"
+        # Download from S3 to VM, then pipe to mysql
+        s3_key = f"base-files/{self.project_name}/db.sql.gz"
+        import_cmd = (
+            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
+            f"--endpoint-url {settings.hetzner_s3_endpoint} "
+            f"| gunzip | docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
+        )
+
+        # Set AWS credentials on the VM for the S3 download
+        env_cmd = (
+            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+        )
+        proc = await self._executor.run_shell(env_cmd + import_cmd)
+        stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_DB)
+        elapsed = time.monotonic() - t0
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            output = (stdout + stderr)[-2000:]
+            raise RuntimeError(f"[{step}] Failed (exit {proc.returncode}):\n{output}")
+
+        await self._log_step_end(step, elapsed, True, "")
+
+    async def _import_files(self):
+        """Download base files from S3 to VM and extract."""
+        has_files = await storage_manager.get_base_files_uncompressed_size(self.project_name)
+        if not has_files:
+            # Check if files exist in S3 at all
+            status = await storage_manager.get_base_files_status(self.project_name)
+            if not status.get("files"):
+                docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
+                public_path = "sites/default/files"
+                if self._preview_config:
+                    public_path = self._preview_config.get("env", {}).get("PREV_FILE_PUBLIC_PATH", public_path)
+                mkdir_cmd = f"mkdir -p {VM_PREVIEW_DIR}/code/{docroot}/{public_path}"
+                proc = await self._executor.run_shell(mkdir_cmd)
+                await proc.communicate()
+                await self._log_raw(f"{DIM}No base files found — created empty directory{RESET}\n")
+                return
+
+        step = "import-files"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        s3_key = f"base-files/{self.project_name}/files.tar.gz"
+        docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
+        public_path = "sites/default/files"
+        if self._preview_config:
+            public_path = self._preview_config.get("env", {}).get("PREV_FILE_PUBLIC_PATH", public_path)
+
+        files_dir = f"{VM_PREVIEW_DIR}/code/{docroot}/{public_path}"
+        extract_cmd = (
+            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+            f"mkdir -p {files_dir} && "
+            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
+            f"--endpoint-url {settings.hetzner_s3_endpoint} "
+            f"| tar xzf - -C {files_dir} && "
+            f"chown -R 33:33 {files_dir}"
+        )
+
+        proc = await self._executor.run_shell(extract_cmd)
+        stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_FILES)
+        elapsed = time.monotonic() - t0
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            output = (stdout + stderr)[-2000:]
+            raise RuntimeError(f"[{step}] Failed (exit {proc.returncode}):\n{output}")
+
+        await self._log_step_end(step, elapsed, True, "")
+
+    async def _restore_db_cache(self, cache_key: str):
+        """Download DB cache from S3 to VM and restore the Docker volume."""
+        step = "restore-db-cache"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        s3_key = f"db-cache/{self.project_name}/{cache_key}.tar.gz"
+        volume_name = f"{self.container_prefix}_db_data"
+
+        restore_cmd = (
+            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+            f"docker volume create {volume_name} && "
+            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} /tmp/db-cache.tar.gz "
+            f"--endpoint-url {settings.hetzner_s3_endpoint} && "
+            f"docker run --rm -v {volume_name}:/data -v /tmp:/cache alpine "
+            f"tar xzf /cache/db-cache.tar.gz -C /data && "
+            f"rm -f /tmp/db-cache.tar.gz"
+        )
+
+        proc = await self._executor.run_shell(restore_cmd)
+        stdout, stderr = await self._stream_progress(proc, step, t0, 120)
+        elapsed = time.monotonic() - t0
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            raise RuntimeError(f"[{step}] Failed to restore DB cache")
+
+        await self._log_step_end(step, elapsed, True, f"{DIM}Restored from S3 cache{RESET}")
+
+    async def _create_db_cache(self, cache_key: str):
+        """Export DB volume on VM and upload to S3 cache."""
+        step = "create-db-cache"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        db_container = f"{self.container_prefix}-db"
+        volume_name = f"{self.container_prefix}_db_data"
+
+        # Stop DB for clean snapshot
+        proc = await self._executor.run_shell(f"docker stop {db_container}")
+        await proc.communicate()
+
+        try:
+            export_cmd = (
+                f"docker run --rm -v {volume_name}:/data:ro -v /tmp:/cache alpine "
+                f"tar czf /cache/db-cache.tar.gz -C /data . && "
+                f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+                f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+                f"aws s3 cp /tmp/db-cache.tar.gz "
+                f"s3://{storage_manager.bucket}/db-cache/{self.project_name}/{cache_key}.tar.gz "
+                f"--endpoint-url {settings.hetzner_s3_endpoint} && "
+                f"rm -f /tmp/db-cache.tar.gz"
+            )
+            proc = await self._executor.run_shell(export_cmd)
+            stdout, stderr = await self._stream_progress(proc, step, t0, 300)
+
+            if proc.returncode != 0:
+                logger.warning("Failed to create DB cache, continuing anyway")
+        finally:
+            # Restart DB
+            proc = await self._executor.run_shell(f"docker start {db_container}")
+            await proc.communicate()
+            await self._wait_for_db()
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, f"{DIM}Cached for future previews{RESET}")
+
+    async def _reload_webserver(self):
+        """Send graceful restart to LiteSpeed."""
+        php_container = f"{self.container_prefix}-php"
+        try:
+            proc = await self._executor.run_shell(
+                f"docker exec {php_container} /usr/local/lsws/bin/lswsctrl restart 2>/dev/null"
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+        except Exception as e:
+            logger.warning(f"[reload-webserver] Failed (non-fatal): {e}")
+
+    async def _run_project_deploy_script(self, phase: str):
+        """Run the project deploy script for a phase (new/update)."""
+        config = getattr(self, "_preview_config", None)
+        deploy_path = config["deploy"][phase] if config else None
+
+        if not deploy_path:
+            return
+
+        logger.info(f"Running deploy script ({phase}): {deploy_path}")
+        await self._docker_exec(
+            "bash", f"/var/www/html/{deploy_path}",
+            step=f"project-deploy-script-{phase}",
+            timeout=TIMEOUT_DEPLOY_SCRIPT,
+        )
+
+    async def _run_deploy_steps(self, phase: str):
+        """Run *.sh scripts from deploy-steps/{phase}/ on the VM."""
+        steps_dir = DEPLOY_STEPS_DIR / phase
+        if not steps_dir.is_dir():
+            return
+
+        scripts = sorted(steps_dir.glob("*.sh"))
+        if not scripts:
+            return
+
+        logger.info(f"Running {len(scripts)} deploy step(s) from {phase}/")
+
+        for script in scripts:
+            # Upload script to VM and execute
+            remote_script = f"/tmp/deploy-step-{script.name}"
+            await self._executor.upload_file(str(script), remote_script)
+
+            env_vars = self._build_step_env(phase)
+            env_export = " ".join(f"{k}='{v}'" for k, v in env_vars.items())
+
+            proc = await self._executor.run_shell(
+                f"export {env_export} && bash {remote_script}",
+                cwd=f"{VM_PREVIEW_DIR}/code",
+            )
+            stdout, stderr = await self._stream_progress(
+                proc, f"deploy-step-{phase}/{script.name}",
+                time.monotonic(), TIMEOUT_DEPLOY_STEP,
+            )
+            if proc.returncode != 0:
+                output = (stdout + stderr)[-2000:]
+                raise RuntimeError(
+                    f"[deploy-step-{phase}/{script.name}] Failed (exit {proc.returncode}):\n{output}"
+                )
+
+    def _build_step_env(self, phase: str) -> dict:
+        """Build environment variables passed to deploy step scripts."""
+        return {
+            "PREV_PROJECT_NAME": self.project_name,
+            "PREV_PREVIEW_NAME": self.preview_name,
+            "PREV_MR_IID": str(self.mr_iid) if self.mr_iid else "",
+            "PREV_PATH": f"{VM_PREVIEW_DIR}/code",
+            "PREV_URL": self.preview_url,
+            "PREV_CONTAINER_PREFIX": self.container_prefix,
+            "PREV_BRANCH": self.branch,
+            "PREV_COMMIT_SHA": self.commit_sha,
+            "PREV_PHASE": phase,
+        }
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120) -> str:
+        """Run a command inside the PHP container on the VM."""
+        php_container = f"{self.container_prefix}-php"
+        shell_cmd = f"docker exec -e COLUMNS=200 {php_container} {' '.join(cmd)}"
+        return await self._run_remote_shell(shell_cmd, step=step, timeout=timeout)
+
+    async def _run_remote(self, *cmd: str, step: str, timeout: int = 120, cwd: str | None = None) -> str:
+        """Run a command on the VM via SSH. Raises on failure."""
+        logger.info(f"[{step}] Running on VM: {' '.join(cmd)}")
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        proc = await self._executor.run(*cmd, cwd=cwd)
+
+        try:
+            stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
+        except asyncio.TimeoutError:
+            elapsed = time.monotonic() - t0
+            await self._log_step_end(step, elapsed, False, f"{RED}TIMEOUT after {timeout}s{RESET}")
+            raise RuntimeError(f"[{step}] Timed out after {timeout}s")
+
+        elapsed = time.monotonic() - t0
+        output = stdout + stderr
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            raise RuntimeError(
+                f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
+            )
+
+        await self._log_step_end(step, elapsed, True, "")
+        logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
+        return output
+
+    async def _run_remote_shell(self, cmd: str, step: str, timeout: int = 120) -> str:
+        """Run a shell command on the VM via SSH. Raises on failure."""
+        logger.info(f"[{step}] Running on VM: {cmd}")
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        proc = await self._executor.run_shell(cmd, cwd=f"{VM_PREVIEW_DIR}/code")
+
+        try:
+            stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
+        except asyncio.TimeoutError:
+            elapsed = time.monotonic() - t0
+            await self._log_step_end(step, elapsed, False, f"{RED}TIMEOUT after {timeout}s{RESET}")
+            raise RuntimeError(f"[{step}] Timed out after {timeout}s")
+
+        elapsed = time.monotonic() - t0
+        output = stdout + stderr
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            raise RuntimeError(
+                f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
+            )
+
+        await self._log_step_end(step, elapsed, True, "")
+        logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
+        return output
+
+    async def _verify_base_files(self):
+        """Verify base DB exists in S3."""
+        exists = await storage_manager.base_db_exists(self.project_name)
+        if not exists:
+            raise RuntimeError(
+                f"Base database not found in S3 for project '{self.project_name}'. "
+                f"Upload with: preview push db"
+            )
 
     def _write_internal_settings(self):
         """Write settings.preview.internal.php and ensure settings.php includes it.
 
-        This is injected by the deployer on every deploy (new and update)
-        so it's always up-to-date, even if not committed to the repo.
+        Files are written locally and then uploaded to the VM.
         """
         docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
         settings_dir = self.preview_path / docroot / "sites" / "default"
@@ -319,9 +911,7 @@ if (getenv('PREV_IS_PREVIEW')) {
             content = settings_php.read_text()
             if "PREV_IS_PREVIEW" not in content:
                 settings_php.write_text(content.rstrip() + "\n" + snippet)
-                logger.info("Appended preview include snippet to settings.php")
             elif "settings.preview.internal.php" not in content:
-                # Old-style include (only settings.preview.php) — upgrade it
                 old_include = "include __DIR__ . '/settings.preview.php';"
                 new_include = (
                     "include __DIR__ . '/settings.preview.internal.php';\n"
@@ -331,20 +921,17 @@ if (getenv('PREV_IS_PREVIEW')) {
                 )
                 content = content.replace(old_include, new_include)
                 settings_php.write_text(content)
-                logger.info("Upgraded preview include snippet in settings.php")
         else:
             settings_php.write_text("<?php\n" + snippet)
-            logger.info(f"Created {settings_php} with preview include snippet")
 
     async def _generate_compose(self):
-        """Parse preview.yml and generate docker-compose.yml."""
+        """Parse preview.yml and generate docker-compose.yml locally."""
         step = "generate-compose"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
         config = parse_preview_yml(self.preview_path)
 
-        # Auto-detect docroot if not set explicitly in preview.yml
         yml_file = self.preview_path / "preview.yml"
         if not yml_file.exists() or "docroot" not in (
             __import__("yaml").safe_load(yml_file.read_text()) or {}
@@ -353,7 +940,7 @@ if (getenv('PREV_IS_PREVIEW')) {
 
         self._preview_config = config
 
-        # Load extra env vars: project-level + preview-level (preview overrides project)
+        # Load extra env vars
         extra_env: dict[str, str] = {}
         try:
             import json
@@ -384,328 +971,21 @@ if (getenv('PREV_IS_PREVIEW')) {
         elapsed = time.monotonic() - t0
         info = f"php={config['php_version']} docroot={config['docroot']}"
         await self._log_step_end(step, elapsed, True, f"{DIM}{info}{RESET}")
-        logger.info(f"[generate-compose] Generated docker-compose.yml")
-
-    async def _docker_up(self):
-        await self._run(
-            "docker", "compose", "up", "-d", "--pull", "missing",
-            step="docker-up",
-            timeout=TIMEOUT_DOCKER_UP,
-        )
-
-    async def _wait_for_db(self):
-        """Wait for MySQL to be ready to accept connections (including app user)."""
-        step = "wait-for-db"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        db_container = f"{self.container_prefix}-db"
-        for attempt in range(30):
-            try:
-                # First check: MySQL process is up (root ping)
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "exec", db_container,
-                    "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-                if proc.returncode != 0:
-                    raise RuntimeError("ping failed")
-
-                # Second check: app user is ready (MYSQL_USER init may lag behind)
-                proc = await asyncio.create_subprocess_exec(
-                    "docker", "exec", "-e", "MYSQL_PWD=drupal", db_container,
-                    "mysql", "-u", "drupal", "-e", "SELECT 1", "drupal",
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
-                if proc.returncode == 0:
-                    elapsed = time.monotonic() - t0
-                    await self._log_step_end(
-                        step, elapsed, True,
-                        f"{DIM}MySQL ready after {attempt + 1} attempt(s){RESET}",
-                    )
-                    logger.info(f"[wait-for-db] MySQL ready after {attempt + 1} attempts")
-                    return
-            except (asyncio.TimeoutError, Exception):
-                pass
-            await asyncio.sleep(2)
-
-        elapsed = time.monotonic() - t0
-        await self._log_step_end(step, elapsed, False, "MySQL not ready after 60s")
-        raise RuntimeError("[wait-for-db] MySQL not ready after 60s")
-
-    async def _composer_install(self):
-        await self._docker_exec(
-            "composer", "install", "--no-interaction", "--no-progress",
-            step="composer-install",
-            timeout=TIMEOUT_COMPOSER,
-        )
-
-    async def _import_db(self):
-        """Import database dump via gunzip piped to mysql, with progress."""
-        db_path = f"/backups/{self.project_name}-base.sql.gz"
-        db_container = f"{self.container_prefix}-db"
-
-        # Get file size for pv progress
-        db_file = Path(db_path)
-        if db_file.exists():
-            size_mb = db_file.stat().st_size / (1024 * 1024)
-            # pv -f forces output to stderr, shows progress bar with size
-            cmd = (
-                f"pv -f -s {db_file.stat().st_size} {db_path} "
-                f"| gunzip | docker exec -e MYSQL_PWD=drupal -i {db_container} "
-                f"mysql -u drupal drupal"
-            )
-        else:
-            cmd = (
-                f"gunzip -c {db_path} | docker exec -e MYSQL_PWD=drupal -i {db_container} "
-                f"mysql -u drupal drupal"
-            )
-        await self._run_shell(cmd, step="import-db", timeout=TIMEOUT_IMPORT_DB)
-
-    async def _import_files(self):
-        """Mount overlay filesystem for shared base files (skipped if none uploaded)."""
-        base_dir = get_base_files_dir(self.project_name)
-        if not base_dir.exists():
-            # Create an empty files directory so Drupal can still function
-            public_path = self._preview_config["env"].get(
-                "PREV_FILE_PUBLIC_PATH", "sites/default/files"
-            ) if self._preview_config else "sites/default/files"
-            docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
-            files_dir = self.preview_path / docroot / public_path
-            files_dir.mkdir(parents=True, exist_ok=True)
-            await self._log(f"{DIM}No base files found — created empty {docroot}/{public_path}{RESET}")
-            return
-
-        step = "import-files"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        public_path = self._preview_config["env"].get(
-            "PREV_FILE_PUBLIC_PATH", "sites/default/files"
-        ) if self._preview_config else "sites/default/files"
-        docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
-
-        await mount_overlay(
-            self.project_name, self.preview_path,
-            docroot=docroot, public_path=public_path,
-        )
-
-        elapsed = time.monotonic() - t0
-        await self._log_step_end(
-            step, elapsed, True,
-            f"{DIM}Mounted overlay (base: {base_dir}){RESET}",
-        )
-
-    async def _restore_db_cache(self, volume_name: str, cache_key: str):
-        """Pre-populate the DB volume from cache before docker compose up."""
-        from app.db_cache import import_volume, get_cache_path
-        step = "restore-db-cache"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        cache_path = get_cache_path(self.project_name, cache_key)
-        size_mb = cache_path.stat().st_size / (1024 * 1024)
-
-        await import_volume(volume_name, self.project_name, cache_key)
-
-        elapsed = time.monotonic() - t0
-        await self._log_step_end(
-            step, elapsed, True,
-            f"{DIM}Restored from cache ({size_mb:.1f} MB){RESET}",
-        )
-
-    async def _create_db_cache(self, volume_name: str, cache_key: str):
-        """Export the DB volume to cache after first import."""
-        from app.db_cache import export_volume, compute_cache_key, get_cache_path
-        step = "create-db-cache"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        # Stop DB container for a clean snapshot
-        db_container = f"{self.container_prefix}-db"
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "stop", db_container,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        await proc.communicate()
-
-        try:
-            cache_path = await export_volume(
-                volume_name, self.project_name, cache_key
-            )
-            size_mb = cache_path.stat().st_size / (1024 * 1024)
-
-            # Guard against race: if the dump was replaced during deploy,
-            # the cache we just created is stale — discard it.
-            db_spec = self._preview_config["database"]
-            dump_path = Path(f"/backups/{self.project_name}-base.sql.gz")
-            if dump_path.exists():
-                current_key = compute_cache_key(self.project_name, db_spec, dump_path)
-                if current_key != cache_key:
-                    get_cache_path(self.project_name, cache_key).unlink(missing_ok=True)
-                    logger.warning(
-                        "DB dump changed during deploy — discarded stale cache"
-                    )
-                    size_mb = 0
-        finally:
-            # Restart DB container
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "start", db_container,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-            # Wait for DB to be ready again
-            await self._wait_for_db()
-
-        elapsed = time.monotonic() - t0
-        if size_mb:
-            await self._log_step_end(
-                step, elapsed, True,
-                f"{DIM}Cached for future previews ({size_mb:.1f} MB){RESET}",
-            )
-        else:
-            await self._log_step_end(
-                step, elapsed, True,
-                f"{YELLOW}Cache discarded (DB dump changed during deploy){RESET}",
-            )
-
-    async def _reload_webserver(self):
-        """Send graceful restart to LiteSpeed so it re-reads .htaccess."""
-        php_container = f"{self.container_prefix}-php"
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                "docker", "exec", php_container,
-                "/usr/local/lsws/bin/lswsctrl", "restart",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.communicate(), timeout=10)
-            logger.info("[reload-webserver] LiteSpeed reloaded")
-        except Exception as e:
-            logger.warning(f"[reload-webserver] Failed (non-fatal): {e}")
-
-    async def _drush(self, *args):
-        await self._docker_exec(
-            "vendor/bin/drush", *args,
-            step=f"drush-{args[0]}",
-            timeout=TIMEOUT_DRUSH,
-        )
-
-    async def _run_project_deploy_script(self, phase: str):
-        """Run the project deploy script for a phase (new/update).
-
-        Priority:
-        1. Preview-specific override: scripts/preview/{phase}/{preview_name}-deploy.sh
-        2. Script path defined in preview.yml deploy.{phase}
-        3. Nothing — if no script is configured, skip entirely
-        """
-        # Check for preview-specific override first
-        scripts_dir = self.preview_path / "scripts" / "preview" / phase
-        preview_script = scripts_dir / f"{self.preview_name}-deploy.sh"
-
-        if preview_script.exists():
-            logger.info(f"Running preview-specific deploy script: {preview_script.name}")
-            await self._docker_exec(
-                "bash", f"/var/www/html/scripts/preview/{phase}/{preview_script.name}",
-                step=f"project-deploy-script-preview-{phase}",
-                timeout=TIMEOUT_DEPLOY_SCRIPT,
-            )
-            return
-
-        # Use preview.yml config
-        config = getattr(self, "_preview_config", None)
-        deploy_path = config["deploy"][phase] if config else None
-
-        if not deploy_path:
-            logger.info(f"No deploy script configured for phase '{phase}', skipping")
-            return
-
-        # Verify the script exists in the project
-        full_path = self.preview_path / deploy_path
-        if not full_path.exists():
-            raise RuntimeError(
-                f"Deploy script not found: {deploy_path} "
-                f"(configured in preview.yml deploy.{phase})"
-            )
-
-        logger.info(f"Running deploy script ({phase}): {deploy_path}")
-        await self._docker_exec(
-            "bash", f"/var/www/html/{deploy_path}",
-            step=f"project-deploy-script-{phase}",
-            timeout=TIMEOUT_DEPLOY_SCRIPT,
-        )
 
     # ------------------------------------------------------------------
-    # Custom deploy steps
+    # Log / stream helpers (same interface as before)
     # ------------------------------------------------------------------
-
-    async def _run_deploy_steps(self, phase: str):
-        """Run *.sh scripts from deploy-steps/{phase}/ in sorted order."""
-        steps_dir = DEPLOY_STEPS_DIR / phase
-        if not steps_dir.is_dir():
-            return
-
-        scripts = sorted(steps_dir.glob("*.sh"))
-        if not scripts:
-            return
-
-        env = self._build_step_env(phase)
-        logger.info(f"Running {len(scripts)} deploy step(s) from {phase}/")
-
-        for script in scripts:
-            await self._run(
-                "bash", str(script),
-                step=f"deploy-step-{phase}/{script.name}",
-                timeout=TIMEOUT_DEPLOY_STEP,
-                env=env,
-            )
-
-    def _build_step_env(self, phase: str) -> dict:
-        """Build environment variables passed to deploy step scripts."""
-        import os
-        env = os.environ.copy()
-        env.update({
-            "PREV_PROJECT_NAME": self.project_name,
-            "PREV_PREVIEW_NAME": self.preview_name,
-            "PREV_MR_IID": str(self.mr_iid) if self.mr_iid else "",
-            "PREV_PATH": str(self.preview_path),
-            "PREV_URL": self.preview_url,
-            "PREV_CONTAINER_PREFIX": self.container_prefix,
-            "PREV_BRANCH": self.branch,
-            "PREV_COMMIT_SHA": self.commit_sha,
-            "PREV_PHASE": phase,
-        })
-        return env
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120) -> str:
-        """Run a command inside the PHP container."""
-        php_container = f"{self.container_prefix}-php"
-        full_cmd = ("docker", "exec", "-e", "COLUMNS=200", php_container, *cmd)
-        return await self._run(*full_cmd, step=step, timeout=timeout)
 
     async def _log_raw(self, text: str):
-        """Append raw text to log buffer and broadcast."""
         from app.websockets import deployment_log_broadcaster
         self._log_buffer.append(text)
         if self._deployment_id:
             await deployment_log_broadcaster.add_log(self._deployment_id, text)
 
     async def _log_step_start(self, step: str):
-        """Log the start of a deployment step with colored header."""
         await self._log_raw(f"\n{CYAN}⚙️ {step}{RESET}\n")
 
     async def _log_step_end(self, step: str, duration: float, success: bool, output: str):
-        """Log the end of a step with duration and colored status."""
         dur_str = _fmt_duration(duration)
         if success:
             status_line = f"{GREEN}✓ {step}{RESET} {DIM}completed in {dur_str}{RESET}\n"
@@ -714,7 +994,6 @@ if (getenv('PREV_IS_PREVIEW')) {
             status_line = f"{RED}✗ {step}{RESET} {DIM}failed after {dur_str}{RESET}\n"
             self._step_timings.append((step, duration, "fail"))
 
-        # Append command output (if any) before the status line
         if output.strip():
             self._log_buffer.append(output.strip())
             from app.websockets import deployment_log_broadcaster
@@ -726,7 +1005,6 @@ if (getenv('PREV_IS_PREVIEW')) {
         await self._log_raw(status_line + "\n")
 
     async def _log_summary(self, success: bool, total_duration: int, error: str | None = None):
-        """Log a final deploy summary with step timings."""
         dur_str = _fmt_duration(total_duration)
         lines = [f"\n{BOLD}{'─' * 50}{RESET}\n"]
 
@@ -774,7 +1052,6 @@ if (getenv('PREV_IS_PREVIEW')) {
                         proc.kill()
                         await read_task
                         raise asyncio.TimeoutError()
-                # Flush any lines accumulated in the last second
                 if pending_chunks:
                     text = b"".join(pending_chunks).decode(errors="replace")
                     pending_chunks.clear()
@@ -782,7 +1059,6 @@ if (getenv('PREV_IS_PREVIEW')) {
         except asyncio.TimeoutError:
             raise
 
-        # Flush remaining chunks
         if pending_chunks:
             text = b"".join(pending_chunks).decode(errors="replace")
             pending_chunks.clear()
@@ -794,75 +1070,6 @@ if (getenv('PREV_IS_PREVIEW')) {
             b"".join(stdout_chunks).decode(errors="replace"),
             b"".join(stderr_chunks).decode(errors="replace"),
         )
-
-    async def _run(self, *cmd: str, step: str, timeout: int = 120, env: dict | None = None) -> str:
-        """Run a command inside the preview directory. Raises on failure."""
-        logger.info(f"[{step}] Running: {' '.join(cmd)}")
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=str(self.preview_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-        )
-
-        try:
-            stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
-        except asyncio.TimeoutError:
-            elapsed = time.monotonic() - t0
-            await self._log_step_end(step, elapsed, False, f"{RED}TIMEOUT after {timeout}s{RESET}")
-            raise RuntimeError(f"[{step}] Timed out after {timeout}s")
-
-        elapsed = time.monotonic() - t0
-        output = stdout + stderr
-
-        if proc.returncode != 0:
-            # Output already streamed; pass empty to avoid duplication
-            await self._log_step_end(step, elapsed, False, "")
-            raise RuntimeError(
-                f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
-            )
-
-        # Output already streamed; pass empty to avoid duplication
-        await self._log_step_end(step, elapsed, True, "")
-        logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
-        return output
-
-    async def _run_shell(self, cmd: str, step: str, timeout: int = 120) -> str:
-        """Run a shell command (for pipes). Raises on failure."""
-        logger.info(f"[{step}] Running: {cmd}")
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        proc = await asyncio.create_subprocess_shell(
-            cmd,
-            cwd=str(self.preview_path),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        try:
-            stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
-        except asyncio.TimeoutError:
-            elapsed = time.monotonic() - t0
-            await self._log_step_end(step, elapsed, False, f"{RED}TIMEOUT after {timeout}s{RESET}")
-            raise RuntimeError(f"[{step}] Timed out after {timeout}s")
-
-        elapsed = time.monotonic() - t0
-        output = stdout + stderr
-
-        if proc.returncode != 0:
-            await self._log_step_end(step, elapsed, False, "")
-            raise RuntimeError(
-                f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
-            )
-
-        await self._log_step_end(step, elapsed, True, "")
-        logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
-        return output
 
     async def _save_state(
         self,

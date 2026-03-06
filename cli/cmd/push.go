@@ -170,7 +170,7 @@ func uploadExistingFile(slug, kind, filePath string) error {
 
 	fmt.Fprintf(os.Stderr, "Uploading %s (%d bytes)...\n", filePath, info.Size())
 
-	if err := apiClient.UploadBaseFileChunked(slug, kind, f, filepath.Base(filePath)); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, kind, f, filepath.Base(filePath), 0); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
@@ -387,7 +387,7 @@ func generateAndUploadDB(slug string) error {
 	fmt.Fprintf(os.Stderr, "Uploading database dump (compressor: %s -6)...\n", compressorName)
 
 	filename := fmt.Sprintf("%s-base.sql.gz", slug)
-	if err := apiClient.UploadBaseFileChunked(slug, "db", compressedOut, filename); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, "db", compressedOut, filename, 0); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 
@@ -548,7 +548,7 @@ func generateAndUploadFiles(slug string) error {
 	fmt.Fprintln(os.Stderr, "Uploading files archive...")
 
 	filename := fmt.Sprintf("%s-files.tar.gz", slug)
-	if err := apiClient.UploadBaseFileChunked(slug, "files", compressedOut, filename); err != nil {
+	if err := apiClient.UploadBaseFileChunked(slug, "files", compressedOut, filename, sourceSize); err != nil {
 		return fmt.Errorf("upload failed: %w", err)
 	}
 

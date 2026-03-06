@@ -190,6 +190,34 @@ async def save_allowed_domains(request: Request, user: UserWithRole = Depends(re
     return {"success": True, "domains": domains}
 
 
+@router.get("/api/config/cloud-resources")
+async def get_cloud_resources_list(
+    project: str | None = None,
+    resource_type: str | None = None,
+    limit: int = 200,
+    user: UserWithRole = Depends(require_role(Role.viewer)),
+):
+    """List cloud resource usage logs (VMs and volumes)."""
+    from app.database import get_cloud_resources
+    resources = await get_cloud_resources(
+        project=project,
+        resource_type=resource_type,
+        limit=limit,
+    )
+    return {"resources": resources, "total": len(resources)}
+
+
+@router.get("/api/config/cloud-costs")
+async def get_cloud_costs(
+    project: str | None = None,
+    user: UserWithRole = Depends(require_role(Role.viewer)),
+):
+    """Get cloud cost summary grouped by project and resource type."""
+    from app.database import get_cloud_cost_summary
+    summary = await get_cloud_cost_summary(project=project)
+    return {"summary": summary}
+
+
 @router.get("/api/health")
 async def health_check():
     """Health check endpoint"""
