@@ -258,20 +258,30 @@ def generate_docker_compose(
     if solr_cfg:
         solr_ver = solr_cfg if isinstance(solr_cfg, str) else "9"
         solr_volumes = ["solr_data:/var/solr"]
-        solr_command = "solr-precreate drupal"
-        # Mount custom configset if specified in preview.yml
-        configset_path = config.get("solr_configset")
-        if configset_path:
-            solr_volumes.append(f"./{configset_path}:/opt/solr-conf:ro")
-            solr_command = "solr-precreate drupal /opt/solr-conf"
-        compose["services"]["solr"] = {
+        solr_service: dict[str, Any] = {
             "image": f"solr:{solr_ver}",
             "container_name": f"{prefix}-solr",
-            "volumes": solr_volumes,
-            "command": solr_command,
             "networks": [network_name],
             "restart": "unless-stopped",
         }
+        # Mount custom configset if specified in preview.yml.
+        # We manually create the core directory instead of using solr-precreate
+        # because solr-precreate has an elevate.xml conflict bug in Solr 8.
+        configset_path = config.get("solr_configset")
+        if configset_path:
+            solr_volumes.append(f"./{configset_path}:/opt/solr-conf:ro")
+            solr_service["entrypoint"] = [
+                "bash", "-c",
+                "mkdir -p /var/solr/data/drupal/conf /var/solr/data/drupal/data && "
+                "cp /opt/solr-conf/* /var/solr/data/drupal/conf/ && "
+                "echo name=drupal > /var/solr/data/drupal/core.properties && "
+                "chown -R solr:solr /var/solr/data/drupal && "
+                "exec solr-foreground",
+            ]
+        else:
+            solr_service["command"] = "solr-precreate drupal"
+        solr_service["volumes"] = solr_volumes
+        compose["services"]["solr"] = solr_service
         compose["volumes"]["solr_data"] = None
 
     return compose
