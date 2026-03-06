@@ -320,8 +320,13 @@ async def get_all_previews() -> list[dict]:
     try:
         cur = await db.execute(
             """SELECT p.*,
-                      (SELECT d.id FROM deployments d WHERE d.preview_id = p.id ORDER BY d.id DESC LIMIT 1) AS latest_deployment_id
+                      d.id AS latest_deployment_id,
+                      d.status AS latest_deployment_status,
+                      d.completed_at AS latest_deployment_completed_at
                FROM previews p
+               LEFT JOIN deployments d ON d.id = (
+                   SELECT d2.id FROM deployments d2 WHERE d2.preview_id = p.id ORDER BY d2.id DESC LIMIT 1
+               )
                ORDER BY p.last_deployed_at DESC NULLS LAST"""
         )
         rows = await cur.fetchall()
