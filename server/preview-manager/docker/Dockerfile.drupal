@@ -239,8 +239,25 @@ sed "s|%%DOCUMENT_ROOT%%|${DOCUMENT_ROOT}|g" \
     > /usr/local/lsws/conf/vhosts/drupal/vhconf.conf
 
 # Enable LiteSpeed Cache module if requested
+# OLS cache config goes in the module block (httpd_config.conf), NOT in vhost config
 if [ "${PREV_LITESPEED_CACHE}" = "1" ]; then
-    sed -i 's/ls_enabled              0/ls_enabled              1/' /usr/local/lsws/conf/httpd_config.conf
+    sed -i '/^module cache {/,/^}/ c\
+module cache {\
+  ls_enabled              1\
+  checkPublicCache        1\
+  checkPrivateCache       0\
+  enableCache             1\
+  expireInSeconds         64800\
+  enablePrivateCache      0\
+  privateExpireInSeconds  64800\
+  maxCacheObjSize         10000000\
+  maxStaleAge             200\
+  qsCache                 1\
+  reqCookieCache          1\
+  respCookieCache         1\
+  ignoreReqCacheCtrl      1\
+  ignoreRespCacheCtrl     0\
+}' /usr/local/lsws/conf/httpd_config.conf
 fi
 
 # Ensure runtime dirs exist
