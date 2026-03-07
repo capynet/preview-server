@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# Build a Hetzner Cloud snapshot with Docker + pre-pulled images.
+# Build a lightweight Hetzner Cloud snapshot with Docker (no pre-pulled images).
+# Docker images are pulled on-demand during preview deployment.
 #
 # Usage: ./build-snapshot.sh [HETZNER_API_TOKEN]
 #
@@ -18,7 +19,7 @@ fi
 export HCLOUD_TOKEN="$TOKEN"
 
 LOCATION="fsn1"
-SERVER_TYPE="cx22"
+SERVER_TYPE="cx23"
 SERVER_NAME="snapshot-builder-$(date +%s)"
 IMAGE="ubuntu-24.04"
 
@@ -52,29 +53,12 @@ curl -fsSL https://get.docker.com | sh
 # Install Docker Compose plugin
 apt-get install -y docker-compose-plugin
 
-# Install AWS CLI (for S3 downloads)
-apt-get install -y awscli
-
 # Install basic tools
 apt-get install -y pv git rsync
 
 # Enable Docker
 systemctl enable docker
 systemctl start docker
-
-# Pre-pull common images
-echo "==> Pre-pulling images..."
-docker pull preview-drupal:php8.3 || true
-docker pull preview-drupal:php8.2 || true
-docker pull preview-drupal:php8.1 || true
-docker pull mysql:8.0
-docker pull mysql:8.4 || true
-docker pull mariadb:10.6 || true
-docker pull mariadb:11.4 || true
-docker pull redis:7-alpine
-docker pull valkey/valkey:8-alpine
-docker pull solr:9
-docker pull alpine:3.20
 
 # Clean up apt cache
 apt-get clean

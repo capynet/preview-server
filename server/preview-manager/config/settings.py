@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     # Hetzner Cloud
     hetzner_api_token: str = ""
     hetzner_location: str = "fsn1"
+    hetzner_server_type: str = "cx23"
     hetzner_snapshot_id: int = 0
     hetzner_ssh_private_key_path: str = ""
     hetzner_ssh_public_key: str = ""

@@ -485,10 +485,19 @@ func generateAndUploadFiles(slug string) error {
 		}
 	}
 
+	// Subtract always-excluded dirs (css, js, php) from sourceSize
+	for _, excl := range []string{"css", "js", "php"} {
+		if exclSize, err := dirSize(filepath.Join(filesDir, excl)); err == nil {
+			sourceSize -= exclSize
+		}
+	}
+
 	// Build tar args (no compression — piped to external compressor)
 	tarArgs := []string{"cf", "-", "--exclude=./css", "--exclude=./js", "--exclude=./php"}
 
-	// If --strip-heavy-files is set, exclude large files
+	// If --strip-heavy-files is set, write excludes to a temp file to avoid
+	// "argument list too long" when there are thousands of large files.
+	var excludeFile *os.File
 	if stripHeavyFiles != "" {
 		maxBytes, err := parseSizeMB(stripHeavyFiles)
 		if err != nil {
@@ -505,17 +514,33 @@ func generateAndUploadFiles(slug string) error {
 
 		heavyFiles := strings.Split(strings.TrimSpace(string(findOut)), "\n")
 		skipped := 0
+		var strippedBytes int64
+		excludeFile, err = os.CreateTemp("", "preview-exclude-*.txt")
+		if err != nil {
+			return fmt.Errorf("failed to create exclude file: %w", err)
+		}
+		defer os.Remove(excludeFile.Name())
 		for _, f := range heavyFiles {
 			f = strings.TrimSpace(f)
 			if f == "" {
 				continue
 			}
-			tarArgs = append(tarArgs, "--exclude="+f)
+			fmt.Fprintln(excludeFile, f)
 			skipped++
+			if info, err := os.Stat(filepath.Join(filesDir, f)); err == nil {
+				strippedBytes += info.Size()
+			}
 		}
+		excludeFile.Close()
 		if skipped > 0 {
-			fmt.Fprintf(os.Stderr, "Skipping %d files larger than %s\n", skipped, stripHeavyFiles)
+			tarArgs = append(tarArgs, "--exclude-from="+excludeFile.Name())
+			sourceSize -= strippedBytes
+			fmt.Fprintf(os.Stderr, "Skipping %d files larger than %s (%s excluded)\n", skipped, stripHeavyFiles, formatBytesShort(strippedBytes))
 		}
+	}
+
+	if sourceSize < 0 {
+		sourceSize = 0
 	}
 
 	fmt.Fprintf(os.Stderr, "Packaging %s (compressor: %s -6)...\n", filesDir, compressorName)

@@ -19,7 +19,12 @@ class CaddyRouteManager:
         return f"preview-{domain.replace('.', '-')}"
 
     def _build_route(self, domain: str, upstream_ip: str, port: int = 80) -> dict:
-        """Build a Caddy route config for a preview."""
+        """Build a Caddy route config for a preview.
+
+        Uses reverse_proxy to emulate forward_auth (Caddy's JSON API doesn't
+        have a native forward_auth handler — the Caddyfile directive compiles
+        down to a reverse_proxy with special response handling).
+        """
         route_id = self._route_id(domain)
         return {
             "@id": route_id,
@@ -28,7 +33,7 @@ class CaddyRouteManager:
                 {
                     "handler": "subroute",
                     "routes": [
-                        # Forward auth for non-static paths
+                        # Auth check via reverse_proxy (emulates forward_auth)
                         {
                             "match": [{
                                 "not": [{"path": [
@@ -40,10 +45,46 @@ class CaddyRouteManager:
                                 ]}]
                             }],
                             "handle": [{
-                                "handler": "forward_auth",
-                                "uri": "/api/auth/verify-preview",
+                                "handler": "reverse_proxy",
                                 "upstreams": [{"dial": "host.docker.internal:8000"}],
-                                "headers": {"up": {"Host": ["{http.request.host}"]}},
+                                "rewrite": {
+                                    "method": "GET",
+                                    "uri": "/api/auth/verify-preview",
+                                },
+                                "headers": {
+                                    "request": {
+                                        "set": {
+                                            "X-Forwarded-Host": ["{http.request.host}"],
+                                            "X-Forwarded-Uri": ["{http.request.uri}"],
+                                        },
+                                    },
+                                },
+                                "handle_response": [
+                                    {
+                                        "match": {"status_code": [2]},
+                                    },
+                                    {
+                                        "match": {"status_code": [3]},
+                                        "routes": [{
+                                            "handle": [{
+                                                "handler": "static_response",
+                                                "status_code": "{http.reverse_proxy.status_code}",
+                                                "headers": {
+                                                    "Location": ["{http.reverse_proxy.header.Location}"],
+                                                },
+                                            }],
+                                        }],
+                                    },
+                                    {
+                                        "routes": [{
+                                            "handle": [{
+                                                "handler": "static_response",
+                                                "status_code": "{http.reverse_proxy.status_code}",
+                                                "body": "Access denied",
+                                            }],
+                                        }],
+                                    },
+                                ],
                             }],
                         },
                         # Reverse proxy to VM

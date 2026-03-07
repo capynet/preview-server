@@ -1,6 +1,6 @@
 """Background task: auto-stop previews after inactivity.
 
-For cloud previews: destroy the VM but keep the volume.
+For cloud previews: shutdown the VM (keeps disk intact).
 """
 
 import asyncio
@@ -10,10 +10,8 @@ from datetime import datetime, timezone
 from app import config_store
 from app.database import (
     get_all_previews, get_project, has_running_deployment,
-    update_preview_vm,
 )
 from app.cloud import cloud_manager
-from app.caddy_api import caddy_manager
 
 logger = logging.getLogger(__name__)
 
@@ -91,17 +89,15 @@ async def _check_and_stop():
         if await has_running_deployment(p["id"]):
             continue
 
-        # Destroy VM (keep volume)
+        # Shutdown VM (keeps disk intact)
         logger.info(
             f"Auto-stopping {project}/{preview_name}: "
             f"idle for {int(idle_seconds / 60)} min (threshold: {threshold_minutes} min)"
         )
         try:
-            await cloud_manager.destroy_vm(p["vm_id"])
-            await caddy_manager.remove_preview_routes(preview_name, project)
-            await update_preview_vm(project, preview_name, None, None)
+            await cloud_manager.shutdown_vm(p["vm_id"])
             stopped_count += 1
-            logger.info(f"Auto-stopped {project}/{preview_name} (VM destroyed, volume kept)")
+            logger.info(f"Auto-stopped {project}/{preview_name} (VM shutdown)")
         except Exception as e:
             logger.error(f"Failed to auto-stop {project}/{preview_name}: {e}")
 

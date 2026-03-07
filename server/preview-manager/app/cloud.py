@@ -10,7 +10,6 @@ from hcloud.locations import Location
 from hcloud.server_types import ServerType
 from hcloud.servers import Server
 from hcloud.ssh_keys import SSHKey
-from hcloud.volumes import Volume
 
 from config.settings import settings
 
@@ -18,7 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 def _get_client() -> Client:
-    return Client(token=settings.hetzner_api_token)
+    return Client(
+        token=settings.hetzner_api_token,
+        poll_interval=2,
+        poll_max_retries=300,  # 300 * 2s = 10 min max wait for actions
+    )
 
 
 async def _run(func, *args, **kwargs):
@@ -53,46 +56,45 @@ class HetznerCloudManager:
         logger.info("Created SSH key in Hetzner: %s (id=%d)", name, key.data_model.id)
         return key
 
-    async def select_cheapest_type(
-        self, client: Client, min_vcpus: int = 2, min_memory_gb: float = 4
-    ) -> ServerType:
-        """Select the cheapest server type meeting minimum requirements."""
-        types = await _run(client.server_types.get_all)
-        candidates = [
-            t for t in types
-            if t.data_model.cores >= min_vcpus
-            and t.data_model.memory >= min_memory_gb
-            and t.data_model.architecture == "x86"
-            and not t.data_model.deprecated
-        ]
-        if not candidates:
+    async def get_server_type(self, client: Client) -> ServerType:
+        """Get the configured server type, raising if unavailable."""
+        type_name = settings.hetzner_server_type
+        server_type = await _run(client.server_types.get_by_name, type_name)
+        if not server_type:
             raise RuntimeError(
-                f"No server type found with >= {min_vcpus} vCPUs and >= {min_memory_gb} GB RAM"
+                f"Server type '{type_name}' not found in Hetzner. "
+                f"No VM will be created — check HETZNER_SERVER_TYPE in your config."
             )
-        cheapest = min(candidates, key=lambda t: t.data_model.prices[0]["price_hourly"]["gross"])
+        if server_type.data_model.deprecated:
+            raise RuntimeError(
+                f"Server type '{type_name}' is deprecated in Hetzner. "
+                f"Update HETZNER_SERVER_TYPE to a current type."
+            )
         logger.info(
-            "Selected server type: %s (%d vCPUs, %.0f GB RAM)",
-            cheapest.data_model.name,
-            cheapest.data_model.cores,
-            cheapest.data_model.memory,
+            "Using server type: %s (%d vCPUs, %.0f GB RAM)",
+            server_type.data_model.name,
+            server_type.data_model.cores,
+            server_type.data_model.memory,
         )
-        return cheapest
+        return server_type
 
     async def create_vm(
         self,
         name: str,
-        volume_id: int | None = None,
     ) -> Server:
-        """Create a VM from snapshot, optionally attaching a volume."""
+        """Create a VM from snapshot."""
         client = _get_client()
-        ssh_key = await self._ensure_ssh_key(client)
-        server_type = await self.select_cheapest_type(client)
-        location = Location(name=settings.hetzner_location)
 
-        automount = volume_id is not None
-        volumes = []
-        if volume_id:
-            volumes.append(Volume(id=volume_id))
+        # Clean up any existing VM with this name (from a previous failed deploy)
+        existing = await _run(client.servers.get_by_name, name)
+        if existing:
+            logger.warning("Found existing VM %s (id=%d), deleting...", name, existing.data_model.id)
+            await _run(existing.delete)
+            await asyncio.sleep(5)
+
+        ssh_key = await self._ensure_ssh_key(client)
+        server_type = await self.get_server_type(client)
+        location = Location(name=settings.hetzner_location)
 
         response = await _run(
             client.servers.create,
@@ -101,8 +103,6 @@ class HetznerCloudManager:
             image=Image(id=settings.hetzner_snapshot_id),
             location=location,
             ssh_keys=[ssh_key],
-            volumes=volumes if volumes else None,
-            automount=automount,
         )
         server = response.server
         logger.info(
@@ -112,8 +112,11 @@ class HetznerCloudManager:
             server_type.data_model.name,
         )
 
-        # Wait for all actions to complete
-        for action in response.actions if hasattr(response, 'actions') else []:
+        # Wait for the main create action to complete
+        if response.action:
+            await _run(response.action.wait_until_finished)
+        # Wait for additional actions (volume attach, etc.)
+        for action in getattr(response, 'next_actions', []) or []:
             await _run(action.wait_until_finished)
 
         # Log resource for billing
@@ -152,6 +155,34 @@ class HetznerCloudManager:
         from app.database import finish_cloud_resource
         await finish_cloud_resource("vm", server_id)
 
+    async def shutdown_vm(self, server_id: int) -> None:
+        """Gracefully shutdown a VM (keeps disk intact)."""
+        client = _get_client()
+        server = await _run(client.servers.get_by_id, server_id)
+        if not server:
+            logger.warning("VM %d not found for shutdown", server_id)
+            return
+        if server.data_model.status == "off":
+            logger.info("VM %d already off", server_id)
+            return
+        action = await _run(server.shutdown)
+        await _run(action.wait_until_finished)
+        logger.info("Shutdown VM: id=%d", server_id)
+
+    async def power_on_vm(self, server_id: int) -> str:
+        """Power on a shutdown VM. Returns the IP address."""
+        client = _get_client()
+        server = await _run(client.servers.get_by_id, server_id)
+        if not server:
+            raise RuntimeError(f"VM {server_id} not found")
+        if server.data_model.status == "running":
+            logger.info("VM %d already running", server_id)
+            return server.data_model.public_net.ipv4.ip
+        action = await _run(server.power_on)
+        await _run(action.wait_until_finished)
+        logger.info("Powered on VM: id=%d", server_id)
+        return server.data_model.public_net.ipv4.ip
+
     async def get_vm(self, server_id: int) -> Server | None:
         """Get VM by ID, returns None if not found."""
         client = _get_client()
@@ -160,9 +191,23 @@ class HetznerCloudManager:
         except Exception:
             return None
 
-    async def create_volume(self, name: str, size_gb: int) -> Volume:
-        """Create a block storage volume."""
+    async def create_volume(self, name: str, size_gb: int):
+        """Create a block storage volume, or reuse existing one with same name."""
         client = _get_client()
+
+        # Check if volume already exists (from a previous failed deploy)
+        existing = await _run(client.volumes.get_by_name, name)
+        if existing:
+            logger.info("Reusing existing volume: %s (id=%d)", name, existing.data_model.id)
+            # Detach if still attached to a deleted/old server
+            if existing.data_model.server:
+                try:
+                    action = await _run(existing.detach)
+                    await _run(action.wait_until_finished)
+                except Exception:
+                    pass
+            return existing
+
         location = Location(name=settings.hetzner_location)
         response = await _run(
             client.volumes.create,
@@ -237,17 +282,34 @@ class HetznerCloudManager:
         from app.database import finish_cloud_resource
         await finish_cloud_resource("volume", volume_id)
 
-    async def wait_for_vm_ready(self, server_id: int, timeout: int = 120) -> str:
-        """Wait until SSH is reachable on the VM. Returns the IP address."""
+    async def wait_for_vm_ready(self, server_id: int, timeout: int = 300) -> str:
+        """Wait until VM is running and SSH is reachable. Returns the IP address."""
+        import time
         client = _get_client()
         server = await _run(client.servers.get_by_id, server_id)
         if not server:
             raise RuntimeError(f"Server {server_id} not found")
         ip = server.data_model.public_net.ipv4.ip
 
+        # Phase 1: Wait for VM status to become "running"
+        start = time.monotonic()
+        while server.data_model.status != "running":
+            elapsed = time.monotonic() - start
+            if elapsed > timeout:
+                raise RuntimeError(
+                    f"VM {server_id} still in '{server.data_model.status}' after {int(elapsed)}s"
+                )
+            logger.info("VM %d status: %s (%.0fs elapsed)", server_id, server.data_model.status, elapsed)
+            await asyncio.sleep(5)
+            server = await _run(client.servers.get_by_id, server_id)
+
+        logger.info("VM %d is running (%.0fs), waiting for SSH...", server_id, time.monotonic() - start)
+
+        # Phase 2: Wait for SSH
+        remaining = max(30, timeout - int(time.monotonic() - start))
         from app.remote import RemoteExecutor
         executor = RemoteExecutor(ip)
-        await executor.wait_for_ssh(timeout=timeout)
+        await executor.wait_for_ssh(timeout=remaining)
         return ip
 
     @staticmethod

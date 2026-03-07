@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 // ErrNotAuthenticated is returned when the server rejects the token.
@@ -153,8 +151,8 @@ func (c *Client) PostDrushByName(project string, previewName string, args string
 }
 
 type BaseFileInfo struct {
-	Exists    bool   `json:"exists"`
-	SizeBytes int64  `json:"size_bytes"`
+	Exists     bool   `json:"exists"`
+	SizeBytes  int64  `json:"size_bytes"`
 	ModifiedAt string `json:"modified_at"`
 }
 
@@ -184,64 +182,11 @@ func (c *Client) GetBaseFilesStatus(slug string) (*BaseFilesStatus, error) {
 	return &result, nil
 }
 
-func (c *Client) UploadBaseFile(slug, kind string, reader io.Reader, filename string) error {
-	url := fmt.Sprintf("%s/api/projects/%s/base-files/%s", c.BaseURL, slug, kind)
-
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	go func() {
-		part, err := writer.CreateFormFile("file", filename)
-		if err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		if _, err := io.Copy(part, reader); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		writer.Close()
-		pw.Close()
-	}()
-
-	req, err := http.NewRequest("POST", url, pr)
-	if err != nil {
-		return err
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("upload failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == 401 {
-		fmt.Fprintln(os.Stderr, "Authentication failed. Your token may be expired or revoked.")
-		fmt.Fprintln(os.Stderr, "Re-authenticate by running:\n")
-		fmt.Fprintln(os.Stderr, "  preview login\n")
-		os.Exit(1)
-	}
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
-}
-
-const chunkSize = 50 * 1024 * 1024 // 50MB
-
-// UploadBaseFileChunked copies the reader to a temp file, then uploads using
-// single request (if <50MB) or chunked upload (if >=50MB) with a progress bar.
+// UploadBaseFileChunked copies the reader to a temp file, then uploads
+// directly to S3 via presigned URLs (single PUT for <=5GB, multipart for >5GB).
 // uncompressedSize is the original size before compression (0 if unknown).
 func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, filename string, uncompressedSize int64) error {
-	// 1. Copy stream to temp file to know size and allow chunking.
-	// Use current directory instead of os.TempDir() because /tmp may be
-	// a tmpfs (RAM-backed) on Linux, which can't handle large files.
-	// The current directory is always on a real filesystem.
+	// 1. Copy stream to temp file to know size.
 	tmpFile, err := os.CreateTemp(".", ".preview-upload-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
@@ -258,202 +203,185 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 	tmpFile.Close()
 	fmt.Fprintf(os.Stderr, "\rBuffered %s to temp file.              \n", formatBytes(written))
 
-	// 2. Decide: single or chunked
-	if written < chunkSize {
-		return c.uploadSingleWithProgress(slug, kind, tmpPath, filename, written, uncompressedSize)
+	// 2. Request presigned URL(s) from API
+	presignBody, _ := json.Marshal(map[string]interface{}{"total_size": written})
+	resp, err := c.doRequest("POST",
+		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/presign", c.BaseURL, slug, kind),
+		bytes.NewReader(presignBody))
+	if err != nil {
+		return fmt.Errorf("presign request failed: %w", err)
 	}
-	return c.uploadChunked(slug, kind, tmpPath, filename, written, uncompressedSize)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("presign HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	var presignResult struct {
+		Mode         string   `json:"mode"`
+		PresignedURL string   `json:"presigned_url"`
+		UploadID     string   `json:"upload_id"`
+		PartSize     int64    `json:"part_size"`
+		PartURLs     []string `json:"part_urls"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&presignResult); err != nil {
+		return fmt.Errorf("presign decode error: %w", err)
+	}
+	resp.Body.Close()
+
+	fmt.Fprintf(os.Stderr, "Uploading %s to S3...\n", formatBytes(written))
+
+	// 3. Upload to S3
+	var completeParts []map[string]interface{} // for multipart
+
+	if presignResult.Mode == "single" {
+		if err := c.uploadSingleToS3(tmpPath, presignResult.PresignedURL, written); err != nil {
+			return err
+		}
+	} else {
+		parts, err := c.uploadMultipartToS3(tmpPath, presignResult.PartURLs, presignResult.PartSize, written)
+		if err != nil {
+			return err
+		}
+		completeParts = parts
+	}
+
+	// 4. Confirm upload with API
+	fmt.Fprintf(os.Stderr, "Confirming upload...\n")
+	confirmPayload := map[string]interface{}{
+		"uncompressed_size": uncompressedSize,
+	}
+	if presignResult.UploadID != "" {
+		confirmPayload["upload_id"] = presignResult.UploadID
+		confirmPayload["parts"] = completeParts
+	}
+	confirmBody, _ := json.Marshal(confirmPayload)
+	confirmResp, err := c.doRequest("POST",
+		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/complete", c.BaseURL, slug, kind),
+		bytes.NewReader(confirmBody))
+	if err != nil {
+		return fmt.Errorf("confirm request failed: %w", err)
+	}
+	defer confirmResp.Body.Close()
+	if confirmResp.StatusCode != 200 {
+		body, _ := io.ReadAll(confirmResp.Body)
+		return fmt.Errorf("confirm HTTP %d: %s", confirmResp.StatusCode, string(body))
+	}
+
+	return nil
 }
 
-func (c *Client) uploadSingleWithProgress(slug, kind, filePath, filename string, totalSize, uncompressedSize int64) error {
+func (c *Client) uploadSingleToS3(filePath, presignedURL string, totalSize int64) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	go func() {
-		if uncompressedSize > 0 {
-			if fw, err := writer.CreateFormField("uncompressed_size"); err == nil {
-				fmt.Fprintf(fw, "%d", uncompressedSize)
-			}
-		}
-		part, err := writer.CreateFormFile("file", filename)
-		if err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		progressReader := &progressWriter{total: totalSize, label: "Uploading"}
-		if _, err := io.Copy(part, io.TeeReader(f, progressReader)); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		fmt.Fprintln(os.Stderr)
-		writer.Close()
-		pw.Close()
-	}()
-
-	req, err := http.NewRequest("POST", fmt.Sprintf("%s/api/projects/%s/base-files/%s", c.BaseURL, slug, kind), pr)
+	pr := &progressReader{reader: f, total: totalSize, label: "Uploading"}
+	req, err := http.NewRequest("PUT", presignedURL, pr)
 	if err != nil {
 		return err
 	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.ContentLength = totalSize
+	req.Header.Set("Content-Type", "application/octet-stream")
 
-	resp, err := c.HTTPClient.Do(req)
+	s3Resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("upload failed: %w", err)
+		return fmt.Errorf("S3 upload failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer s3Resp.Body.Close()
+	fmt.Fprintln(os.Stderr)
 
-	if resp.StatusCode == 401 {
-		fmt.Fprintln(os.Stderr, "Authentication failed. Re-authenticate by running:\n\n  preview login\n")
-		os.Exit(1)
-	}
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	if s3Resp.StatusCode < 200 || s3Resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(s3Resp.Body)
+		return fmt.Errorf("S3 upload HTTP %d: %s", s3Resp.StatusCode, string(body))
 	}
 	return nil
 }
 
-func (c *Client) uploadChunked(slug, kind, filePath, filename string, totalSize, uncompressedSize int64) error {
-	totalChunks := int((totalSize + chunkSize - 1) / chunkSize)
-
-	// Init
-	initBody, _ := json.Marshal(map[string]interface{}{
-		"total_chunks": totalChunks,
-		"total_size":   totalSize,
-	})
-	resp, err := c.doRequest("POST",
-		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/init", c.BaseURL, slug, kind),
-		bytes.NewReader(initBody))
-	if err != nil {
-		return fmt.Errorf("chunked init failed: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("chunked init HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	var initResult struct {
-		UploadID string `json:"upload_id"`
-	}
-	json.NewDecoder(resp.Body).Decode(&initResult)
-	resp.Body.Close()
-
-	fmt.Fprintf(os.Stderr, "Uploading %s...\n", formatBytes(totalSize))
-
-	// Upload chunks
+func (c *Client) uploadMultipartToS3(filePath string, partURLs []string, partSize, totalSize int64) ([]map[string]interface{}, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer f.Close()
 
-	var totalSent int64
-	buf := make([]byte, chunkSize)
+	var totalUploaded int64
+	parts := make([]map[string]interface{}, 0, len(partURLs))
 
-	for i := 0; i < totalChunks; i++ {
-		n, err := io.ReadFull(f, buf)
-		if err != nil && err != io.ErrUnexpectedEOF && err != io.EOF {
-			return fmt.Errorf("read chunk %d: %w", i, err)
-		}
-		chunkData := buf[:n]
-
-		// Retry logic per chunk
-		var uploadErr error
-		for attempt := 0; attempt < 3; attempt++ {
-			if attempt > 0 {
-				wait := time.Duration(1<<uint(attempt)) * 2 * time.Second
-				fmt.Fprintf(os.Stderr, "  Retrying chunk %d/%d in %v...\n", i+1, totalChunks, wait)
-				time.Sleep(wait)
-			}
-
-			uploadErr = c.uploadOneChunk(slug, kind, initResult.UploadID, i, chunkData)
-			if uploadErr == nil {
-				break
-			}
-		}
-		if uploadErr != nil {
-			return fmt.Errorf("chunk %d failed after 3 attempts: %w", i, uploadErr)
+	for i, url := range partURLs {
+		// Calculate this part's size
+		remaining := totalSize - totalUploaded
+		thisPartSize := partSize
+		if remaining < thisPartSize {
+			thisPartSize = remaining
 		}
 
-		totalSent += int64(n)
-		pct := float64(totalSent) / float64(totalSize) * 100
-		bar := progressBar(pct, 30)
-		fmt.Fprintf(os.Stderr, "\r  %s / %s (%.0f%%) %s", formatBytes(totalSent), formatBytes(totalSize), pct, bar)
+		partReader := io.LimitReader(f, thisPartSize)
+		pr := &progressReader{
+			reader:  partReader,
+			total:   totalSize,
+			read:    totalUploaded,
+			label:   fmt.Sprintf("Part %d/%d", i+1, len(partURLs)),
+			lastPct: -1,
+		}
+
+		req, err := http.NewRequest("PUT", url, pr)
+		if err != nil {
+			return nil, fmt.Errorf("part %d request: %w", i+1, err)
+		}
+		req.ContentLength = thisPartSize
+		req.Header.Set("Content-Type", "application/octet-stream")
+
+		s3Resp, err := c.HTTPClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("part %d upload failed: %w", i+1, err)
+		}
+
+		if s3Resp.StatusCode < 200 || s3Resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(s3Resp.Body)
+			s3Resp.Body.Close()
+			return nil, fmt.Errorf("part %d S3 HTTP %d: %s", i+1, s3Resp.StatusCode, string(body))
+		}
+
+		etag := s3Resp.Header.Get("ETag")
+		s3Resp.Body.Close()
+
+		parts = append(parts, map[string]interface{}{
+			"ETag":       etag,
+			"PartNumber": i + 1,
+		})
+
+		totalUploaded += thisPartSize
 	}
 	fmt.Fprintln(os.Stderr)
 
-	// Complete
-	fmt.Fprintf(os.Stderr, "Finalizing upload...\n")
-	completeBody, _ := json.Marshal(map[string]interface{}{
-		"upload_id":         initResult.UploadID,
-		"uncompressed_size": uncompressedSize,
-	})
-	resp2, err := c.doRequest("POST",
-		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/complete", c.BaseURL, slug, kind),
-		bytes.NewReader(completeBody))
-	if err != nil {
-		return fmt.Errorf("chunked complete failed: %w", err)
-	}
-	defer resp2.Body.Close()
-	if resp2.StatusCode != 200 {
-		body, _ := io.ReadAll(resp2.Body)
-		return fmt.Errorf("chunked complete HTTP %d: %s", resp2.StatusCode, string(body))
-	}
-
-	return nil
+	return parts, nil
 }
 
-func (c *Client) uploadOneChunk(slug, kind, uploadID string, index int, data []byte) error {
-	pr, pw := io.Pipe()
-	writer := multipart.NewWriter(pw)
-
-	go func() {
-		writer.WriteField("upload_id", uploadID)
-		writer.WriteField("chunk_index", fmt.Sprintf("%d", index))
-		part, err := writer.CreateFormFile("file", fmt.Sprintf("chunk_%d", index))
-		if err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		part.Write(data)
-		writer.Close()
-		pw.Close()
-	}()
-
-	req, err := http.NewRequest("POST",
-		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/chunk", c.BaseURL, slug, kind),
-		pr)
-	if err != nil {
-		return err
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-	return nil
+// progressReader wraps a reader and prints a progress bar to stderr.
+// For multipart uploads, set `read` to the initial offset (bytes already uploaded).
+type progressReader struct {
+	reader  io.Reader
+	total   int64
+	read    int64
+	label   string
+	lastPct int
 }
 
-// progressWriter counts bytes written and prints a progress bar to stderr.
+func (pr *progressReader) Read(p []byte) (int, error) {
+	n, err := pr.reader.Read(p)
+	pr.read += int64(n)
+	pct := int(float64(pr.read) / float64(pr.total) * 100)
+	if pct != pr.lastPct || err == io.EOF {
+		pr.lastPct = pct
+		bar := progressBar(float64(pct), 30)
+		fmt.Fprintf(os.Stderr, "\r%s... %s / %s (%d%%) %s",
+			pr.label, formatBytes(pr.read), formatBytes(pr.total), pct, bar)
+	}
+	return n, err
+}
+
 // bufferProgressWriter shows bytes written during buffering (unknown total).
 type bufferProgressWriter struct {
 	written int64
@@ -462,28 +390,12 @@ type bufferProgressWriter struct {
 
 func (bw *bufferProgressWriter) Write(p []byte) (int, error) {
 	bw.written += int64(len(p))
-	// Update every 1MB to avoid excessive output
 	if bw.written-bw.lastLog >= 1024*1024 {
 		bw.lastLog = bw.written
 		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
 		frame := frames[(bw.written/(1024*1024))%int64(len(frames))]
 		fmt.Fprintf(os.Stderr, "\r%s Packaging... %s", frame, formatBytes(bw.written))
 	}
-	return len(p), nil
-}
-
-type progressWriter struct {
-	total   int64
-	written int64
-	label   string
-}
-
-func (pw *progressWriter) Write(p []byte) (int, error) {
-	pw.written += int64(len(p))
-	pct := float64(pw.written) / float64(pw.total) * 100
-	bar := progressBar(pct, 30)
-	fmt.Fprintf(os.Stderr, "\r%s... %s / %s (%.0f%%) %s",
-		pw.label, formatBytes(pw.written), formatBytes(pw.total), pct, bar)
 	return len(p), nil
 }
 

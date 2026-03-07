@@ -3,7 +3,6 @@
 import asyncio
 import hashlib
 import logging
-import math
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -18,12 +17,11 @@ from app.docker_compose import (
 from app.state import PreviewStateManager
 from app.database import (
     get_preview, get_project, create_deployment, finish_deployment,
-    update_preview_vm, update_preview_volume,
+    update_preview_vm,
 )
 from app.cloud import cloud_manager
 from app.storage import storage_manager
 from app.remote import RemoteExecutor
-from app.caddy_api import caddy_manager
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -107,7 +105,6 @@ class PreviewDeployer:
         self._executor: RemoteExecutor | None = None
         self._vm_id: int | None = None
         self._vm_ip: str | None = None
-        self._volume_id: int | None = None
 
     # ------------------------------------------------------------------
     # Public
@@ -217,42 +214,32 @@ class PreviewDeployer:
         # 1. Verify base files exist in S3
         await self._verify_base_files()
 
-        # 2. Calculate volume size from S3 metadata
-        db_uncompressed = await storage_manager.get_base_db_uncompressed_size(self.project_name)
-        files_uncompressed = await storage_manager.get_base_files_uncompressed_size(self.project_name)
-        total_uncompressed = db_uncompressed + files_uncompressed
-        # Volume size: 2x uncompressed data, minimum 10 GB, rounded up to 10
-        volume_gb = max(10, math.ceil(total_uncompressed / (1024**3) * 2 / 10) * 10)
-
-        # 3. Create volume
-        vol_name = f"vol-{self.project_name}-{self.preview_name}"
-        volume = await self._step_create_volume(vol_name, volume_gb)
-        self._volume_id = volume.data_model.id
-        await update_preview_volume(self.project_name, self.preview_name, self._volume_id)
-
-        # 4. Create VM + attach volume
+        # 2. Create VM (uses VM's own 40 GB disk)
         vm_name = f"prev-{self.project_name}-{self.preview_name}"
-        server = await self._step_create_vm(vm_name, self._volume_id)
+        server = await self._step_create_vm(vm_name)
         self._vm_id = server.data_model.id
         self._vm_ip = server.data_model.public_net.ipv4.ip
         self._executor = RemoteExecutor(self._vm_ip)
         await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
 
-        # 5. Wait for SSH
+        # 3. Wait for SSH
         await self._step_wait_ssh()
 
-        # 6. Mount volume + setup workspace
+        # 4. Setup workspace directory
         await self._step_setup_vm()
 
-        # 7. Clone repo via SSH
+        # 5. Clone repo via SSH
         await self._step_clone_repo()
 
-        # 8. Generate and upload docker-compose.yml
+        # 6. Generate and upload docker-compose.yml
         await self._generate_compose()
         self._write_internal_settings()
         await self._upload_compose_and_settings()
 
-        # 9. Check DB cache in S3
+        # 7. Build PHP image on VM
+        await self._step_build_php_image()
+
+        # 8. Check DB cache in S3
         db_spec = self._preview_config["database"]
         # Download base DB to temp for cache key computation
         tmp_db = Path(tempfile.mktemp(suffix=".sql.gz"))
@@ -274,19 +261,18 @@ class PreviewDeployer:
             await self._import_db()
             await self._create_db_cache(cache_key)
 
-        # 10. Composer install
+        # 9. Composer install
         await self._composer_install()
 
-        # 11. Import files from S3
+        # 10. Import files from S3
         await self._import_files()
 
-        # 12. Deploy steps and deploy script
+        # 11. Deploy steps and deploy script
         await self._run_deploy_steps("new")
         await self._run_project_deploy_script("new")
         await self._reload_webserver()
 
-        # 13. Add Caddy route
-        await self._step_add_caddy_route()
+        # Done — traffic is proxied via wake_preview middleware
 
     # ------------------------------------------------------------------
     # Update preview (cloud)
@@ -297,20 +283,10 @@ class PreviewDeployer:
         preview = await get_preview(self.project_name, self.preview_name)
         self._vm_id = preview.get("vm_id") if preview else None
         self._vm_ip = preview.get("vm_ip") if preview else None
-        self._volume_id = preview.get("volume_id") if preview else None
 
         if not self._vm_id:
-            # No VM running — create one with existing volume
-            if not self._volume_id:
-                raise RuntimeError("No volume found for update deploy — cannot proceed")
-
-            vm_name = f"prev-{self.project_name}-{self.preview_name}"
-            server = await self._step_create_vm(vm_name, self._volume_id)
-            self._vm_id = server.data_model.id
-            self._vm_ip = server.data_model.public_net.ipv4.ip
-            await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
-            await self._step_wait_ssh()
-            await self._step_setup_vm()
+            # No VM — treat as new deploy
+            raise RuntimeError("No VM found for update deploy — use rebuild with force_new")
 
         self._executor = RemoteExecutor(self._vm_ip)
 
@@ -322,33 +298,29 @@ class PreviewDeployer:
         self._write_internal_settings()
         await self._upload_compose_and_settings()
 
-        # Docker up + deploy
+        # Build PHP image if needed + Docker up + deploy
+        await self._step_build_php_image()
         await self._docker_up()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
         await self._reload_webserver()
 
-        # Update Caddy route (IP may have changed)
-        await self._step_add_caddy_route()
+        # Done — traffic is proxied via wake_preview middleware
 
     # ------------------------------------------------------------------
     # Cloud infrastructure steps
     # ------------------------------------------------------------------
 
-    async def _step_create_volume(self, name: str, size_gb: int):
-        step = "create-volume"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-        volume = await cloud_manager.create_volume(name, size_gb)
-        elapsed = time.monotonic() - t0
-        await self._log_step_end(step, elapsed, True, f"{DIM}{size_gb} GB{RESET}")
-        return volume
-
-    async def _step_create_vm(self, name: str, volume_id: int | None = None):
+    async def _step_create_vm(self, name: str):
         step = "create-vm"
         await self._log_step_start(step)
         t0 = time.monotonic()
-        server = await cloud_manager.create_vm(name, volume_id)
+        try:
+            server = await cloud_manager.create_vm(name)
+        except RuntimeError as e:
+            elapsed = time.monotonic() - t0
+            await self._log_step_end(step, elapsed, False, f"{RED}{e}{RESET}")
+            raise
         elapsed = time.monotonic() - t0
         ip = server.data_model.public_net.ipv4.ip
         await self._log_step_end(step, elapsed, True, f"{DIM}IP: {ip}{RESET}")
@@ -358,24 +330,17 @@ class PreviewDeployer:
         step = "wait-ssh"
         await self._log_step_start(step)
         t0 = time.monotonic()
-        await self._executor.wait_for_ssh(timeout=120)
+        await cloud_manager.wait_for_vm_ready(self._vm_id, timeout=300)
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, f"{DIM}SSH ready{RESET}")
 
     async def _step_setup_vm(self):
-        """Mount volume and create workspace directory on the VM."""
+        """Create workspace directory on the VM."""
         step = "setup-vm"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        # The volume is auto-mounted by Hetzner at /mnt/HC_VolumeXXX
-        # Create a symlink at /var/www/preview pointing to it
-        setup_cmd = (
-            "VOLDIR=$(ls -d /mnt/HC_Volume* 2>/dev/null | head -1) && "
-            "if [ -z \"$VOLDIR\" ]; then echo 'No volume found' >&2; exit 1; fi && "
-            f"ln -sfn \"$VOLDIR\" {VM_PREVIEW_DIR} && "
-            f"mkdir -p {VM_PREVIEW_DIR}/code"
-        )
+        setup_cmd = f"mkdir -p {VM_PREVIEW_DIR}/code"
         proc = await self._executor.run_shell(setup_cmd)
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
@@ -383,6 +348,34 @@ class PreviewDeployer:
 
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, "")
+
+    async def _step_build_php_image(self):
+        """Build the preview-drupal PHP image on the VM if not present."""
+        php_version = self._preview_config.get("php_version", "8.3") if self._preview_config else "8.3"
+        image_name = f"{settings.drupal_base_image}:php{php_version}"
+
+        # Check if image already exists on VM
+        proc = await self._executor.run_shell(f"docker image inspect {image_name} >/dev/null 2>&1 && echo EXISTS || echo MISSING")
+        stdout, _ = await proc.communicate()
+        if b"EXISTS" in stdout:
+            await self._log_raw(f"  {DIM}Image {image_name} already exists on VM{RESET}\n")
+            return
+
+        step = "build-php-image"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        # Upload Dockerfile to VM
+        dockerfile_path = Path(__file__).resolve().parent.parent / "docker" / "Dockerfile.drupal"
+        await self._executor.run_shell("mkdir -p /tmp/docker-build")
+        await self._executor.upload_file(str(dockerfile_path), "/tmp/docker-build/Dockerfile")
+
+        # Build the image
+        build_cmd = f"docker build --build-arg PHP_VERSION={php_version} -t {image_name} /tmp/docker-build"
+        await self._run_remote_shell(build_cmd, step, timeout=TIMEOUT_DOCKER_UP)
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, f"{DIM}{image_name}{RESET}")
 
     async def _step_clone_repo(self):
         """Clone the repository on the VM."""
@@ -455,28 +448,6 @@ class PreviewDeployer:
 
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, "")
-
-    async def _step_add_caddy_route(self):
-        """Add Caddy route pointing to VM IP."""
-        step = "caddy-route"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        alias_domains = []
-        expose_services = {}
-        if self._preview_config:
-            alias_prefixes = self._preview_config.get("domain_aliases", [])
-            alias_domains = [f"{a}--{self.domain}" for a in alias_prefixes]
-            expose_services = self._preview_config.get("expose", {})
-
-        await caddy_manager.add_preview_routes(
-            self.preview_name, self.project_name, self._vm_ip,
-            alias_domains=alias_domains,
-            expose_services=expose_services,
-        )
-
-        elapsed = time.monotonic() - t0
-        await self._log_step_end(step, elapsed, True, f"{DIM}{self.domain} -> {self._vm_ip}{RESET}")
 
     # ------------------------------------------------------------------
     # Docker steps (executed on VM via SSH)

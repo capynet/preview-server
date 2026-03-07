@@ -645,21 +645,6 @@ async def update_preview_vm(
         await db.close()
 
 
-async def update_preview_volume(
-    project: str, preview_name: str, volume_id: int | None,
-) -> None:
-    """Update volume ID for a preview."""
-    db = await get_db()
-    try:
-        await db.execute(
-            "UPDATE previews SET volume_id = ? WHERE project = ? AND preview_name = ?",
-            (volume_id, project, preview_name),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
 async def log_cloud_resource(
     project: str,
     preview_name: str,

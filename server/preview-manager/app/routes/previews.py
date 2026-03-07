@@ -19,15 +19,15 @@ from app.database import (
     get_all_previews, get_preview, delete_preview_from_db,
     list_deployments as db_list_deployments,
     get_deployment as db_get_deployment,
-    update_preview_vm, update_preview_volume,
+    update_preview_vm,
 )
 from app.auth.dependencies import require_role
 from app.auth.models import Role, UserWithRole, has_min_role
 from app.auth import database as auth_db
 from app import config_store
 from app.cloud import cloud_manager
-from app.caddy_api import caddy_manager
 from app.remote import RemoteExecutor
+from app.deployment import VM_PREVIEW_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -284,8 +284,6 @@ def _get_preview_status(preview: dict) -> str:
     """Determine preview status based on VM state."""
     if preview.get("vm_id"):
         return "running"
-    elif preview.get("volume_id"):
-        return "stopped"
     elif preview.get("status") in ("creating", "pending"):
         return preview["status"]
     else:
@@ -345,30 +343,16 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
 
 
 async def delete_preview_internal(project: str, preview_name: str):
-    """Core delete logic: destroy VM, delete volume, remove from DB."""
+    """Core delete logic: destroy VM, remove from DB."""
     preview = await get_preview(project, preview_name)
 
-    # Destroy VM if running
+    # Destroy VM if exists
     if preview and preview.get("vm_id"):
         try:
             await cloud_manager.destroy_vm(preview["vm_id"])
             logger.info(f"Destroyed VM for {project}/{preview_name}")
         except Exception as e:
             logger.warning(f"Error destroying VM for {project}/{preview_name}: {e}")
-
-    # Remove Caddy routes
-    try:
-        await caddy_manager.remove_preview_routes(preview_name, project)
-    except Exception as e:
-        logger.warning(f"Error removing Caddy routes for {project}/{preview_name}: {e}")
-
-    # Delete volume if exists
-    if preview and preview.get("volume_id"):
-        try:
-            await cloud_manager.delete_volume(preview["volume_id"])
-            logger.info(f"Deleted volume for {project}/{preview_name}")
-        except Exception as e:
-            logger.warning(f"Error deleting volume for {project}/{preview_name}: {e}")
 
     # Delete from DB
     await PreviewStateManager.delete_state(project, preview_name)
@@ -429,7 +413,7 @@ async def _get_executor(project: str, preview_name: str) -> tuple[RemoteExecutor
 
 @router.post("/api/previews/{project}/{preview_name}/stop")
 async def stop_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Stop a preview (destroy VM, keep volume)."""
+    """Stop a preview (shutdown VM, keep disk intact)."""
     preview = await get_preview(project, preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
@@ -438,50 +422,35 @@ async def stop_preview(project: str, preview_name: str, user: UserWithRole = Dep
         return {"success": True, "output": "Preview already stopped", "error": ""}
 
     try:
-        await cloud_manager.destroy_vm(preview["vm_id"])
-        await caddy_manager.remove_preview_routes(preview_name, project)
-        await update_preview_vm(project, preview_name, None, None)
-        return {"success": True, "output": "VM destroyed, volume kept", "error": ""}
+        await cloud_manager.shutdown_vm(preview["vm_id"])
+        return {"success": True, "output": "VM shutdown", "error": ""}
     except Exception as e:
         return {"success": False, "output": "", "error": str(e)}
 
 
 @router.post("/api/previews/{project}/{preview_name}/start")
 async def start_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    """Start a preview (create VM, attach volume)."""
+    """Start a preview (power on shutdown VM)."""
     preview = await get_preview(project, preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
 
-    if preview.get("vm_id"):
-        return {"success": True, "output": "Preview already running", "error": ""}
-
-    if not preview.get("volume_id"):
-        return {"success": False, "output": "", "error": "No volume found"}
+    if not preview.get("vm_id"):
+        return {"success": False, "output": "", "error": "No VM found — use rebuild to create a new one"}
 
     try:
-        vm_name = f"prev-{project}-{preview_name}"
-        server = await cloud_manager.create_vm(vm_name, preview["volume_id"])
-        vm_id = server.data_model.id
-        vm_ip = server.data_model.public_net.ipv4.ip
+        vm_ip = await cloud_manager.power_on_vm(preview["vm_id"])
+        await cloud_manager.wait_for_vm_ready(preview["vm_id"], timeout=120)
 
+        # Start containers
         executor = RemoteExecutor(vm_ip)
-        await executor.wait_for_ssh(timeout=120)
-
-        # Mount volume and start containers
-        setup_cmd = (
-            "VOLDIR=$(ls -d /mnt/HC_Volume* 2>/dev/null | head -1) && "
-            "ln -sfn \"$VOLDIR\" /var/www/preview && "
-            "cd /var/www/preview/code && "
-            "docker compose up -d"
+        proc = await executor.run_shell(
+            f"cd {VM_PREVIEW_DIR}/code && docker compose up -d"
         )
-        proc = await executor.run_shell(setup_cmd)
-        stdout, stderr = await proc.communicate()
+        await proc.communicate()
 
-        await update_preview_vm(project, preview_name, vm_id, vm_ip)
-        await caddy_manager.add_preview_routes(preview_name, project, vm_ip)
-
-        return {"success": True, "output": f"VM created (IP: {vm_ip})", "error": ""}
+        await update_preview_vm(project, preview_name, preview["vm_id"], vm_ip)
+        return {"success": True, "output": f"VM powered on (IP: {vm_ip})", "error": ""}
     except Exception as e:
         return {"success": False, "output": "", "error": str(e)}
 

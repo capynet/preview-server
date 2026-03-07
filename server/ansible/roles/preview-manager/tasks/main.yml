@@ -102,6 +102,7 @@
   slurp:
     src: /home/preview-manager/.ssh/preview-vm.pub
   register: ssh_public_key_content
+  tags: [code]
 
 - name: Create .env file
   template:
@@ -110,6 +111,7 @@
     owner: preview-manager
     group: preview-manager
     mode: '0640'
+  tags: [code]
 
 - name: Create systemd service file
   template:
@@ -139,6 +141,15 @@
     owner: preview-manager
     group: preview-manager
     mode: '0755'
+
+- name: Ensure backups directory ownership
+  file:
+    path: /backups
+    state: directory
+    owner: preview-manager
+    group: preview-manager
+    mode: '0775'
+    recurse: yes
 
 - name: Ensure database directory has correct permissions
   file:

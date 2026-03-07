@@ -19,7 +19,7 @@ def _get_s3():
         endpoint_url=settings.hetzner_s3_endpoint,
         aws_access_key_id=settings.hetzner_s3_access_key,
         aws_secret_access_key=settings.hetzner_s3_secret_key,
-        config=BotoConfig(signature_version="s3v4"),
+        config=BotoConfig(signature_version="s3v4", s3={"addressing_style": "path"}),
     )
 
 
@@ -127,11 +127,16 @@ class ObjectStorageManager:
             return False
 
     async def get_base_db_uncompressed_size(self, project: str) -> int:
-        """Get uncompressed size of base DB from S3 metadata."""
+        """Get uncompressed size of base DB from S3 metadata.
+        If not available, estimate as compressed_size * 10 (SQL is highly compressible).
+        """
         s3 = _get_s3()
         try:
             resp = await _run(s3.head_object, Bucket=self.bucket, Key=self._base_db_key(project))
-            return int(resp.get("Metadata", {}).get("uncompressed-size", 0))
+            size = int(resp.get("Metadata", {}).get("uncompressed-size", 0))
+            if size == 0:
+                size = int(resp.get("ContentLength", 0)) * 10
+            return size
         except Exception:
             return 0
 
@@ -175,6 +180,112 @@ class ObjectStorageManager:
             if not chunk:
                 break
             yield chunk
+
+    # ------------------------------------------------------------------
+    # Presigned URLs for direct upload
+    # ------------------------------------------------------------------
+
+    def _key_for_kind(self, project: str, kind: str) -> str:
+        return self._base_db_key(project) if kind == "db" else self._base_files_key(project)
+
+    async def generate_presigned_upload_url(
+        self, project: str, kind: str, expires_in: int = 3600
+    ) -> str:
+        """Generate a presigned PUT URL for direct upload to S3 (<5 GB)."""
+        s3 = _get_s3()
+        key = self._key_for_kind(project, kind)
+        url = await _run(
+            s3.generate_presigned_url,
+            "put_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=expires_in,
+        )
+        logger.info("Generated presigned upload URL for %s/%s", project, kind)
+        return url
+
+    async def create_multipart_upload(self, project: str, kind: str) -> str:
+        """Initiate an S3 multipart upload. Returns the upload ID."""
+        s3 = _get_s3()
+        key = self._key_for_kind(project, kind)
+        resp = await _run(
+            s3.create_multipart_upload,
+            Bucket=self.bucket, Key=key,
+        )
+        upload_id = resp["UploadId"]
+        logger.info("Created multipart upload for %s/%s: %s", project, kind, upload_id)
+        return upload_id
+
+    async def generate_presigned_part_urls(
+        self, project: str, kind: str, upload_id: str,
+        num_parts: int, expires_in: int = 3600,
+    ) -> list[str]:
+        """Generate presigned URLs for each part of a multipart upload."""
+        s3 = _get_s3()
+        key = self._key_for_kind(project, kind)
+        urls = []
+        for part_num in range(1, num_parts + 1):
+            url = await _run(
+                s3.generate_presigned_url,
+                "upload_part",
+                Params={
+                    "Bucket": self.bucket,
+                    "Key": key,
+                    "UploadId": upload_id,
+                    "PartNumber": part_num,
+                },
+                ExpiresIn=expires_in,
+            )
+            urls.append(url)
+        logger.info("Generated %d presigned part URLs for %s/%s", num_parts, project, kind)
+        return urls
+
+    async def complete_multipart_upload(
+        self, project: str, kind: str, upload_id: str,
+        parts: list[dict],
+    ) -> None:
+        """Complete an S3 multipart upload. parts = [{"ETag": "...", "PartNumber": N}, ...]"""
+        s3 = _get_s3()
+        key = self._key_for_kind(project, kind)
+        await _run(
+            s3.complete_multipart_upload,
+            Bucket=self.bucket, Key=key,
+            UploadId=upload_id,
+            MultipartUpload={"Parts": parts},
+        )
+        logger.info("Completed multipart upload for %s/%s", project, kind)
+
+    async def abort_multipart_upload(
+        self, project: str, kind: str, upload_id: str,
+    ) -> None:
+        """Abort an S3 multipart upload."""
+        s3 = _get_s3()
+        key = self._key_for_kind(project, kind)
+        try:
+            await _run(
+                s3.abort_multipart_upload,
+                Bucket=self.bucket, Key=key, UploadId=upload_id,
+            )
+            logger.info("Aborted multipart upload %s for %s/%s", upload_id, project, kind)
+        except Exception as e:
+            logger.warning("Failed to abort multipart upload: %s", e)
+
+    async def set_object_metadata(
+        self, project: str, kind: str, uncompressed_size: int
+    ) -> None:
+        """Set metadata on an existing S3 object (copy-in-place)."""
+        if not uncompressed_size:
+            return
+        s3 = _get_s3()
+        key = self._key_for_kind(project, kind)
+        await _run(
+            s3.copy_object,
+            Bucket=self.bucket,
+            Key=key,
+            CopySource={"Bucket": self.bucket, "Key": key},
+            Metadata={"uncompressed-size": str(uncompressed_size)},
+            MetadataDirective="REPLACE",
+        )
+        logger.info("Set metadata on %s: uncompressed-size=%d", key, uncompressed_size)
 
     # ------------------------------------------------------------------
     # DB cache

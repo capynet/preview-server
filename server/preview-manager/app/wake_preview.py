@@ -1,10 +1,12 @@
-"""Middleware to wake up stopped cloud previews when accessed via browser."""
+"""Middleware to handle preview domain requests — proxy to VM or wake up stopped previews."""
 
 import asyncio
 import logging
+
+import httpx
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse, RedirectResponse, StreamingResponse, Response
 
 from config.settings import settings
 from app.auth.dependencies import SESSION_COOKIE
@@ -71,7 +73,7 @@ WAKE_PAGE_HTML = """<!DOCTYPE html>
         <div class="spinner"></div>
         <h1>Waking up preview</h1>
         <p>{preview_name} &mdash; {project}</p>
-        <p>Starting a new VM... This page will refresh automatically (~30-40s).</p>
+        <p>Powering on VM... This page will refresh automatically (~30-40s).</p>
     </div>
 </body>
 </html>"""
@@ -136,17 +138,21 @@ BUILDING_PAGE_HTML = """<!DOCTYPE html>
 
 
 class WakePreviewMiddleware(BaseHTTPMiddleware):
-    """Intercept requests to *.mr.preview-mr.com that hit the API fallback.
+    """Handle all *.mr.preview-mr.com requests.
 
-    When Caddy has no specific route for a preview domain (VM destroyed),
-    the wildcard fallback proxies the request here. We check the DB,
-    create a new VM + attach existing volume, and return a waiting page.
+    The Caddy wildcard proxies ALL preview subdomain requests here.
+    This middleware:
+    - Checks auth
+    - If VM running → reverse proxy to VM
+    - If VM stopped → power on + show waiting page
+    - If deploying → show building page
+    - If no preview → 404
     """
 
     async def dispatch(self, request: Request, call_next):
         host = request.headers.get("host", "")
 
-        # Only handle preview domain requests (from Caddy wildcard fallback)
+        # Only handle preview domain requests (from Caddy wildcard)
         if not host.endswith(".mr.preview-mr.com"):
             return await call_next(request)
 
@@ -170,6 +176,12 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         project = preview["project"]
         preview_name = preview["preview_name"]
 
+        # Update last_accessed_at (fire and forget)
+        try:
+            await update_last_accessed(project, preview_name)
+        except Exception:
+            pass
+
         # Check if a deployment is running — show building page
         if preview.get("id"):
             try:
@@ -185,90 +197,121 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
             except Exception:
                 pass
 
-        # If VM is already running, something else is wrong — show error
+        # If VM is running, reverse proxy to it
         if preview.get("vm_id") and preview.get("vm_ip"):
-            return HTMLResponse(
-                content="<h1>Preview error</h1><p>VM is running but route is missing. Try refreshing in a few seconds.</p>",
-                status_code=503,
-            )
+            return await self._proxy_to_vm(request, preview["vm_ip"], host)
 
-        # No volume means preview was fully deleted
-        if not preview.get("volume_id"):
+        # No VM means preview was deleted or never created
+        if not preview.get("vm_id"):
             return HTMLResponse(
-                content="<h1>Preview not available</h1><p>This preview has been fully deleted.</p>",
+                content="<h1>Preview not available</h1><p>This preview has been deleted. Use rebuild to recreate it.</p>",
                 status_code=404,
             )
 
-        # Start VM in background (if not already waking)
-        wake_key = f"{project}/{preview_name}"
-        if wake_key not in _waking_up:
-            _waking_up.add(wake_key)
-            asyncio.create_task(
-                self._wake_cloud_preview(wake_key, project, preview_name, preview)
-            )
-
-        # Update last_accessed_at
-        try:
-            await update_last_accessed(project, preview_name)
-        except Exception:
-            pass
-
+        # VM exists but no IP — shouldn't happen, but handle gracefully
         return HTMLResponse(
-            content=WAKE_PAGE_HTML.format(preview_name=preview_name, project=project),
-            status_code=200,
+            content="<h1>Preview starting</h1><p>Please wait...</p>",
+            status_code=503,
         )
+
+    @staticmethod
+    async def _proxy_to_vm(request: Request, vm_ip: str, host: str) -> Response:
+        """Reverse proxy the request to the preview VM."""
+        url = f"http://{vm_ip}{request.url.path}"
+        if request.url.query:
+            url += f"?{request.url.query}"
+
+        # Forward relevant headers
+        headers = {}
+        for key, value in request.headers.items():
+            key_lower = key.lower()
+            if key_lower in ("host", "connection", "transfer-encoding"):
+                continue
+            headers[key] = value
+        headers["Host"] = host
+        headers["X-Forwarded-For"] = request.client.host if request.client else ""
+        headers["X-Forwarded-Proto"] = "https"
+        headers["X-Real-IP"] = request.client.host if request.client else ""
+
+        body = await request.body()
+
+        try:
+            client = httpx.AsyncClient(timeout=60.0)
+            req = client.build_request(
+                method=request.method,
+                url=url,
+                headers=headers,
+                content=body if body else None,
+            )
+            resp = await client.send(req, stream=True)
+
+            # Filter hop-by-hop headers from response
+            resp_headers = {}
+            for key, value in resp.headers.items():
+                if key.lower() not in (
+                    "transfer-encoding", "connection", "keep-alive",
+                    "proxy-authenticate", "proxy-authorization", "te",
+                    "trailers", "upgrade",
+                ):
+                    resp_headers[key] = value
+
+            async def stream():
+                try:
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+                finally:
+                    await resp.aclose()
+                    await client.aclose()
+
+            return StreamingResponse(
+                stream(),
+                status_code=resp.status_code,
+                headers=resp_headers,
+            )
+        except httpx.ConnectError:
+            return HTMLResponse(
+                content="<h1>Preview unavailable</h1><p>VM is not responding. It may still be starting up. Try refreshing.</p>",
+                status_code=502,
+            )
+        except Exception as e:
+            logger.error(f"Proxy error to {vm_ip}: {e}")
+            return HTMLResponse(
+                content=f"<h1>Proxy error</h1><p>{e}</p>",
+                status_code=502,
+            )
 
     @staticmethod
     async def _wake_cloud_preview(
         wake_key: str, project: str, preview_name: str, preview: dict
     ):
-        """Create a new VM, attach the existing volume, start containers."""
+        """Power on a shutdown VM and start containers."""
         from app.cloud import cloud_manager
-        from app.caddy_api import caddy_manager
         from app.remote import RemoteExecutor
+        from app.deployment import VM_PREVIEW_DIR
 
         try:
             logger.info(f"Waking up cloud preview {project}/{preview_name}")
-            volume_id = preview["volume_id"]
+            vm_id = preview["vm_id"]
 
-            # Create VM with volume attached
-            vm_name = f"prev-{project}-{preview_name}"
-            server = await cloud_manager.create_vm(vm_name, volume_id)
-            vm_id = server.data_model.id
-            vm_ip = server.data_model.public_net.ipv4.ip
+            # Power on the VM
+            vm_ip = await cloud_manager.power_on_vm(vm_id)
+            await cloud_manager.wait_for_vm_ready(vm_id, timeout=120)
 
-            # Wait for SSH
+            # Start containers
             executor = RemoteExecutor(vm_ip)
-            await executor.wait_for_ssh(timeout=120)
-
-            # Mount volume and start containers
-            setup_cmd = (
-                "VOLDIR=$(ls -d /mnt/HC_Volume* 2>/dev/null | head -1) && "
-                "if [ -z \"$VOLDIR\" ]; then echo 'No volume found' >&2; exit 1; fi && "
-                "ln -sfn \"$VOLDIR\" /var/www/preview && "
-                "cd /var/www/preview/code && "
-                "docker compose up -d"
+            proc = await executor.run_shell(
+                f"cd {VM_PREVIEW_DIR}/code && docker compose up -d"
             )
-            proc = await executor.run_shell(setup_cmd)
             stdout, stderr = await proc.communicate()
 
             if proc.returncode == 0:
-                # Update DB with VM info
                 await update_preview_vm(project, preview_name, vm_id, vm_ip)
-
-                # Add Caddy route
-                await caddy_manager.add_preview_routes(
-                    preview_name, project, vm_ip
-                )
-
                 logger.info(f"Woke up {project}/{preview_name} (VM {vm_id}, IP {vm_ip})")
             else:
                 logger.error(
                     f"Failed to start containers for {project}/{preview_name}: "
                     f"{stderr.decode()}"
                 )
-                # Clean up VM since containers failed
-                await cloud_manager.destroy_vm(vm_id)
 
         except Exception as e:
             logger.error(f"Error waking cloud preview {project}/{preview_name}: {e}")

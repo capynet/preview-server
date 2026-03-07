@@ -25,8 +25,8 @@
         owner: "{{ item.owner | default('root') }}"
         group: "{{ item.group | default('root') }}"
       loop:
-        - { path: '/var/www/previews', mode: '0755', owner: 'preview-user', group: 'preview-user' }
-        - { path: '/backups', mode: '0775', owner: 'preview-user', group: 'preview-manager' }
+        - { path: '/var/www/previews', mode: '0755', owner: 'preview-manager', group: 'preview-manager' }
+        - { path: '/backups', mode: '0775', owner: 'preview-manager', group: 'preview-manager' }
 
     - name: Set IS_PREVIEW_SERVER environment variable globally
       lineinfile:
