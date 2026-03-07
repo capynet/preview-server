@@ -248,8 +248,11 @@ async def _handle_mr_event(payload: dict, background_tasks: BackgroundTasks):
     commit_sha = attrs.get("last_commit", {}).get("id")
 
     preview_name = f"mr-{mr_iid}"
+    state = attrs.get("state")
 
-    if action in ("open", "reopen", "update"):
+    if action in ("close", "merge") or state in ("closed", "merged"):
+        background_tasks.add_task(_delete_preview, project_name, preview_name)
+    elif action in ("open", "reopen", "update"):
         if action == "update":
             existing = await get_preview(project_name, preview_name)
             if existing and not existing.get("auto_update", 1):
@@ -259,8 +262,6 @@ async def _handle_mr_event(payload: dict, background_tasks: BackgroundTasks):
             _clone_and_deploy, project_path, project_name, preview_name,
             source_branch, commit_sha, "webhook", mr_iid
         )
-    elif action in ("close", "merge"):
-        background_tasks.add_task(_delete_preview, project_name, preview_name)
     else:
         return {"status": "ignored", "reason": f"unhandled action: {action}"}
 
