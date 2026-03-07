@@ -403,8 +403,7 @@ class PreviewDeployer:
 
         clone_cmd = (
             f"rm -rf {code_dir}/* {code_dir}/.* 2>/dev/null; "
-            f"git clone --depth 1 --branch {self.branch} '{clone_url}' {code_dir} && "
-            f"rm -rf {code_dir}/.git"
+            f"git clone --depth 1 --branch {self.branch} '{clone_url}' {code_dir}"
         )
         proc = await self._executor.run_shell(clone_cmd)
         stdout, stderr = await self._stream_progress(proc, step, t0, 120)
@@ -417,9 +416,40 @@ class PreviewDeployer:
         await self._log_step_end(step, elapsed, True, "")
 
     async def _step_git_pull(self):
-        """Update code on the VM via fresh clone."""
-        # For updates, we re-clone since we don't keep .git
-        await self._step_clone_repo()
+        """Update code on the VM via git pull."""
+        step = "git-pull"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        from app.routes.gitlab import _get_gitlab_token
+        from urllib.parse import urlparse
+        token = await _get_gitlab_token()
+        parsed = urlparse(settings.gitlab_url)
+
+        project_path = None
+        from app import config_store
+        project_path = await config_store.get_project_path_by_slug(self.project_name)
+        if not project_path:
+            raise RuntimeError(f"Project path not found for {self.project_name}")
+
+        remote_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
+        code_dir = f"{VM_PREVIEW_DIR}/code"
+
+        pull_cmd = (
+            f"cd {code_dir} && "
+            f"git remote set-url origin '{remote_url}' && "
+            f"git fetch origin {self.branch} && "
+            f"git reset --hard origin/{self.branch}"
+        )
+        proc = await self._executor.run_shell(pull_cmd)
+        stdout, stderr = await self._stream_progress(proc, step, t0, 120)
+        elapsed = time.monotonic() - t0
+
+        if proc.returncode != 0:
+            await self._log_step_end(step, elapsed, False, "")
+            raise RuntimeError(f"[{step}] Git pull failed (exit {proc.returncode})")
+
+        await self._log_step_end(step, elapsed, True, "")
 
     async def _upload_compose_and_settings(self):
         """Upload docker-compose.yml and settings files to the VM."""

@@ -678,19 +678,22 @@ async def preview_vm_stats(project: str, preview_name: str, user: UserWithRole =
 
     cmd = (
         "python3 -c \""
-        "import json, os; "
+        "import json, os, time; "
+        "def read_cpu(): lines = open('/proc/stat').readlines(); c = lines[0].split()[1:]; return [int(x) for x in c]; "
+        "c1 = read_cpu(); time.sleep(0.5); c2 = read_cpu(); "
+        "d = [b - a for a, b in zip(c1, c2)]; total = sum(d); idle = d[3] + d[4]; "
+        "cpu_pct = round((total - idle) / total * 100, 1) if total > 0 else 0.0; "
         "mem = open('/proc/meminfo').read(); "
         "mt = int([l for l in mem.splitlines() if l.startswith('MemTotal')][0].split()[1]) * 1024; "
         "ma = int([l for l in mem.splitlines() if l.startswith('MemAvailable')][0].split()[1]) * 1024; "
         "st = os.statvfs('/'); "
         "dt = st.f_blocks * st.f_frsize; du = (st.f_blocks - st.f_bfree) * st.f_frsize; "
-        "la = open('/proc/loadavg').read().split(); "
         "ncpu = os.cpu_count(); "
         "print(json.dumps({'memory_total_gb': round(mt/1073741824, 2), 'memory_available_gb': round(ma/1073741824, 2), "
         "'memory_percent': round((mt - ma) / mt * 100, 1), "
         "'disk_total_gb': round(dt/1073741824, 2), 'disk_used_gb': round(du/1073741824, 2), "
         "'disk_percent': round(du / dt * 100, 1), "
-        "'cpu_percent': round(float(la[0]) / ncpu * 100, 1), 'cpu_count': ncpu}))"
+        "'cpu_percent': cpu_pct, 'cpu_count': ncpu}))"
         "\""
     )
     proc = await executor.run_shell(cmd)
