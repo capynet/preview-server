@@ -122,6 +122,13 @@ def _container_prefix(project_name: str, preview_name: str) -> str:
     return f"{preview_name}-{project_name}"
 
 
+def _registry_image(image: str) -> str:
+    """Prefix an image name with the private registry URL if configured."""
+    if settings.docker_registry:
+        return f"{settings.docker_registry}/{image}"
+    return image
+
+
 def generate_docker_compose(
     project_name: str,
     preview_name: str,
@@ -202,7 +209,7 @@ def generate_docker_compose(
         "name": prefix,
         "services": {
             "php": {
-                "image": f"{settings.drupal_base_image}:php{config['php_version']}",
+                "image": _registry_image(f"{settings.drupal_base_image}:php{config['php_version']}"),
                 "container_name": f"{prefix}-php",
                 "volumes": ["./:/var/www/html"],
                 "environment": php_env,
@@ -210,7 +217,7 @@ def generate_docker_compose(
                 "restart": "unless-stopped",
             },
             "db": {
-                "image": db_image,
+                "image": _registry_image(db_image),
                 "container_name": f"{prefix}-db",
                 "command": "--innodb-flush-log-at-trx-commit=0",
                 "environment": {
@@ -236,14 +243,14 @@ def generate_docker_compose(
     if valkey_cfg:
         valkey_ver = valkey_cfg if isinstance(valkey_cfg, str) else "8"
         compose["services"]["redis"] = {
-            "image": f"valkey/valkey:{valkey_ver}-alpine",
+            "image": _registry_image(f"valkey/valkey:{valkey_ver}-alpine"),
             "container_name": f"{prefix}-redis",
             "restart": "unless-stopped",
         }
     elif redis_cfg:
         redis_ver = redis_cfg if isinstance(redis_cfg, str) else "7"
         compose["services"]["redis"] = {
-            "image": f"redis:{redis_ver}-alpine",
+            "image": _registry_image(f"redis:{redis_ver}-alpine"),
             "container_name": f"{prefix}-redis",
             "restart": "unless-stopped",
         }
@@ -252,7 +259,7 @@ def generate_docker_compose(
         solr_ver = solr_cfg if isinstance(solr_cfg, str) else "9"
         solr_volumes = ["solr_data:/var/solr"]
         solr_service: dict[str, Any] = {
-            "image": f"solr:{solr_ver}",
+            "image": _registry_image(f"solr:{solr_ver}"),
             "container_name": f"{prefix}-solr",
             "restart": "unless-stopped",
         }

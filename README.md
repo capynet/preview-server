@@ -1,4 +1,4 @@
-Servidor preview server: 65.108.243.53
+Servidor preview server: 91.99.157.66
 
 Para el desarrollo en local, tener las cli de gitlab, github, cloudflare suele ser una buena idea. 
 

@@ -7,7 +7,7 @@
     - docker
     - caddy
 
-  pre_tasks:
+  post_tasks:
     - name: Crear usuario preview-user
       user:
         name: preview-user
@@ -16,7 +16,6 @@
         groups: docker
         append: yes
 
-  post_tasks:
     - name: Crear directorios de trabajo
       file:
         path: "{{ item.path }}"

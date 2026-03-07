@@ -236,8 +236,8 @@ class PreviewDeployer:
         self._write_internal_settings()
         await self._upload_compose_and_settings()
 
-        # 7. Build PHP image on VM
-        await self._step_build_php_image()
+        # 7. Pull images from private registry
+        await self._step_pull_images()
 
         # 8. Check DB cache in S3
         db_spec = self._preview_config["database"]
@@ -298,8 +298,8 @@ class PreviewDeployer:
         self._write_internal_settings()
         await self._upload_compose_and_settings()
 
-        # Build PHP image if needed + Docker up + deploy
-        await self._step_build_php_image()
+        # Pull images from private registry if needed + Docker up + deploy
+        await self._step_pull_images()
         await self._docker_up()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
@@ -349,33 +349,34 @@ class PreviewDeployer:
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, "")
 
-    async def _step_build_php_image(self):
-        """Build the preview-drupal PHP image on the VM if not present."""
-        php_version = self._preview_config.get("php_version", "8.3") if self._preview_config else "8.3"
-        image_name = f"{settings.drupal_base_image}:php{php_version}"
-
-        # Check if image already exists on VM
-        proc = await self._executor.run_shell(f"docker image inspect {image_name} >/dev/null 2>&1 && echo EXISTS || echo MISSING")
-        stdout, _ = await proc.communicate()
-        if b"EXISTS" in stdout:
-            await self._log_raw(f"  {DIM}Image {image_name} already exists on VM{RESET}\n")
+    async def _step_pull_images(self):
+        """Configure VM to use private registry and pull images."""
+        if not settings.docker_registry:
             return
 
-        step = "build-php-image"
+        step = "pull-images"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        # Upload Dockerfile to VM
-        dockerfile_path = Path(__file__).resolve().parent.parent / "docker" / "Dockerfile.drupal"
-        await self._executor.run_shell("mkdir -p /tmp/docker-build")
-        await self._executor.upload_file(str(dockerfile_path), "/tmp/docker-build/Dockerfile")
+        # Configure Docker on VM to allow insecure registry (HTTP) — only if not already configured
+        registry_host = settings.docker_registry
+        check = await self._executor.run_shell(
+            f"grep -q '{registry_host}' /etc/docker/daemon.json 2>/dev/null && echo OK || echo MISSING"
+        )
+        stdout, _ = await check.communicate()
+        if b"MISSING" in stdout:
+            daemon_cfg = f'{{"insecure-registries": ["{registry_host}"]}}'
+            await self._executor.run_shell(
+                f"echo '{daemon_cfg}' > /etc/docker/daemon.json && systemctl restart docker"
+            )
+            await asyncio.sleep(3)
 
-        # Build the image
-        build_cmd = f"docker build --build-arg PHP_VERSION={php_version} -t {image_name} /tmp/docker-build"
-        await self._run_remote_shell(build_cmd, step, timeout=TIMEOUT_DOCKER_UP)
+        # Pull all images via docker compose
+        pull_cmd = f"cd {VM_PREVIEW_DIR}/code && docker compose pull --quiet"
+        await self._run_remote_shell(pull_cmd, step, timeout=TIMEOUT_DOCKER_UP)
 
         elapsed = time.monotonic() - t0
-        await self._log_step_end(step, elapsed, True, f"{DIM}{image_name}{RESET}")
+        await self._log_step_end(step, elapsed, True, f"{DIM}{registry_host}{RESET}")
 
     async def _step_clone_repo(self):
         """Clone the repository on the VM."""

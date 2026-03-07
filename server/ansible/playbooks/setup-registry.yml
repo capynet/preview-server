@@ -1,0 +1,7 @@
+---
+- name: Setup Docker Registry
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - registry

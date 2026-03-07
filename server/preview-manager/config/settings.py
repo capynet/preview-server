@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # Docker Compose Settings
     docker_network: str = "preview-network"
     drupal_base_image: str = "preview-drupal"
+    docker_registry: str = ""  # e.g. "localhost:5000" — if set, all images are pulled from this registry
     default_php_version: str = "8.3"
     default_mysql_version: str = "8.0"
 
