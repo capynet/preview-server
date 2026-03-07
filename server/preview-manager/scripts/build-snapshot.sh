@@ -54,11 +54,16 @@ curl -fsSL https://get.docker.com | sh
 apt-get install -y docker-compose-plugin
 
 # Install basic tools
-apt-get install -y pv git rsync
+apt-get install -y pv git rsync python3-pip
+pip3 install awscli --break-system-packages
 
 # Enable Docker
 systemctl enable docker
 systemctl start docker
+
+# Configure insecure registry for private image pulls
+echo '{"insecure-registries": ["91.99.157.66:5000"]}' > /etc/docker/daemon.json
+systemctl restart docker
 
 # Clean up apt cache
 apt-get clean

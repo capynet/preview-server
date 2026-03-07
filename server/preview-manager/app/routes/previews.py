@@ -669,3 +669,33 @@ async def download_files(project: str, preview_name: str, user: UserWithRole = D
         media_type="application/gzip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/api/previews/{project}/{preview_name}/stats")
+async def preview_vm_stats(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.viewer))):
+    """Get CPU, RAM and disk stats from the preview's VM."""
+    executor, preview = await _get_executor(project, preview_name)
+
+    cmd = (
+        "python3 -c \""
+        "import json, os; "
+        "mem = open('/proc/meminfo').read(); "
+        "mt = int([l for l in mem.splitlines() if l.startswith('MemTotal')][0].split()[1]) * 1024; "
+        "ma = int([l for l in mem.splitlines() if l.startswith('MemAvailable')][0].split()[1]) * 1024; "
+        "st = os.statvfs('/'); "
+        "dt = st.f_blocks * st.f_frsize; du = (st.f_blocks - st.f_bfree) * st.f_frsize; "
+        "la = open('/proc/loadavg').read().split(); "
+        "ncpu = os.cpu_count(); "
+        "print(json.dumps({'memory_total_gb': round(mt/1073741824, 2), 'memory_available_gb': round(ma/1073741824, 2), "
+        "'memory_percent': round((mt - ma) / mt * 100, 1), "
+        "'disk_total_gb': round(dt/1073741824, 2), 'disk_used_gb': round(du/1073741824, 2), "
+        "'disk_percent': round(du / dt * 100, 1), "
+        "'cpu_percent': round(float(la[0]) / ncpu * 100, 1), 'cpu_count': ncpu}))"
+        "\""
+    )
+    proc = await executor.run_shell(cmd)
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        raise HTTPException(status_code=503, detail="Failed to get VM stats")
+
+    return json.loads(stdout.decode().strip())

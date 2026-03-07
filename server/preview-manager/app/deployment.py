@@ -335,12 +335,15 @@ class PreviewDeployer:
         await self._log_step_end(step, elapsed, True, f"{DIM}SSH ready{RESET}")
 
     async def _step_setup_vm(self):
-        """Create workspace directory on the VM."""
+        """Create workspace directory on the VM and ensure required tools."""
         step = "setup-vm"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        setup_cmd = f"mkdir -p {VM_PREVIEW_DIR}/code"
+        setup_cmd = (
+            f"mkdir -p {VM_PREVIEW_DIR}/code && "
+            f"(which aws >/dev/null 2>&1 || pip3 install -q awscli --break-system-packages)"
+        )
         proc = await self._executor.run_shell(setup_cmd)
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
