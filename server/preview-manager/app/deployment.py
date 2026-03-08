@@ -653,6 +653,7 @@ class PreviewDeployer:
             f"--endpoint-url {settings.hetzner_s3_endpoint} | "
             f"tar xzf - -C {files_dir} && "
             f"chown -R 33:33 {files_dir} && "
+            f"chmod -R a+rX {files_dir} && "
             f"echo \"Extracted $(find {files_dir} -type f | wc -l) files\""
         )
         proc = await self._executor.run_shell(import_cmd)
@@ -951,6 +952,35 @@ foreach (['../config/sync', '../config', 'sites/default/config/sync'] as $_candi
 // Hash salt — override if not already set upstream.
 if (empty($settings['hash_salt'])) {
   $settings['hash_salt'] = getenv('PREV_PROJECT_NAME') . '-preview';
+}
+
+// Redis / Valkey cache backend — auto-configured when the service is enabled.
+// Connection settings are always set so the module can connect when enabled.
+// The cache backend is only activated if the redis module is installed AND enabled.
+$_redis_host = getenv('PREV_REDIS_HOST');
+if ($_redis_host) {
+  $settings['redis.connection']['interface'] = 'PhpRedis';
+  $settings['redis.connection']['host'] = $_redis_host;
+  $settings['redis.connection']['port'] = 6379;
+  // Only set as default cache backend if the redis module is actually enabled.
+  // Query the DB directly to avoid bootstrap issues — settings.php is loaded
+  // before Drupal builds the service container, so we can't rely on Drupal APIs.
+  if (isset($databases['default']['default'])) {
+    try {
+      $_db = $databases['default']['default'];
+      $_pdo = new \\PDO(
+        "mysql:host={$_db['host']};port={$_db['port']};dbname={$_db['database']}",
+        $_db['username'],
+        $_db['password']
+      );
+      $_result = $_pdo->query("SELECT 1 FROM key_value WHERE collection = 'system.schema' AND name = 'redis' LIMIT 1");
+      if ($_result && $_result->fetch()) {
+        $settings['cache']['default'] = 'cache.backend.redis';
+      }
+    } catch (\\Exception $e) {
+      // DB not ready yet — skip Redis cache backend.
+    }
+  }
 }
 """)
         logger.info(f"Wrote {internal}")
