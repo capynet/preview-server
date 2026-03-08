@@ -231,7 +231,7 @@ def generate_docker_compose(
             },
         },
         "volumes": {
-            "db_data": None,
+            "db_data": {"name": f"{prefix}_db_data"},
         },
     }
 
@@ -281,7 +281,7 @@ def generate_docker_compose(
             solr_service["command"] = "solr-precreate drupal"
         solr_service["volumes"] = solr_volumes
         compose["services"]["solr"] = solr_service
-        compose["volumes"]["solr_data"] = None
+        compose["volumes"]["solr_data"] = {"name": f"{prefix}_solr_data"}
 
     # Expose — map host ports for exposed services.
     # Caddy routes are managed dynamically via the Admin API.

@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
+	"time"
 )
 
 // ErrNotAuthenticated is returned when the server rejects the token.
@@ -194,6 +197,17 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
+	// Clean up temp file on Ctrl+C / kill
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		os.Remove(tmpPath)
+		fmt.Fprintln(os.Stderr, "\nUpload cancelled, temp file cleaned up.")
+		os.Exit(1)
+	}()
+	defer signal.Stop(sigCh)
+
 	bw := &bufferProgressWriter{}
 	written, err := io.Copy(tmpFile, io.TeeReader(reader, bw))
 	if err != nil {
@@ -309,6 +323,8 @@ func (c *Client) uploadMultipartToS3(filePath string, partURLs []string, partSiz
 	var totalUploaded int64
 	parts := make([]map[string]interface{}, 0, len(partURLs))
 
+	const maxRetries = 3
+
 	for i, url := range partURLs {
 		// Calculate this part's size
 		remaining := totalSize - totalUploaded
@@ -317,35 +333,58 @@ func (c *Client) uploadMultipartToS3(filePath string, partURLs []string, partSiz
 			thisPartSize = remaining
 		}
 
-		partReader := io.LimitReader(f, thisPartSize)
-		pr := &progressReader{
-			reader:  partReader,
-			total:   totalSize,
-			read:    totalUploaded,
-			label:   fmt.Sprintf("Part %d/%d", i+1, len(partURLs)),
-			lastPct: -1,
-		}
+		partOffset := totalUploaded
+		var etag string
+		var lastErr error
 
-		req, err := http.NewRequest("PUT", url, pr)
-		if err != nil {
-			return nil, fmt.Errorf("part %d request: %w", i+1, err)
-		}
-		req.ContentLength = thisPartSize
-		req.Header.Set("Content-Type", "application/octet-stream")
+		for attempt := 0; attempt <= maxRetries; attempt++ {
+			if attempt > 0 {
+				fmt.Fprintf(os.Stderr, "\nRetrying part %d/%d (attempt %d/%d)...\n", i+1, len(partURLs), attempt+1, maxRetries+1)
+				time.Sleep(time.Duration(attempt) * 2 * time.Second)
+				// Seek back to the start of this part
+				if _, err := f.Seek(partOffset, io.SeekStart); err != nil {
+					return nil, fmt.Errorf("part %d seek failed: %w", i+1, err)
+				}
+			}
 
-		s3Resp, err := c.HTTPClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("part %d upload failed: %w", i+1, err)
-		}
+			partReader := io.LimitReader(f, thisPartSize)
+			pr := &progressReader{
+				reader:  partReader,
+				total:   totalSize,
+				read:    partOffset,
+				label:   fmt.Sprintf("Part %d/%d", i+1, len(partURLs)),
+				lastPct: -1,
+			}
 
-		if s3Resp.StatusCode < 200 || s3Resp.StatusCode >= 300 {
-			body, _ := io.ReadAll(s3Resp.Body)
+			req, err := http.NewRequest("PUT", url, pr)
+			if err != nil {
+				return nil, fmt.Errorf("part %d request: %w", i+1, err)
+			}
+			req.ContentLength = thisPartSize
+			req.Header.Set("Content-Type", "application/octet-stream")
+
+			s3Resp, err := c.HTTPClient.Do(req)
+			if err != nil {
+				lastErr = fmt.Errorf("part %d upload failed: %w", i+1, err)
+				continue
+			}
+
+			if s3Resp.StatusCode < 200 || s3Resp.StatusCode >= 300 {
+				body, _ := io.ReadAll(s3Resp.Body)
+				s3Resp.Body.Close()
+				lastErr = fmt.Errorf("part %d S3 HTTP %d: %s", i+1, s3Resp.StatusCode, string(body))
+				continue
+			}
+
+			etag = s3Resp.Header.Get("ETag")
 			s3Resp.Body.Close()
-			return nil, fmt.Errorf("part %d S3 HTTP %d: %s", i+1, s3Resp.StatusCode, string(body))
+			lastErr = nil
+			break
 		}
 
-		etag := s3Resp.Header.Get("ETag")
-		s3Resp.Body.Close()
+		if lastErr != nil {
+			return nil, lastErr
+		}
 
 		parts = append(parts, map[string]interface{}{
 			"ETag":       etag,

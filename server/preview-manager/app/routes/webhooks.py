@@ -19,6 +19,16 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 _deploy_locks: dict[str, asyncio.Lock] = {}
 
 
+def clear_deploy_lock(project_name: str, preview_name: str):
+    """Remove the deploy lock for a preview (e.g. after deletion).
+
+    This prevents stale locks from blocking new deploys when a preview
+    is deleted and recreated with the same name.
+    """
+    key = f"{project_name}/{preview_name}"
+    _deploy_locks.pop(key, None)
+
+
 async def _clone_and_deploy(
     project_path: str,
     project_name: str,

@@ -214,16 +214,35 @@ class PreviewDeployer:
         # 1. Verify base files exist in S3
         await self._verify_base_files()
 
-        # 2. Create VM (uses VM's own 40 GB disk)
-        vm_name = f"prev-{self.project_name}-{self.preview_name}"
-        server = await self._step_create_vm(vm_name)
-        self._vm_id = server.data_model.id
-        self._vm_ip = server.data_model.public_net.ipv4.ip
-        self._executor = RemoteExecutor(self._vm_ip)
-        await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
+        # 2. Create VM or reuse existing one
+        preview = await get_preview(self.project_name, self.preview_name)
+        existing_vm_id = preview.get("vm_id") if preview else None
+        existing_vm_ip = preview.get("vm_ip") if preview else None
 
-        # 3. Wait for SSH
-        await self._step_wait_ssh()
+        if existing_vm_id and existing_vm_ip:
+            # Reuse existing VM
+            self._vm_id = existing_vm_id
+            self._vm_ip = existing_vm_ip
+            self._executor = RemoteExecutor(self._vm_ip)
+            logger.info(f"Reusing existing VM {self._vm_id} ({self._vm_ip})")
+            await self._log_raw(f"{DIM}Reusing existing VM {self._vm_id} ({self._vm_ip}){RESET}\n")
+
+            # Stop existing containers
+            proc = await self._executor.run_shell(
+                f"cd {VM_PREVIEW_DIR}/code && docker compose down --remove-orphans 2>/dev/null; true"
+            )
+            await proc.communicate()
+        else:
+            # Create new VM
+            vm_name = f"prev-{self.project_name}-{self.preview_name}"
+            server = await self._step_create_vm(vm_name)
+            self._vm_id = server.data_model.id
+            self._vm_ip = server.data_model.public_net.ipv4.ip
+            self._executor = RemoteExecutor(self._vm_ip)
+            await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
+
+            # 3. Wait for SSH
+            await self._step_wait_ssh()
 
         # 4. Setup workspace directory
         await self._step_setup_vm()
@@ -298,8 +317,7 @@ class PreviewDeployer:
         self._write_internal_settings()
         await self._upload_compose_and_settings()
 
-        # Pull images from private registry if needed + Docker up + deploy
-        await self._step_pull_images()
+        # Docker up + deploy (images already present from initial deploy)
         await self._docker_up()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
@@ -314,13 +332,26 @@ class PreviewDeployer:
     async def _step_create_vm(self, name: str):
         step = "create-vm"
         await self._log_step_start(step)
+        await self._log_raw(f"{DIM}Provisioning new VM. This usually takes 2-3 minutes...{RESET}\n")
         t0 = time.monotonic()
+
+        # Start VM creation and poll progress
+        create_task = asyncio.ensure_future(cloud_manager.create_vm(name))
+        last_elapsed = 0
+        while not create_task.done():
+            await asyncio.sleep(10)
+            elapsed = int(time.monotonic() - t0)
+            if elapsed > last_elapsed:
+                await self._log_raw(f"\r{DIM}  Waiting... {elapsed}s elapsed{RESET}\n")
+                last_elapsed = elapsed
+
         try:
-            server = await cloud_manager.create_vm(name)
+            server = create_task.result()
         except RuntimeError as e:
             elapsed = time.monotonic() - t0
             await self._log_step_end(step, elapsed, False, f"{RED}{e}{RESET}")
             raise
+
         elapsed = time.monotonic() - t0
         ip = server.data_model.public_net.ipv4.ip
         await self._log_step_end(step, elapsed, True, f"{DIM}IP: {ip}{RESET}")
@@ -597,24 +628,39 @@ class PreviewDeployer:
             public_path = self._preview_config.get("env", {}).get("PREV_FILE_PUBLIC_PATH", public_path)
 
         files_dir = f"{VM_PREVIEW_DIR}/code/{docroot}/{public_path}"
-        extract_cmd = (
+
+        # Log file size info
+        status = await storage_manager.get_base_files_status(self.project_name)
+        if status.get("files"):
+            size_mb = status["files"].get("size_bytes", 0) / (1024 * 1024)
+            await self._log_raw(f"{DIM}Archive size: {size_mb:.1f} MB{RESET}\n")
+
+        # Stream directly from S3 into tar (no temp file needed)
+        await self._log_raw(f"{DIM}Downloading and extracting files...{RESET}\n")
+        import_cmd = (
             f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
             f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
             f"mkdir -p {files_dir} && "
             f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
-            f"--endpoint-url {settings.hetzner_s3_endpoint} "
-            f"| tar xzf - -C {files_dir} && "
-            f"chown -R 33:33 {files_dir}"
+            f"--endpoint-url {settings.hetzner_s3_endpoint} | "
+            f"tar xzf - -C {files_dir} && "
+            f"chown -R 33:33 {files_dir} && "
+            f"echo \"Extracted $(find {files_dir} -type f | wc -l) files\""
         )
-
-        proc = await self._executor.run_shell(extract_cmd)
+        proc = await self._executor.run_shell(import_cmd)
         stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_FILES)
         elapsed = time.monotonic() - t0
 
         if proc.returncode != 0:
+            # Clean up partial extraction to free disk space
+            cleanup_cmd = f"rm -rf {files_dir} && mkdir -p {files_dir}"
+            cleanup_proc = await self._executor.run_shell(cleanup_cmd)
+            await cleanup_proc.communicate()
+            await self._log_raw(f"{DIM}Cleaned up partial files to free disk space{RESET}\n")
+
             await self._log_step_end(step, elapsed, False, "")
             output = (stdout + stderr)[-2000:]
-            raise RuntimeError(f"[{step}] Failed (exit {proc.returncode}):\n{output}")
+            raise RuntimeError(f"[{step}] Import failed (exit {proc.returncode}):\n{output}")
 
         await self._log_step_end(step, elapsed, True, "")
 

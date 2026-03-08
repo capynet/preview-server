@@ -1,0 +1,78 @@
+---
+# Cloudflare R2 bucket setup
+#
+# Creates the bucket if it doesn't exist and configures lifecycle rules
+# to automatically abort orphaned multipart uploads.
+#
+# Required variables:
+#   hetzner_s3_endpoint:       R2 S3-compatible endpoint (contains account ID)
+#   hetzner_s3_access_key:     R2 access key
+#   hetzner_s3_secret_key:     R2 secret key
+#   hetzner_s3_bucket:         Bucket name
+#   cloudflare_r2_api_token:    Cloudflare API token (R2 Admin permissions)
+#   r2_multipart_abort_days:   Days before aborting incomplete uploads (default: 1)
+
+- name: Set default values
+  set_fact:
+    r2_multipart_abort_days: "{{ r2_multipart_abort_days | default(1) }}"
+    # Extract account ID from endpoint URL (https://<account_id>.r2.cloudflarestorage.com)
+    r2_account_id: "{{ hetzner_s3_endpoint | regex_replace('https://([^.]+)\\..*', '\\1') }}"
+
+- name: Check if R2 bucket exists
+  shell: |
+    python3 -c "
+    import boto3
+    s3 = boto3.client('s3',
+        endpoint_url='{{ hetzner_s3_endpoint }}',
+        aws_access_key_id='{{ hetzner_s3_access_key }}',
+        aws_secret_access_key='{{ hetzner_s3_secret_key }}')
+    try:
+        s3.head_bucket(Bucket='{{ hetzner_s3_bucket }}')
+        print('exists')
+    except s3.exceptions.ClientError as e:
+        if e.response['Error']['Code'] == '404':
+            print('missing')
+        else:
+            raise
+    "
+  register: bucket_check
+  changed_when: false
+
+- name: Create R2 bucket
+  shell: |
+    python3 -c "
+    import boto3
+    s3 = boto3.client('s3',
+        endpoint_url='{{ hetzner_s3_endpoint }}',
+        aws_access_key_id='{{ hetzner_s3_access_key }}',
+        aws_secret_access_key='{{ hetzner_s3_secret_key }}')
+    s3.create_bucket(Bucket='{{ hetzner_s3_bucket }}')
+    print('created')
+    "
+  when: bucket_check.stdout | trim == 'missing'
+
+- name: Configure lifecycle rule via Cloudflare API
+  uri:
+    url: "https://api.cloudflare.com/client/v4/accounts/{{ r2_account_id }}/r2/buckets/{{ hetzner_s3_bucket }}/lifecycle"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ cloudflare_r2_api_token }}"
+      Content-Type: application/json
+    body_format: json
+    body:
+      rules:
+        - id: "AbortIncompleteMultipartUploads"
+          enabled: true
+          conditions: {}
+          abortMultipartUploadsTransition:
+            condition:
+              type: "Age"
+              maxAge: "{{ (r2_multipart_abort_days | int) * 86400 }}"
+    status_code: [200]
+  register: lifecycle_result
+
+- name: Display R2 bucket status
+  debug:
+    msg: >
+      R2 bucket '{{ hetzner_s3_bucket }}' is ready.
+      Lifecycle: abort incomplete multipart uploads after {{ r2_multipart_abort_days }} day(s).

@@ -156,14 +156,35 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         if not host.endswith(".mr.preview-mr.com"):
             return await call_next(request)
 
-        # Check authentication
-        session_id = request.cookies.get(SESSION_COOKIE)
-        if not session_id:
-            return self._redirect_to_login(host, request)
+        # Skip auth for static assets — only HTML documents need auth
+        path = request.url.path
+        _STATIC_PREFIXES = (
+            "/sites/default/files/",
+            "/themes/",
+            "/modules/",
+            "/core/",
+            "/libraries/",
+        )
+        _STATIC_EXTENSIONS = (
+            ".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+            ".woff", ".woff2", ".ttf", ".eot", ".otf",
+            ".json", ".xml", ".txt", ".map", ".webp", ".avif",
+            ".mp4", ".webm", ".mp3", ".pdf",
+        )
+        skip_auth = (
+            any(path.startswith(p) for p in _STATIC_PREFIXES)
+            or path.lower().endswith(_STATIC_EXTENSIONS)
+        )
 
-        session = await auth_db.get_session(session_id)
-        if not session:
-            return self._redirect_to_login(host, request)
+        if not skip_auth:
+            # Check authentication
+            session_id = request.cookies.get(SESSION_COOKIE)
+            if not session_id:
+                return self._redirect_to_login(host, request)
+
+            session = await auth_db.get_session(session_id)
+            if not session:
+                return self._redirect_to_login(host, request)
 
         # Look up preview in DB
         preview = await get_preview_by_domain(host)
@@ -176,7 +197,7 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         project = preview["project"]
         preview_name = preview["preview_name"]
 
-        # Update last_accessed_at (fire and forget)
+        # Update last_accessed_at (fire and forget, only for authenticated requests)
         try:
             await update_last_accessed(project, preview_name)
         except Exception:

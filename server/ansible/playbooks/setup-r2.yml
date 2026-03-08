@@ -1,0 +1,14 @@
+---
+# Setup Cloudflare R2 bucket
+#
+# Creates the bucket and configures lifecycle rules.
+#
+# Usage:
+#   ansible-playbook playbooks/setup-r2.yml
+
+- name: Setup Cloudflare R2
+  hosts: preview-server
+  become: yes
+
+  roles:
+    - r2

@@ -91,10 +91,10 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                     stack["PHP"] = php_image.split(":php")[-1]
                     stack["Webserver"] = "OpenLiteSpeed"
 
-                # Stack: Database
+                # Stack: Database — strip registry prefix (e.g. "91.99.157.66:5000/mysql:5.7" → "mysql:5.7")
                 db_image = (services.get("db") or {}).get("image", "")
                 if db_image:
-                    stack["Database"] = db_image
+                    stack["Database"] = db_image.split("/")[-1]
 
                 # Stack: Redis/Valkey
                 redis_image = (services.get("redis") or {}).get("image", "")
@@ -344,6 +344,10 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
 
 async def delete_preview_internal(project: str, preview_name: str):
     """Core delete logic: destroy VM, remove from DB."""
+    # Clear any in-flight deploy lock so a recreated preview won't be blocked
+    from app.routes.webhooks import clear_deploy_lock
+    clear_deploy_lock(project, preview_name)
+
     preview = await get_preview(project, preview_name)
 
     # Destroy VM if exists
@@ -676,29 +680,48 @@ async def preview_vm_stats(project: str, preview_name: str, user: UserWithRole =
     """Get CPU, RAM and disk stats from the preview's VM."""
     executor, preview = await _get_executor(project, preview_name)
 
-    cmd = (
-        "python3 -c \""
-        "import json, os, time; "
-        "def read_cpu(): lines = open('/proc/stat').readlines(); c = lines[0].split()[1:]; return [int(x) for x in c]; "
-        "c1 = read_cpu(); time.sleep(0.5); c2 = read_cpu(); "
-        "d = [b - a for a, b in zip(c1, c2)]; total = sum(d); idle = d[3] + d[4]; "
-        "cpu_pct = round((total - idle) / total * 100, 1) if total > 0 else 0.0; "
-        "mem = open('/proc/meminfo').read(); "
-        "mt = int([l for l in mem.splitlines() if l.startswith('MemTotal')][0].split()[1]) * 1024; "
-        "ma = int([l for l in mem.splitlines() if l.startswith('MemAvailable')][0].split()[1]) * 1024; "
-        "st = os.statvfs('/'); "
-        "dt = st.f_blocks * st.f_frsize; du = (st.f_blocks - st.f_bfree) * st.f_frsize; "
-        "ncpu = os.cpu_count(); "
-        "print(json.dumps({'memory_total_gb': round(mt/1073741824, 2), 'memory_available_gb': round(ma/1073741824, 2), "
-        "'memory_percent': round((mt - ma) / mt * 100, 1), "
-        "'disk_total_gb': round(dt/1073741824, 2), 'disk_used_gb': round(du/1073741824, 2), "
-        "'disk_percent': round(du / dt * 100, 1), "
-        "'cpu_percent': cpu_pct, 'cpu_count': ncpu}))"
-        "\""
+    script = (
+        "import json, os, time\n"
+        "def read_cpu():\n"
+        "    lines = open('/proc/stat').readlines()\n"
+        "    c = lines[0].split()[1:]\n"
+        "    return [int(x) for x in c]\n"
+        "c1 = read_cpu()\n"
+        "time.sleep(0.5)\n"
+        "c2 = read_cpu()\n"
+        "d = [b - a for a, b in zip(c1, c2)]\n"
+        "total = sum(d)\n"
+        "idle = d[3] + d[4]\n"
+        "cpu_pct = round((total - idle) / total * 100, 1) if total > 0 else 0.0\n"
+        "mem = open('/proc/meminfo').read()\n"
+        "mt = int([l for l in mem.splitlines() if l.startswith('MemTotal')][0].split()[1]) * 1024\n"
+        "ma = int([l for l in mem.splitlines() if l.startswith('MemAvailable')][0].split()[1]) * 1024\n"
+        "st = os.statvfs('/')\n"
+        "dt = st.f_blocks * st.f_frsize\n"
+        "du = (st.f_blocks - st.f_bfree) * st.f_frsize\n"
+        "ncpu = os.cpu_count()\n"
+        "print(json.dumps({\n"
+        "    'memory_total_gb': round(mt/1073741824, 2),\n"
+        "    'memory_available_gb': round(ma/1073741824, 2),\n"
+        "    'memory_percent': round((mt - ma) / mt * 100, 1),\n"
+        "    'disk_total_gb': round(dt/1073741824, 2),\n"
+        "    'disk_used_gb': round(du/1073741824, 2),\n"
+        "    'disk_percent': round(du / dt * 100, 1),\n"
+        "    'cpu_percent': cpu_pct,\n"
+        "    'cpu_count': ncpu\n"
+        "}))\n"
     )
+    import base64
+    encoded = base64.b64encode(script.encode()).decode()
+    cmd = f"echo {encoded} | base64 -d | python3"
     proc = await executor.run_shell(cmd)
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
+        logger.warning("VM stats SSH failed (rc=%d) for %s/%s: %s", proc.returncode, project, preview_name, stderr.decode().strip()[-500:])
         raise HTTPException(status_code=503, detail="Failed to get VM stats")
 
-    return json.loads(stdout.decode().strip())
+    try:
+        return json.loads(stdout.decode().strip())
+    except Exception as e:
+        logger.warning("VM stats parse failed for %s/%s: %s | stdout: %s", project, preview_name, e, stdout.decode().strip()[-200:])
+        raise HTTPException(status_code=503, detail="Failed to parse VM stats")
