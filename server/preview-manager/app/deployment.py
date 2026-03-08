@@ -19,6 +19,7 @@ from app.database import (
     get_preview, get_project, create_deployment, finish_deployment,
     update_preview_vm,
 )
+from app.caddy_api import caddy_manager
 from app.cloud import cloud_manager
 from app.storage import storage_manager
 from app.remote import RemoteExecutor
@@ -167,6 +168,13 @@ class PreviewDeployer:
 
             duration = int((datetime.now(timezone.utc) - start).total_seconds())
             await self._save_state("active", duration=duration)
+
+            # Register Caddy route so static assets bypass the Python proxy
+            if self._vm_ip:
+                try:
+                    await caddy_manager.add_preview_route(self.domain, self._vm_ip)
+                except Exception as e:
+                    logger.warning(f"Failed to add Caddy route for {self.domain}: {e}")
 
             # Success summary
             await self._log_summary(True, duration)

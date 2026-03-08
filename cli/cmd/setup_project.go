@@ -177,6 +177,24 @@ func settingsPreviewContent() string {
  *   $config['system.performance']['js']['preprocess'] = FALSE;
  *   $settings['my_custom_setting'] = 'preview-value';
  */
+
+/**
+ * Redis / Valkey cache backend.
+ *
+ * Uncomment the block below to use Redis or Valkey as the default cache backend.
+ *
+ * Requirements:
+ *   - Enable redis or valkey in preview.yml (e.g. redis: "7" or valkey: "8")
+ *   - Install the Drupal module: composer require drupal/redis
+ *   - Enable the module: drush en redis
+ */
+// $redis_host = getenv('PREV_REDIS_HOST');
+// if ($redis_host) {
+//   $settings['redis.connection']['interface'] = 'PhpRedis';
+//   $settings['redis.connection']['host'] = $redis_host;
+//   $settings['redis.connection']['port'] = 6379;
+//   $settings['cache']['default'] = 'cache.backend.redis';
+// }
 `
 }
 

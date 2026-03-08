@@ -95,6 +95,11 @@ async def _check_and_stop():
             f"idle for {int(idle_seconds / 60)} min (threshold: {threshold_minutes} min)"
         )
         try:
+            # Remove Caddy direct route so wildcard handles wake-up
+            from app.caddy_api import caddy_manager
+            domain = f"{preview_name}-{project}.mr.preview-mr.com"
+            await caddy_manager.remove_preview_route(domain)
+
             await cloud_manager.shutdown_vm(p["vm_id"])
             stopped_count += 1
             logger.info(f"Auto-stopped {project}/{preview_name} (VM shutdown)")

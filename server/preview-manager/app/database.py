@@ -340,6 +340,19 @@ async def get_preview_by_branch(project: str, branch: str) -> Optional[dict]:
         await db.close()
 
 
+async def get_all_active_previews() -> list[dict]:
+    """Return previews that have a VM IP (active and reachable)."""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "SELECT preview_name, project, vm_id, vm_ip FROM previews WHERE vm_ip IS NOT NULL AND vm_ip != ''"
+        )
+        rows = await cur.fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
 async def get_all_previews() -> list[dict]:
     db = await get_db()
     try:

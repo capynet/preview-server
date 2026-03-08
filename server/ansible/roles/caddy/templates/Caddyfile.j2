@@ -12,7 +12,9 @@ app.{{ domain }} {
 	reverse_proxy host.docker.internal:3000
 }
 
-# Wildcard for preview domains — fallback to API for wake-up
+# Wildcard TLS cert + routing managed via Admin API.
+# The Python app inserts per-preview direct routes (position 0) via Admin API
+# so they are evaluated BEFORE this fallback.
 *.mr.{{ domain }} {
 	tls {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}

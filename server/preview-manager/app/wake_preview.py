@@ -156,6 +156,10 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         if not host.endswith(".mr.preview-mr.com"):
             return await call_next(request)
 
+        # Forward auth requests from Caddy — let FastAPI handle them directly
+        if request.url.path == "/api/auth/verify-preview":
+            return await call_next(request)
+
         # Skip auth for static assets — only HTML documents need auth
         path = request.url.path
         _STATIC_PREFIXES = (
@@ -327,6 +331,13 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
             if proc.returncode == 0:
                 await update_preview_vm(project, preview_name, vm_id, vm_ip)
+                # Re-register Caddy direct route
+                from app.caddy_api import caddy_manager
+                domain = f"{preview_name}-{project}.mr.preview-mr.com"
+                try:
+                    await caddy_manager.add_preview_route(domain, vm_ip)
+                except Exception as e:
+                    logger.warning(f"Failed to add Caddy route after wake: {e}")
                 logger.info(f"Woke up {project}/{preview_name} (VM {vm_id}, IP {vm_ip})")
             else:
                 logger.error(

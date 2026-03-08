@@ -39,6 +39,23 @@ async def lifespan(app: FastAPI):
     await init_db()
     await load_config_to_settings()
 
+    # Set up Caddy routes: per-preview direct routes + wildcard fallback.
+    # The Caddyfile wildcard uses `abort` so all routing is via admin API,
+    # giving us full control over route ordering (specific before wildcard).
+    from app.caddy_api import caddy_manager
+    from app.database import get_all_active_previews
+    try:
+        active = await get_all_active_previews()
+        for p in active:
+            if p.get("vm_ip"):
+                domain = f"{p['preview_name']}-{p['project']}.mr.preview-mr.com"
+                caddy_manager._preview_upstreams[domain] = (p["vm_ip"], 80)
+        # Single apply to patch all routes at once
+        await caddy_manager._apply_routes()
+        logger.info(f"Caddy routes ready: {len(active)} preview(s) + wildcard fallback")
+    except Exception as e:
+        logger.warning(f"Failed to set up Caddy routes: {e}")
+
     # Start background tasks
     auto_stop_task = asyncio.create_task(auto_stop_loop())
     auto_erase_task = asyncio.create_task(auto_erase_loop())

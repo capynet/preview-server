@@ -358,6 +358,11 @@ async def delete_preview_internal(project: str, preview_name: str):
         except Exception as e:
             logger.warning(f"Error destroying VM for {project}/{preview_name}: {e}")
 
+    # Remove Caddy direct route
+    from app.caddy_api import caddy_manager
+    domain = f"{preview_name}-{project}.mr.preview-mr.com"
+    await caddy_manager.remove_preview_route(domain)
+
     # Delete from DB
     await PreviewStateManager.delete_state(project, preview_name)
 
