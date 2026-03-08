@@ -33,7 +33,7 @@ TIMEOUT_COMPOSER = 600
 TIMEOUT_IMPORT_DB = 600
 TIMEOUT_IMPORT_FILES = 600
 TIMEOUT_DRUSH = 300
-TIMEOUT_DEPLOY_SCRIPT = 600
+TIMEOUT_DEPLOY_SCRIPT = 36000
 TIMEOUT_DEPLOY_STEP = 300
 
 # Path to custom deploy step scripts (local on coordinator)
@@ -584,8 +584,17 @@ class PreviewDeployer:
         t0 = time.monotonic()
 
         db_container = f"{self.container_prefix}-db"
-        # Download from S3 to VM, then pipe to mysql
         s3_key = f"base-files/{self.project_name}/db.sql.gz"
+
+        # Log file size info
+        status = await storage_manager.get_base_files_status(self.project_name)
+        if status.get("db"):
+            size_mb = status["db"].get("size_bytes", 0) / (1024 * 1024)
+            await self._log_raw(f"{DIM}Dump size: {size_mb:.1f} MB (compressed){RESET}\n")
+
+        await self._log_raw(f"{DIM}Downloading and importing database...{RESET}\n")
+
+        # Download from S3 to VM, then pipe to mysql
         import_cmd = (
             f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
             f"--endpoint-url {settings.hetzner_s3_endpoint} "

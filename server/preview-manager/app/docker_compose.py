@@ -262,6 +262,9 @@ def generate_docker_compose(
             "image": _registry_image(f"solr:{solr_ver}"),
             "container_name": f"{prefix}-solr",
             "restart": "unless-stopped",
+            "environment": {
+                "SOLR_JAVA_MEM": "-Xms128m -Xmx256m",
+            },
         }
         # Mount custom configset if specified in preview.yml.
         # We manually create the core directory instead of using solr-precreate
