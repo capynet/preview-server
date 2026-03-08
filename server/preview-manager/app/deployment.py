@@ -976,6 +976,11 @@ if ($_redis_host) {
       $_result = $_pdo->query("SELECT 1 FROM key_value WHERE collection = 'system.schema' AND name = 'redis' LIMIT 1");
       if ($_result && $_result->fetch()) {
         $settings['cache']['default'] = 'cache.backend.redis';
+        // Use the redis module's services (cache tag checksum, lock, etc.)
+        $_redis_services = DRUPAL_ROOT . '/modules/contrib/redis/example.services.yml';
+        if (file_exists($_redis_services)) {
+          $settings['container_yamls'][] = $_redis_services;
+        }
       }
     } catch (\\Exception $e) {
       // DB not ready yet — skip Redis cache backend.
