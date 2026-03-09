@@ -153,17 +153,12 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
     # New user
     count = await db.user_count()
 
-    # Check invitation
-    invitation = await get_invitation_by_token(None)  # Can't check by token here
+    # Check if there's a pending invitation for this email
     from app.database import get_invitation_by_email
     invitation = await get_invitation_by_email(info.email)
 
     # Check allowed email domain
     domain_match = await match_email_domain(info.email) if count > 0 else None
-
-    if count > 0 and not invitation and not domain_match:
-        logger.warning(f"OAuth signup rejected for {info.email}: no invitation or domain match")
-        return None, False
 
     # Create user
     is_superadmin = count == 0
@@ -179,6 +174,8 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
     elif domain_match:
         await add_org_member(user["id"], domain_match["organization_id"], domain_match["default_role"])
         logger.info(f"User {info.email} auto-joined org {domain_match['organization_id']} via domain match")
+    else:
+        logger.info(f"New user {info.email} registered via OAuth (no org yet)")
 
     return user, True
 
@@ -235,7 +232,7 @@ async def get_me(user: UserWithContext = Depends(get_current_user)):
         "avatar_url": user.avatar_url,
         "is_superadmin": user.is_superadmin,
         "organizations": [
-            {"id": o["id"], "slug": o["slug"], "name": o["name"], "role": o["role"]}
+            {"org_id": o["id"], "org_slug": o["slug"], "org_name": o["name"], "role": o["role"]}
             for o in orgs
         ],
     }
