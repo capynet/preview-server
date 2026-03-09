@@ -17,7 +17,7 @@ from app.docker_compose import (
 from app.state import PreviewStateManager
 from app.database import (
     get_preview, get_project, create_deployment, finish_deployment,
-    update_preview_vm,
+    update_preview_vm, compute_url_hash,
 )
 from app.caddy_api import caddy_manager
 from app.cloud import cloud_manager
@@ -86,8 +86,20 @@ class PreviewDeployer:
         triggered_by: str | None = None,
         mr_iid: int | None = None,
         deployment_id: int | None = None,
+        *,
+        org_slug: str = "",
+        project_slug: str = "",
+        project_id: int | None = None,
+        org_id: int | None = None,
     ):
-        self.project_name = project_name
+        # Multi-tenant identifiers
+        self.org_slug = org_slug
+        self.org_id = org_id
+        self.project_slug = project_slug or project_name
+        self.project_id = project_id
+        # Keep project_name as alias for backward compat in container naming
+        self.project_name = self.project_slug
+
         self.preview_name = preview_name
         self.branch = branch
         self.commit_sha = commit_sha
@@ -95,10 +107,16 @@ class PreviewDeployer:
         self.mr_iid = mr_iid
 
         self.force_new = False
-        self.preview_path = PreviewStateManager.get_preview_path(project_name, preview_name)
-        self.container_prefix = f"{preview_name}-{project_name}"
-        self.preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
-        self.domain = f"{preview_name}-{project_name}.mr.preview-mr.com"
+        self.preview_path = PreviewStateManager.get_preview_path(
+            self.org_slug, self.project_slug, preview_name
+        )
+        self.container_prefix = f"{preview_name}-{self.project_slug}"
+
+        # Hash-based domain
+        url_hash = compute_url_hash(self.org_slug, self.project_slug, preview_name)
+        self.domain = f"{url_hash}.mr.preview-mr.com"
+        self.preview_url = f"https://{self.domain}"
+
         self._preview_config: dict | None = None
         self._log_buffer: list[str] = []
         self._deployment_id: int | None = deployment_id
@@ -115,20 +133,20 @@ class PreviewDeployer:
         """Check if this is a first deploy (no previous successful deployment)."""
         if self.force_new:
             return True
-        state = await PreviewStateManager.load_state(self.project_name, self.preview_name)
+        state = await PreviewStateManager.load_state(self.project_id, self.preview_name)
         if not state:
             return True
         return not state.get("last_deployed_at")
 
     async def is_creating(self) -> bool:
-        state = await PreviewStateManager.load_state(self.project_name, self.preview_name)
+        state = await PreviewStateManager.load_state(self.project_id, self.preview_name)
         return state is not None and state["status"] == "creating"
 
     async def deploy(self) -> bool:
         """Entry point. Returns True on success."""
         if await self.is_creating():
             logger.warning(
-                f"Skipping deploy for {self.project_name}/{self.preview_name}: "
+                f"Skipping deploy for {self.project_slug}/{self.preview_name}: "
                 "already creating"
             )
             return False
@@ -141,7 +159,7 @@ class PreviewDeployer:
         # Create deployment record in DB (or reuse one created earlier)
         from app.websockets import deployment_log_broadcaster, preview_list_manager
         if not self._deployment_id:
-            preview = await get_preview(self.project_name, self.preview_name)
+            preview = await get_preview(self.project_id, self.preview_name)
             if preview:
                 self._deployment_id = await create_deployment(
                     preview["id"], self.triggered_by
@@ -154,16 +172,16 @@ class PreviewDeployer:
 
         # Deploy header
         await self._log_raw(
-            f"\n{BOLD}{CYAN}{deploy_type} Deploy: {self.project_name}/{self.preview_name}{RESET}\n"
+            f"\n{BOLD}{CYAN}{deploy_type} Deploy: {self.project_slug}/{self.preview_name}{RESET}\n"
             f"{DIM}Branch: {self.branch}  Commit: {self.commit_sha[:8]}{RESET}\n"
         )
 
         try:
             if is_new:
-                logger.info(f"NEW deploy: {self.project_name}/{self.preview_name}")
+                logger.info(f"NEW deploy: {self.project_slug}/{self.preview_name}")
                 await self._deploy_new()
             else:
-                logger.info(f"UPDATE deploy: {self.project_name}/{self.preview_name}")
+                logger.info(f"UPDATE deploy: {self.project_slug}/{self.preview_name}")
                 await self._deploy_update()
 
             duration = int((datetime.now(timezone.utc) - start).total_seconds())
@@ -188,14 +206,14 @@ class PreviewDeployer:
                 await deployment_log_broadcaster.complete(self._deployment_id, True)
 
             logger.info(
-                f"Deploy OK: {self.project_name}/{self.preview_name} in {duration}s"
+                f"Deploy OK: {self.project_slug}/{self.preview_name} in {duration}s"
             )
             return True
 
         except Exception as e:
             duration = int((datetime.now(timezone.utc) - start).total_seconds())
             logger.error(
-                f"Deploy FAILED: {self.project_name}/{self.preview_name}: {e}",
+                f"Deploy FAILED: {self.project_slug}/{self.preview_name}: {e}",
                 exc_info=True,
             )
             await self._save_state("failed", error=str(e), duration=duration)
@@ -223,7 +241,7 @@ class PreviewDeployer:
         await self._verify_base_files()
 
         # 2. Create VM or reuse existing one
-        preview = await get_preview(self.project_name, self.preview_name)
+        preview = await get_preview(self.project_id, self.preview_name)
         existing_vm_id = preview.get("vm_id") if preview else None
         existing_vm_ip = preview.get("vm_ip") if preview else None
 
@@ -242,12 +260,15 @@ class PreviewDeployer:
             await proc.communicate()
         else:
             # Create new VM
-            vm_name = f"prev-{self.project_name}-{self.preview_name}"
+            vm_name = f"prev-{self.project_slug}-{self.preview_name}"
             server = await self._step_create_vm(vm_name)
             self._vm_id = server.data_model.id
             self._vm_ip = server.data_model.public_net.ipv4.ip
             self._executor = RemoteExecutor(self._vm_ip)
-            await update_preview_vm(self.project_name, self.preview_name, self._vm_id, self._vm_ip)
+            # Update VM info in DB using preview_id
+            preview = await get_preview(self.project_id, self.preview_name)
+            if preview:
+                await update_preview_vm(preview["id"], self._vm_id, self._vm_ip)
 
             # 3. Wait for SSH
             await self._step_wait_ssh()
@@ -271,12 +292,12 @@ class PreviewDeployer:
         # Download base DB to temp for cache key computation
         tmp_db = Path(tempfile.mktemp(suffix=".sql.gz"))
         try:
-            await storage_manager.download_base_db(self.project_name, tmp_db)
-            cache_key = _compute_db_cache_key(self.project_name, db_spec, tmp_db)
+            await storage_manager.download_base_db(self.project_slug, tmp_db)
+            cache_key = _compute_db_cache_key(self.project_slug, db_spec, tmp_db)
         finally:
             tmp_db.unlink(missing_ok=True)
 
-        use_cache = await storage_manager.db_cache_exists(self.project_name, cache_key)
+        use_cache = await storage_manager.db_cache_exists(self.project_slug, cache_key)
 
         if use_cache:
             await self._restore_db_cache(cache_key)
@@ -297,6 +318,10 @@ class PreviewDeployer:
         # 11. Deploy steps and deploy script
         await self._run_deploy_steps("new")
         await self._run_project_deploy_script("new")
+
+        # 12. Activate Redis cache backend (phase 2)
+        await self._activate_redis_cache()
+
         await self._reload_webserver()
 
         # Done — traffic is proxied via wake_preview middleware
@@ -307,7 +332,7 @@ class PreviewDeployer:
 
     async def _deploy_update(self):
         # Load existing VM info from DB
-        preview = await get_preview(self.project_name, self.preview_name)
+        preview = await get_preview(self.project_id, self.preview_name)
         self._vm_id = preview.get("vm_id") if preview else None
         self._vm_ip = preview.get("vm_ip") if preview else None
 
@@ -329,6 +354,10 @@ class PreviewDeployer:
         await self._docker_up()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
+
+        # Activate Redis cache backend (phase 2)
+        await self._activate_redis_cache()
+
         await self._reload_webserver()
 
         # Done — traffic is proxied via wake_preview middleware
@@ -426,16 +455,16 @@ class PreviewDeployer:
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        from app.routes.gitlab import _get_gitlab_token
+        # Get org-specific GitLab token
+        gitlab_url, token = await self._get_gitlab_credentials()
         from urllib.parse import urlparse
-        token = await _get_gitlab_token()
-        parsed = urlparse(settings.gitlab_url)
+        parsed = urlparse(gitlab_url)
 
-        project_path = None
-        from app import config_store
-        project_path = await config_store.get_project_path_by_slug(self.project_name)
-        if not project_path:
-            raise RuntimeError(f"Project path not found for {self.project_name}")
+        # Get project path from DB
+        proj = await get_project(self.project_id)
+        if not proj or not proj.get("gitlab_project_path"):
+            raise RuntimeError(f"Project path not found for project_id={self.project_id}")
+        project_path = proj["gitlab_project_path"]
 
         clone_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
         code_dir = f"{VM_PREVIEW_DIR}/code"
@@ -460,16 +489,16 @@ class PreviewDeployer:
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        from app.routes.gitlab import _get_gitlab_token
+        # Get org-specific GitLab token
+        gitlab_url, token = await self._get_gitlab_credentials()
         from urllib.parse import urlparse
-        token = await _get_gitlab_token()
-        parsed = urlparse(settings.gitlab_url)
+        parsed = urlparse(gitlab_url)
 
-        project_path = None
-        from app import config_store
-        project_path = await config_store.get_project_path_by_slug(self.project_name)
-        if not project_path:
-            raise RuntimeError(f"Project path not found for {self.project_name}")
+        # Get project path from DB
+        proj = await get_project(self.project_id)
+        if not proj or not proj.get("gitlab_project_path"):
+            raise RuntimeError(f"Project path not found for project_id={self.project_id}")
+        project_path = proj["gitlab_project_path"]
 
         remote_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
         code_dir = f"{VM_PREVIEW_DIR}/code"
@@ -489,6 +518,23 @@ class PreviewDeployer:
             raise RuntimeError(f"[{step}] Git pull failed (exit {proc.returncode})")
 
         await self._log_step_end(step, elapsed, True, "")
+
+    async def _get_gitlab_credentials(self) -> tuple[str, str]:
+        """Get GitLab URL and access token for the organization."""
+        if self.org_id:
+            from app.routes.gitlab import _get_org_gitlab_token
+            return await _get_org_gitlab_token(self.org_id)
+
+        # Fallback: look up org_id from org_slug
+        if self.org_slug:
+            from app.database import get_organization_by_slug
+            org = await get_organization_by_slug(self.org_slug)
+            if org:
+                self.org_id = org["id"]
+                from app.routes.gitlab import _get_org_gitlab_token
+                return await _get_org_gitlab_token(self.org_id)
+
+        raise RuntimeError("No org_id or org_slug available to get GitLab credentials")
 
     async def _upload_compose_and_settings(self):
         """Upload docker-compose.yml and settings files to the VM."""
@@ -584,10 +630,10 @@ class PreviewDeployer:
         t0 = time.monotonic()
 
         db_container = f"{self.container_prefix}-db"
-        s3_key = f"base-files/{self.project_name}/db.sql.gz"
+        s3_key = f"base-files/{self.project_slug}/db.sql.gz"
 
         # Log file size info
-        status = await storage_manager.get_base_files_status(self.project_name)
+        status = await storage_manager.get_base_files_status(self.project_slug)
         if status.get("db"):
             size_mb = status["db"].get("size_bytes", 0) / (1024 * 1024)
             await self._log_raw(f"{DIM}Dump size: {size_mb:.1f} MB (compressed){RESET}\n")
@@ -619,10 +665,10 @@ class PreviewDeployer:
 
     async def _import_files(self):
         """Download base files from S3 to VM and extract."""
-        has_files = await storage_manager.get_base_files_uncompressed_size(self.project_name)
+        has_files = await storage_manager.get_base_files_uncompressed_size(self.project_slug)
         if not has_files:
             # Check if files exist in S3 at all
-            status = await storage_manager.get_base_files_status(self.project_name)
+            status = await storage_manager.get_base_files_status(self.project_slug)
             if not status.get("files"):
                 docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
                 public_path = "sites/default/files"
@@ -638,7 +684,7 @@ class PreviewDeployer:
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        s3_key = f"base-files/{self.project_name}/files.tar.gz"
+        s3_key = f"base-files/{self.project_slug}/files.tar.gz"
         docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
         public_path = "sites/default/files"
         if self._preview_config:
@@ -647,7 +693,7 @@ class PreviewDeployer:
         files_dir = f"{VM_PREVIEW_DIR}/code/{docroot}/{public_path}"
 
         # Log file size info
-        status = await storage_manager.get_base_files_status(self.project_name)
+        status = await storage_manager.get_base_files_status(self.project_slug)
         if status.get("files"):
             size_mb = status["files"].get("size_bytes", 0) / (1024 * 1024)
             await self._log_raw(f"{DIM}Archive size: {size_mb:.1f} MB{RESET}\n")
@@ -688,7 +734,7 @@ class PreviewDeployer:
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        s3_key = f"db-cache/{self.project_name}/{cache_key}.tar.gz"
+        s3_key = f"db-cache/{self.project_slug}/{cache_key}.tar.gz"
         volume_name = f"{self.container_prefix}_db_data"
 
         restore_cmd = (
@@ -732,7 +778,7 @@ class PreviewDeployer:
                 f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
                 f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
                 f"aws s3 cp /tmp/db-cache.tar.gz "
-                f"s3://{storage_manager.bucket}/db-cache/{self.project_name}/{cache_key}.tar.gz "
+                f"s3://{storage_manager.bucket}/db-cache/{self.project_slug}/{cache_key}.tar.gz "
                 f"--endpoint-url {settings.hetzner_s3_endpoint} && "
                 f"rm -f /tmp/db-cache.tar.gz"
             )
@@ -749,6 +795,53 @@ class PreviewDeployer:
 
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, f"{DIM}Cached for future previews{RESET}")
+
+    async def _activate_redis_cache(self):
+        """Phase 2: activate Redis as cache backend after deploy completes.
+
+        During deploy, Drupal uses DB cache so all cache tables are created.
+        After deploy, we create a flag file and rebuild cache so Redis takes over.
+        """
+        config = getattr(self, "_preview_config", None)
+        if not config:
+            return
+
+        # Check if redis or valkey is enabled
+        has_redis = config.get("services", {}).get("redis")
+        has_valkey = config.get("services", {}).get("valkey")
+        if not has_redis and not has_valkey:
+            return
+
+        php_container = f"{self.container_prefix}-php"
+        step = "activate-redis"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        try:
+            # Create flag file so settings.php enables Redis as cache backend
+            proc = await self._executor.run_shell(
+                f"docker exec {php_container} touch /tmp/.preview_redis_ready"
+            )
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+
+            # Rebuild cache with Redis now active
+            docroot = config.get("docroot", "web")
+            proc = await self._executor.run_shell(
+                f"docker exec {php_container} bash -c "
+                f"'cd /var/www/html && vendor/bin/drush cr'"
+            )
+            stdout, stderr = await self._stream_progress(proc, step, t0, 120)
+            elapsed = time.monotonic() - t0
+
+            if proc.returncode != 0:
+                # Non-fatal — Redis will activate on next cache rebuild
+                await self._log_step_end(step, elapsed, True, f"{YELLOW}drush cr failed, Redis will activate on next rebuild{RESET}")
+                return
+
+            await self._log_step_end(step, elapsed, True, "")
+        except Exception as e:
+            elapsed = time.monotonic() - t0
+            await self._log_step_end(step, elapsed, True, f"{YELLOW}Skipped: {e}{RESET}")
 
     async def _reload_webserver(self):
         """Send graceful restart to LiteSpeed."""
@@ -813,7 +906,8 @@ class PreviewDeployer:
     def _build_step_env(self, phase: str) -> dict:
         """Build environment variables passed to deploy step scripts."""
         return {
-            "PREV_PROJECT_NAME": self.project_name,
+            "PREV_ORG_SLUG": self.org_slug,
+            "PREV_PROJECT_NAME": self.project_slug,
             "PREV_PREVIEW_NAME": self.preview_name,
             "PREV_MR_IID": str(self.mr_iid) if self.mr_iid else "",
             "PREV_PATH": f"{VM_PREVIEW_DIR}/code",
@@ -892,10 +986,10 @@ class PreviewDeployer:
 
     async def _verify_base_files(self):
         """Verify base DB exists in S3."""
-        exists = await storage_manager.base_db_exists(self.project_name)
+        exists = await storage_manager.base_db_exists(self.project_slug)
         if not exists:
             raise RuntimeError(
-                f"Base database not found in S3 for project '{self.project_name}'. "
+                f"Base database not found in S3 for project '{self.project_slug}'. "
                 f"Upload with: preview push db"
             )
 
@@ -963,36 +1057,38 @@ if (empty($settings['hash_salt'])) {
   $settings['hash_salt'] = getenv('PREV_PROJECT_NAME') . '-preview';
 }
 
-// Redis / Valkey cache backend — auto-configured when the service is enabled.
-// Connection settings are always set so the module can connect when enabled.
-// The cache backend is only activated if the redis module is installed AND enabled.
+// Redis / Valkey cache backend — two-phase activation.
+// Phase 1 (during deploy): connection settings are configured so the module works,
+//   but Redis is NOT the default cache backend. Drupal uses DB cache, ensuring all
+//   cache tables are created properly when new modules are enabled.
+// Phase 2 (after deploy): the deployer creates /tmp/.preview_redis_ready, and on the
+//   next request Redis becomes the default cache backend.
 $_redis_host = getenv('PREV_REDIS_HOST');
 if ($_redis_host) {
   $settings['redis.connection']['interface'] = 'PhpRedis';
   $settings['redis.connection']['host'] = $_redis_host;
   $settings['redis.connection']['port'] = 6379;
-  // Only set as default cache backend if the redis module is actually enabled.
-  // Query the DB directly to avoid bootstrap issues — settings.php is loaded
-  // before Drupal builds the service container, so we can't rely on Drupal APIs.
-  if (isset($databases['default']['default'])) {
-    try {
-      $_db = $databases['default']['default'];
-      $_pdo = new \\PDO(
-        "mysql:host={$_db['host']};port={$_db['port']};dbname={$_db['database']}",
-        $_db['username'],
-        $_db['password']
-      );
-      $_result = $_pdo->query("SELECT 1 FROM key_value WHERE collection = 'system.schema' AND name = 'redis' LIMIT 1");
-      if ($_result && $_result->fetch()) {
-        $settings['cache']['default'] = 'cache.backend.redis';
-        // Use the redis module's services (cache tag checksum, lock, etc.)
-        $_redis_services = DRUPAL_ROOT . '/modules/contrib/redis/example.services.yml';
-        if (file_exists($_redis_services)) {
-          $settings['container_yamls'][] = $_redis_services;
+  // Only activate Redis as default cache backend after deploy completes.
+  if (file_exists('/tmp/.preview_redis_ready')) {
+    if (isset($databases['default']['default'])) {
+      try {
+        $_db = $databases['default']['default'];
+        $_pdo = new \\PDO(
+          "mysql:host={$_db['host']};port={$_db['port']};dbname={$_db['database']}",
+          $_db['username'],
+          $_db['password']
+        );
+        $_result = $_pdo->query("SELECT 1 FROM key_value WHERE collection = 'system.schema' AND name = 'redis' LIMIT 1");
+        if ($_result && $_result->fetch()) {
+          $settings['cache']['default'] = 'cache.backend.redis';
+          $_redis_services = DRUPAL_ROOT . '/modules/contrib/redis/example.services.yml';
+          if (file_exists($_redis_services)) {
+            $settings['container_yamls'][] = $_redis_services;
+          }
         }
+      } catch (\\Exception $e) {
+        // DB not ready yet — skip Redis cache backend.
       }
-    } catch (\\Exception $e) {
-      // DB not ready yet — skip Redis cache backend.
     }
   }
 }
@@ -1047,14 +1143,14 @@ if (getenv('PREV_IS_PREVIEW')) {
         extra_env: dict[str, str] = {}
         try:
             import json
-            proj = await get_project(self.project_name)
+            proj = await get_project(self.project_id)
             if proj and proj.get("env_vars"):
                 project_env = proj["env_vars"]
                 if isinstance(project_env, str):
                     project_env = json.loads(project_env)
                 extra_env.update(project_env)
 
-            preview_row = await get_preview(self.project_name, self.preview_name)
+            preview_row = await get_preview(self.project_id, self.preview_name)
             if preview_row and preview_row.get("env_vars"):
                 preview_env = preview_row["env_vars"]
                 if isinstance(preview_env, str):
@@ -1063,11 +1159,14 @@ if (getenv('PREV_IS_PREVIEW')) {
         except Exception as e:
             logger.warning(f"Error loading extra env vars: {e}")
 
+        url_hash = compute_url_hash(self.org_slug, self.project_slug, self.preview_name)
         compose = generate_docker_compose(
-            self.project_name, self.preview_name, config,
+            self.project_slug, self.preview_name, config,
             branch=self.branch, commit_sha=self.commit_sha,
             mr_iid=self.mr_iid,
             extra_env=extra_env if extra_env else None,
+            url_hash=url_hash,
+            org_slug=self.org_slug,
         )
         write_docker_compose(self.preview_path, compose)
 
@@ -1182,12 +1281,15 @@ if (getenv('PREV_IS_PREVIEW')) {
         duration: int | None = None,
     ):
         now = datetime.now(timezone.utc).isoformat()
-        existing = await PreviewStateManager.load_state(self.project_name, self.preview_name)
+        existing = await PreviewStateManager.load_state(self.project_id, self.preview_name)
+
+        url_hash = compute_url_hash(self.org_slug, self.project_slug, self.preview_name)
 
         fields = {
             "branch": self.branch,
             "commit_sha": self.commit_sha,
             "status": status,
+            "url_hash": url_hash,
             "url": self.preview_url,
             "path": str(self.preview_path),
         }
@@ -1209,5 +1311,5 @@ if (getenv('PREV_IS_PREVIEW')) {
                 fields["last_deployment_duration"] = duration
 
         await PreviewStateManager.save_state(
-            self.project_name, self.preview_name, **fields
+            self.project_id, self.preview_name, **fields
         )

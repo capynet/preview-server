@@ -16,15 +16,14 @@ from fastapi import APIRouter, WebSocket, WebSocketException, status
 
 from config.settings import settings
 from app.auth import database as auth_db
-from app.auth.models import Role, has_min_role
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-async def _authenticate_ws(websocket: WebSocket, min_role: Role = Role.viewer) -> int:
-    """Authenticate a WebSocket connection via token query param or cookie. Returns user_id."""
+async def _authenticate_ws(websocket: WebSocket) -> int:
+    """Authenticate a WebSocket connection. Returns user_id."""
     token = websocket.query_params.get("token")
     user_id = None
 
@@ -41,11 +40,6 @@ async def _authenticate_ws(websocket: WebSocket, min_role: Role = Role.viewer) -
                 user_id = session["user_id"]
 
     if user_id is None:
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
-
-    role_str = await auth_db.get_role(user_id)
-    role = Role(role_str) if role_str else None
-    if not has_min_role(role, min_role):
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
 
     return user_id
@@ -463,7 +457,7 @@ async def websocket_previews(websocket: WebSocket):
     """
     from app.routes.previews import get_preview_list_base
 
-    await _authenticate_ws(websocket, Role.viewer)
+    await _authenticate_ws(websocket)
     await preview_list_manager.connect(websocket)
 
     async def send_two_phase(msg_type: str):
@@ -524,7 +518,7 @@ async def websocket_previews(websocket: WebSocket):
 @router.websocket("/ws/system-resources")
 async def websocket_system_resources(websocket: WebSocket):
     """WebSocket endpoint for real-time system resource metrics."""
-    await _authenticate_ws(websocket, Role.viewer)
+    await _authenticate_ws(websocket)
     await system_resources_manager.connect(websocket)
     try:
         while True:
@@ -546,7 +540,7 @@ async def websocket_system_resources(websocket: WebSocket):
 @router.websocket("/ws/deployments/{deployment_id}/logs")
 async def websocket_deployment_logs(websocket: WebSocket, deployment_id: int):
     """WebSocket endpoint for real-time deployment log streaming."""
-    await _authenticate_ws(websocket, Role.viewer)
+    await _authenticate_ws(websocket)
     await websocket.accept()
 
     entry = deployment_log_broadcaster.get(deployment_id)
@@ -631,10 +625,11 @@ async def _stream_subprocess_with_action(
         return False, str(e)
 
 
-@router.websocket("/ws/previews/{project_name}/{preview_name}/terminal")
+@router.websocket("/ws/previews/{org_slug}/{project_slug}/{preview_name}/terminal")
 async def websocket_terminal(
     websocket: WebSocket,
-    project_name: str,
+    org_slug: str,
+    project_slug: str,
     preview_name: str,
     container: str = "php",
 ):
@@ -654,14 +649,28 @@ async def websocket_terminal(
         {"type": "exit", "code": N}
         {"type": "error", "message": "..."}
     """
-    await _authenticate_ws(websocket, Role.manager)
+    await _authenticate_ws(websocket)
     await websocket.accept()
 
-    container_name = f"{preview_name}-{project_name}-{container}"
+    # Resolve org and project
+    from app.database import get_organization_by_slug, get_project_by_slug, get_preview
+
+    org = await get_organization_by_slug(org_slug)
+    if not org:
+        await websocket.send_json({"type": "error", "message": "Organization not found"})
+        await websocket.close()
+        return
+
+    project = await get_project_by_slug(org["id"], project_slug)
+    if not project:
+        await websocket.send_json({"type": "error", "message": "Project not found"})
+        await websocket.close()
+        return
+
+    container_name = f"{preview_name}-{project_slug}-{container}"
 
     # Look up preview to get VM IP
-    from app.database import get_preview as db_get_preview_for_term
-    preview_data = await db_get_preview_for_term(project_name, preview_name)
+    preview_data = await get_preview(project["id"], preview_name)
     if not preview_data or not preview_data.get("vm_ip"):
         await websocket.send_json({"type": "error", "message": "Preview VM is not running"})
         await websocket.close()
@@ -790,10 +799,11 @@ async def websocket_terminal(
             pass
 
 
-@router.websocket("/ws/previews/{project_name}/{preview_name}/action")
+@router.websocket("/ws/previews/{org_slug}/{project_slug}/{preview_name}/action")
 async def websocket_preview_action(
     websocket: WebSocket,
-    project_name: str,
+    org_slug: str,
+    project_slug: str,
     preview_name: str,
     action: str
 ):
@@ -804,12 +814,12 @@ async def websocket_preview_action(
     Query params:
         action: "stop" | "start" | "restart" | "drush-uli"
     """
-    await _authenticate_ws(websocket, Role.viewer)
+    await _authenticate_ws(websocket)
     await websocket.accept()
 
     try:
         # Use composite key to avoid collisions between projects
-        action_key = f"{project_name}/{preview_name}"
+        action_key = f"{org_slug}/{project_slug}/{preview_name}"
 
         # Check if there's already a running action for this preview
         existing = action_manager.get(action_key)
@@ -833,9 +843,23 @@ async def websocket_preview_action(
                 pass
             return
 
+        # Resolve org and project
+        from app.database import get_organization_by_slug, get_project_by_slug, get_preview, compute_url_hash, update_preview_vm
+
+        org = await get_organization_by_slug(org_slug)
+        if not org:
+            await websocket.send_json({"type": "error", "message": "Organization not found"})
+            await websocket.close()
+            return
+
+        project = await get_project_by_slug(org["id"], project_slug)
+        if not project:
+            await websocket.send_json({"type": "error", "message": "Project not found"})
+            await websocket.close()
+            return
+
         # Look up preview to get VM IP for SSH execution
-        from app.database import get_preview as db_get_preview
-        preview = await db_get_preview(project_name, preview_name)
+        preview = await get_preview(project["id"], preview_name)
         if not preview:
             await websocket.send_json({
                 "type": "error",
@@ -847,20 +871,20 @@ async def websocket_preview_action(
         vm_ip = preview.get("vm_ip")
 
         # Build command based on action
-        php_container = f"{preview_name}-{project_name}-php"
+        php_container = f"{preview_name}-{project_slug}-php"
         if action == "stop":
             # For cloud: use REST endpoint to destroy VM
-            from app.routes.previews import stop_preview as _stop_preview_internal
             running_action = action_manager.start(action_key, action, "stop VM")
             await running_action.add_subscriber(websocket)
             try:
                 from app.cloud import cloud_manager
                 from app.caddy_api import caddy_manager
-                from app.database import update_preview_vm
                 if preview.get("vm_id"):
                     await cloud_manager.destroy_vm(preview["vm_id"])
-                    await caddy_manager.remove_preview_routes(preview_name, project_name)
-                    await update_preview_vm(project_name, preview_name, None, None)
+                    url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+                    domain = f"{url_hash}.mr.preview-mr.com"
+                    await caddy_manager.remove_preview_route(domain)
+                    await update_preview_vm(preview["id"], None, None)
                 success, message = True, "VM destroyed, volume kept"
             except Exception as e:
                 success, message = False, str(e)
@@ -882,7 +906,8 @@ async def websocket_preview_action(
                 ssh_cmd = "cd /var/www/preview/code && docker compose restart"
                 timeout = 120
             else:  # drush-uli
-                preview_url = f"https://{preview_name}-{project_name}.mr.preview-mr.com"
+                url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+                preview_url = f"https://{url_hash}.mr.preview-mr.com"
                 ssh_cmd = f"docker exec {php_container} vendor/bin/drush uli --uri={preview_url}"
                 timeout = 30
 

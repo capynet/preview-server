@@ -1,4 +1,4 @@
-"""GitLab webhook receiver for merge request events."""
+"""GitLab webhook receiver for merge request events (multi-tenant)."""
 
 import asyncio
 import logging
@@ -7,9 +7,13 @@ from pathlib import Path
 from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
 
 from config.settings import settings
-from app.routes.gitlab import _get_gitlab_token
-from app import config_store
-from app.database import get_preview, get_preview_by_branch
+from app.database import (
+    get_organization_by_slug,
+    get_project_by_gitlab_id,
+    get_preview,
+    get_preview_by_branch,
+    compute_url_hash,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,19 +23,22 @@ router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 _deploy_locks: dict[str, asyncio.Lock] = {}
 
 
-def clear_deploy_lock(project_name: str, preview_name: str):
+def clear_deploy_lock(project_slug: str, preview_name: str):
     """Remove the deploy lock for a preview (e.g. after deletion).
 
     This prevents stale locks from blocking new deploys when a preview
     is deleted and recreated with the same name.
     """
-    key = f"{project_name}/{preview_name}"
+    key = f"{project_slug}/{preview_name}"
     _deploy_locks.pop(key, None)
 
 
 async def _clone_and_deploy(
-    project_path: str,
-    project_name: str,
+    org_id: int,
+    org_slug: str,
+    project_id: int,
+    project_slug: str,
+    project_path: str,  # gitlab path_with_namespace
     preview_name: str,
     source_branch: str,
     commit_sha: str,
@@ -46,8 +53,9 @@ async def _clone_and_deploy(
     """
     from app.deployment import PreviewDeployer
     from app.state import PreviewStateManager
+    from app.routes.gitlab import _get_org_gitlab_token
 
-    deploy_key = f"{project_name}/{preview_name}"
+    deploy_key = f"{project_slug}/{preview_name}"
 
     if deploy_key not in _deploy_locks:
         _deploy_locks[deploy_key] = asyncio.Lock()
@@ -63,7 +71,7 @@ async def _clone_and_deploy(
         # Create deployment record early so UI can show progress immediately
         from app.database import create_deployment
         from app.websockets import deployment_log_broadcaster, preview_list_manager
-        preview = await get_preview(project_name, preview_name)
+        preview = await get_preview(project_id, preview_name)
         early_deployment_id = None
         if preview:
             early_deployment_id = await create_deployment(preview["id"], triggered_by)
@@ -71,12 +79,32 @@ async def _clone_and_deploy(
             await preview_list_manager.force_broadcast()
 
         # Ensure local preview directory exists (for compose generation)
-        preview_path = PreviewStateManager.get_preview_path(project_name, preview_name)
+        preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
         preview_path.mkdir(parents=True, exist_ok=True)
+
+        # Get org's GitLab token for cloning
+        try:
+            gitlab_url, gitlab_token = await _get_org_gitlab_token(org_id)
+        except Exception as e:
+            logger.error(f"Failed to get GitLab token for org {org_slug}: {e}")
+            from app.database import finish_deployment
+            if early_deployment_id:
+                await finish_deployment(
+                    early_deployment_id, "failed",
+                    f"Failed to get GitLab token: {e}"
+                )
+            await PreviewStateManager.save_state(
+                project_id, preview_name,
+                status="failed",
+                last_deployment_error="Failed to get GitLab token",
+            )
+            await preview_list_manager.force_broadcast()
+            return
 
         # Clone locally (shallow, for preview.yml parsing only)
         ok = await _local_shallow_clone(
-            project_path, project_name, preview_name,
+            gitlab_url, gitlab_token, project_path,
+            org_slug, project_slug, preview_name,
             source_branch, commit_sha, preview_path,
         )
         if not ok:
@@ -88,7 +116,7 @@ async def _clone_and_deploy(
                     "Clone failed (git clone error, check logs)"
                 )
             await PreviewStateManager.save_state(
-                project_name, preview_name,
+                project_id, preview_name,
                 status="failed",
                 last_deployment_error="Clone failed",
             )
@@ -96,7 +124,10 @@ async def _clone_and_deploy(
             return
 
         deployer = PreviewDeployer(
-            project_name=project_name,
+            org_slug=org_slug,
+            project_slug=project_slug,
+            project_id=project_id,
+            project_name=project_slug,
             preview_name=preview_name,
             branch=source_branch,
             commit_sha=commit_sha,
@@ -113,8 +144,11 @@ async def _clone_and_deploy(
 
 
 async def _local_shallow_clone(
-    project_path: str,
-    project_name: str,
+    gitlab_url: str,
+    gitlab_token: str,
+    project_path: str,  # gitlab path_with_namespace
+    org_slug: str,
+    project_slug: str,
     preview_name: str,
     source_branch: str,
     commit_sha: str,
@@ -126,9 +160,8 @@ async def _local_shallow_clone(
     from urllib.parse import urlparse
 
     try:
-        token = await _get_gitlab_token()
-        parsed = urlparse(settings.gitlab_url)
-        clone_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
+        parsed = urlparse(gitlab_url)
+        clone_url = f"https://oauth2:{gitlab_token}@{parsed.hostname}/{project_path}.git"
 
         dest.parent.mkdir(parents=True, exist_ok=True)
         tmpdir = tempfile.mkdtemp(dir=str(dest.parent), prefix=f".{preview_name}-tmp-")
@@ -174,19 +207,20 @@ async def _local_shallow_clone(
         return False
 
 
-async def _delete_preview(project_name: str, preview_name: str):
+async def _delete_preview(org_slug: str, project_slug: str, project_id: int, preview_name: str):
     """Delete a preview by delegating to the existing delete logic."""
     from app.routes.previews import delete_preview_internal
     try:
-        await delete_preview_internal(project_name, preview_name)
+        await delete_preview_internal(org_slug, project_slug, project_id, preview_name)
     except Exception as e:
-        logger.error(f"Failed to delete preview {project_name}/{preview_name}: {e}")
+        logger.error(f"Failed to delete preview {org_slug}/{project_slug}/{preview_name}: {e}")
 
 
-@router.post("/gitlab")
+@router.post("/{org_slug}/gitlab")
 async def gitlab_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
+    org_slug: str,
     x_gitlab_token: str = Header(None),
     x_gitlab_event: str = Header(None),
 ):
@@ -199,39 +233,69 @@ async def gitlab_webhook(
         logger.warning("Webhook received with invalid token")
         raise HTTPException(status_code=403, detail="Invalid webhook token")
 
+    # Resolve organization from URL path
+    org = await get_organization_by_slug(org_slug)
+    if not org:
+        logger.warning(f"Webhook for unknown organization: {org_slug}")
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    org_id = org["id"]
+
     payload = await request.json()
     object_kind = payload.get("object_kind")
 
-    project_id = payload.get("project", {}).get("id")
-    enabled_ids = await config_store.load_enabled_project_ids()
-    if project_id not in enabled_ids:
-        logger.warning(f"Webhook for non-enabled project {project_id}")
+    # Look up the project in our DB by GitLab project ID
+    gitlab_project_id = payload.get("project", {}).get("id")
+    project = await get_project_by_gitlab_id(org_id, gitlab_project_id)
+    if not project:
+        logger.warning(f"Webhook for non-enabled project {gitlab_project_id} in org {org_slug}")
         return {"status": "ignored", "reason": "project not enabled"}
 
+    project_id = project["id"]
+    project_slug = project["slug"]
+    project_path = project.get("gitlab_project_path", "")
+
     if object_kind == "push":
-        return await _handle_push_event(payload, background_tasks)
+        return await _handle_push_event(
+            payload, background_tasks,
+            org_id=org_id, org_slug=org_slug,
+            project_id=project_id, project_slug=project_slug,
+            project_path=project_path,
+        )
     elif object_kind == "merge_request":
-        return await _handle_mr_event(payload, background_tasks)
+        return await _handle_mr_event(
+            payload, background_tasks,
+            org_id=org_id, org_slug=org_slug,
+            project_id=project_id, project_slug=project_slug,
+            project_path=project_path,
+        )
     else:
         logger.debug(f"Ignoring webhook event: {object_kind}")
         return {"status": "ignored", "reason": f"unhandled event: {object_kind}"}
 
 
-async def _handle_push_event(payload: dict, background_tasks: BackgroundTasks):
+async def _handle_push_event(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    *,
+    org_id: int,
+    org_slug: str,
+    project_id: int,
+    project_slug: str,
+    project_path: str,
+):
     """Handle push events: auto-update branch previews."""
     ref = payload.get("ref", "")
     if not ref.startswith("refs/heads/"):
         return {"status": "ignored", "reason": "not a branch push"}
 
     branch = ref.removeprefix("refs/heads/")
-    project_path = payload.get("project", {}).get("path_with_namespace", "unknown")
-    project_name = project_path.split("/")[-1]
     commit_sha = payload.get("after", "")
 
     if commit_sha == "0" * 40:
         return {"status": "ignored", "reason": "branch deleted"}
 
-    existing = await get_preview_by_branch(project_name, branch)
+    existing = await get_preview_by_branch(project_id, branch)
     if not existing:
         return {"status": "ignored", "reason": "no branch preview exists"}
 
@@ -239,19 +303,27 @@ async def _handle_push_event(payload: dict, background_tasks: BackgroundTasks):
         return {"status": "ignored", "reason": "auto_update disabled"}
 
     preview_name = existing["preview_name"]
-    logger.info(f"Push event: updating {project_name}/{preview_name}")
+    logger.info(f"Push event: updating {project_slug}/{preview_name}")
     background_tasks.add_task(
-        _clone_and_deploy, project_path, project_name, preview_name,
-        branch, commit_sha, "webhook-push"
+        _clone_and_deploy,
+        org_id, org_slug, project_id, project_slug, project_path,
+        preview_name, branch, commit_sha, "webhook-push",
     )
     return {"status": "ok", "action": "push_update", "project": project_path, "preview_name": preview_name}
 
 
-async def _handle_mr_event(payload: dict, background_tasks: BackgroundTasks):
+async def _handle_mr_event(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    *,
+    org_id: int,
+    org_slug: str,
+    project_id: int,
+    project_slug: str,
+    project_path: str,
+):
     """Handle merge request events."""
     attrs = payload.get("object_attributes", {})
-    project_path = payload.get("project", {}).get("path_with_namespace", "unknown")
-    project_name = project_path.split("/")[-1]
     mr_iid = attrs.get("iid")
     action = attrs.get("action")
     source_branch = attrs.get("source_branch")
@@ -261,16 +333,17 @@ async def _handle_mr_event(payload: dict, background_tasks: BackgroundTasks):
     state = attrs.get("state")
 
     if action in ("close", "merge") or state in ("closed", "merged"):
-        background_tasks.add_task(_delete_preview, project_name, preview_name)
+        background_tasks.add_task(_delete_preview, org_slug, project_slug, project_id, preview_name)
     elif action in ("open", "reopen", "update"):
         if action == "update":
-            existing = await get_preview(project_name, preview_name)
+            existing = await get_preview(project_id, preview_name)
             if existing and not existing.get("auto_update", 1):
                 return {"status": "ignored", "reason": "auto_update disabled"}
 
         background_tasks.add_task(
-            _clone_and_deploy, project_path, project_name, preview_name,
-            source_branch, commit_sha, "webhook", mr_iid
+            _clone_and_deploy,
+            org_id, org_slug, project_id, project_slug, project_path,
+            preview_name, source_branch, commit_sha, "webhook", mr_iid,
         )
     else:
         return {"status": "ignored", "reason": f"unhandled action: {action}"}

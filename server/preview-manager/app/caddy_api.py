@@ -215,14 +215,13 @@ class CaddyRouteManager:
 
     async def add_preview_routes(
         self,
-        preview_name: str,
-        project_name: str,
+        url_hash: str,
         upstream_ip: str,
         alias_domains: list[str] | None = None,
         expose_services: dict[str, int] | None = None,
     ) -> None:
         """Add all routes for a preview: main domain + aliases + exposed services."""
-        domain = f"{preview_name}-{project_name}.mr.preview-mr.com"
+        domain = f"{url_hash}.mr.preview-mr.com"
         self._preview_upstreams[domain] = (upstream_ip, 80)
 
         if alias_domains:
@@ -238,13 +237,12 @@ class CaddyRouteManager:
 
     async def remove_preview_routes(
         self,
-        preview_name: str,
-        project_name: str,
+        url_hash: str,
         alias_domains: list[str] | None = None,
         expose_services: dict[str, int] | None = None,
     ) -> None:
         """Remove all routes for a preview."""
-        domain = f"{preview_name}-{project_name}.mr.preview-mr.com"
+        domain = f"{url_hash}.mr.preview-mr.com"
         self._preview_upstreams.pop(domain, None)
 
         if alias_domains:

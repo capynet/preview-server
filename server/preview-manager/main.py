@@ -43,12 +43,16 @@ async def lifespan(app: FastAPI):
     # The Caddyfile wildcard uses `abort` so all routing is via admin API,
     # giving us full control over route ordering (specific before wildcard).
     from app.caddy_api import caddy_manager
-    from app.database import get_all_active_previews
+    from app.database import get_previews_with_active_vms, compute_url_hash
     try:
-        active = await get_all_active_previews()
+        active = await get_previews_with_active_vms()
         for p in active:
             if p.get("vm_ip"):
-                domain = f"{p['preview_name']}-{p['project']}.mr.preview-mr.com"
+                org_slug = p.get("org_slug", "")
+                project_slug = p.get("project_slug", "")
+                preview_name = p["preview_name"]
+                url_hash = p.get("url_hash") or compute_url_hash(org_slug, project_slug, preview_name)
+                domain = f"{url_hash}.mr.preview-mr.com"
                 caddy_manager._preview_upstreams[domain] = (p["vm_ip"], 80)
         # Single apply to patch all routes at once
         await caddy_manager._apply_routes()

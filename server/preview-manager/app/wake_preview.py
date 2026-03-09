@@ -13,7 +13,7 @@ from app.auth.dependencies import SESSION_COOKIE
 from app.auth import database as auth_db
 from app.database import (
     get_preview_by_domain, update_last_accessed, has_running_deployment,
-    update_preview_vm,
+    update_preview_vm, compute_url_hash,
 )
 
 logger = logging.getLogger(__name__)
@@ -190,7 +190,7 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
             if not session:
                 return self._redirect_to_login(host, request)
 
-        # Look up preview in DB
+        # Look up preview in DB (hash-based domain resolution)
         preview = await get_preview_by_domain(host)
         if not preview:
             return HTMLResponse(
@@ -198,12 +198,12 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
                 status_code=404,
             )
 
-        project = preview["project"]
+        project_slug = preview.get("project_slug", "")
         preview_name = preview["preview_name"]
 
         # Update last_accessed_at (fire and forget, only for authenticated requests)
         try:
-            await update_last_accessed(project, preview_name)
+            await update_last_accessed(preview["id"])
         except Exception:
             pass
 
@@ -215,7 +215,7 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
                     return HTMLResponse(
                         content=BUILDING_PAGE_HTML.format(
                             preview_name=preview_name,
-                            project=project,
+                            project=project_slug,
                         ),
                         status_code=200,
                     )
@@ -307,7 +307,7 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
     @staticmethod
     async def _wake_cloud_preview(
-        wake_key: str, project: str, preview_name: str, preview: dict
+        wake_key: str, org_slug: str, project_slug: str, preview_name: str, preview: dict
     ):
         """Power on a shutdown VM and start containers."""
         from app.cloud import cloud_manager
@@ -315,7 +315,7 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         from app.deployment import VM_PREVIEW_DIR
 
         try:
-            logger.info(f"Waking up cloud preview {project}/{preview_name}")
+            logger.info(f"Waking up cloud preview {org_slug}/{project_slug}/{preview_name}")
             vm_id = preview["vm_id"]
 
             # Power on the VM
@@ -330,23 +330,32 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
             stdout, stderr = await proc.communicate()
 
             if proc.returncode == 0:
-                await update_preview_vm(project, preview_name, vm_id, vm_ip)
+                await update_preview_vm(preview["id"], vm_id, vm_ip)
+
+                # Activate Redis cache backend (flag file is lost on VM reboot)
+                php_container = f"{preview_name}-{project_slug}-php"
+                touch_proc = await executor.run_shell(
+                    f"docker exec {php_container} touch /tmp/.preview_redis_ready 2>/dev/null"
+                )
+                await touch_proc.communicate()
+
                 # Re-register Caddy direct route
                 from app.caddy_api import caddy_manager
-                domain = f"{preview_name}-{project}.mr.preview-mr.com"
+                url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+                domain = f"{url_hash}.mr.preview-mr.com"
                 try:
                     await caddy_manager.add_preview_route(domain, vm_ip)
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route after wake: {e}")
-                logger.info(f"Woke up {project}/{preview_name} (VM {vm_id}, IP {vm_ip})")
+                logger.info(f"Woke up {org_slug}/{project_slug}/{preview_name} (VM {vm_id}, IP {vm_ip})")
             else:
                 logger.error(
-                    f"Failed to start containers for {project}/{preview_name}: "
+                    f"Failed to start containers for {project_slug}/{preview_name}: "
                     f"{stderr.decode()}"
                 )
 
         except Exception as e:
-            logger.error(f"Error waking cloud preview {project}/{preview_name}: {e}")
+            logger.error(f"Error waking cloud preview {project_slug}/{preview_name}: {e}")
         finally:
             _waking_up.discard(wake_key)
 

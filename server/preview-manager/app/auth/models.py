@@ -1,30 +1,31 @@
-"""Auth Pydantic models"""
+"""Auth Pydantic models — multi-tenant with org-scoped roles."""
 
-from datetime import datetime
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel
 
 
-class Role(str, Enum):
+class OrgRole(str, Enum):
+    owner = "owner"
     admin = "admin"
-    manager = "manager"
+    member = "member"
     viewer = "viewer"
 
 
-# Hierarchy: admin > manager > viewer
-ROLE_HIERARCHY = {
-    Role.admin: 3,
-    Role.manager: 2,
-    Role.viewer: 1,
+# Hierarchy: owner > admin > member > viewer
+ORG_ROLE_HIERARCHY = {
+    OrgRole.owner: 4,
+    OrgRole.admin: 3,
+    OrgRole.member: 2,
+    OrgRole.viewer: 1,
 }
 
 
-def has_min_role(user_role: Optional[Role], min_role: Role) -> bool:
+def has_min_role(user_role: Optional[OrgRole], min_role: OrgRole) -> bool:
     if user_role is None:
         return False
-    return ROLE_HIERARCHY.get(user_role, 0) >= ROLE_HIERARCHY.get(min_role, 0)
+    return ORG_ROLE_HIERARCHY.get(user_role, 0) >= ORG_ROLE_HIERARCHY.get(min_role, 0)
 
 
 class User(BaseModel):
@@ -32,12 +33,36 @@ class User(BaseModel):
     email: str
     name: str
     avatar_url: Optional[str] = None
+    is_superadmin: bool = False
     created_at: str
     updated_at: str
 
 
-class UserWithRole(User):
-    role: Optional[Role] = None
+class Organization(BaseModel):
+    id: int
+    slug: str
+    name: str
+    avatar_url: Optional[str] = None
+    gitlab_url: Optional[str] = None
+    auto_stop_enabled: bool = True
+    auto_stop_minutes: int = 15
+    auto_erase_enabled: bool = False
+    auto_erase_days: int = 30
+    created_at: str
+    updated_at: str
+
+
+class OrgMembership(BaseModel):
+    organization_id: int
+    org_slug: str
+    org_name: str
+    role: OrgRole
+
+
+class UserWithContext(User):
+    """User with optional org context (resolved per-request)."""
+    org: Optional[Organization] = None
+    org_role: Optional[OrgRole] = None
 
 
 class OAuthAccount(BaseModel):
@@ -59,6 +84,7 @@ class Session(BaseModel):
 class APIToken(BaseModel):
     id: int
     user_id: int
+    organization_id: int
     name: str
     token_prefix: str
     created_at: str
@@ -68,26 +94,13 @@ class APIToken(BaseModel):
 class CLIAuthRequest(BaseModel):
     code: str
     status: str  # pending, approved, expired
+    organization_id: Optional[int] = None
     user_id: Optional[int] = None
     token: Optional[str] = None
     created_at: str
 
 
-class CreateTokenRequest(BaseModel):
-    name: str
-
-
-class CLIRequestBody(BaseModel):
-    code: str
-
-
-class CLIApproveBody(BaseModel):
-    code: str
-
-
-class UpdateRoleBody(BaseModel):
-    role: Role
-
+# ---- Request/Response bodies ----
 
 class SetupBody(BaseModel):
     email: str
@@ -100,9 +113,23 @@ class LoginBody(BaseModel):
     password: str
 
 
+class CreateOrgBody(BaseModel):
+    name: str
+    slug: str
+
+
+class UpdateOrgBody(BaseModel):
+    name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    auto_stop_enabled: Optional[bool] = None
+    auto_stop_minutes: Optional[int] = None
+    auto_erase_enabled: Optional[bool] = None
+    auto_erase_days: Optional[int] = None
+
+
 class InviteBody(BaseModel):
     email: str
-    role: Role
+    role: OrgRole
     project_slug: Optional[str] = None
 
 
@@ -112,5 +139,49 @@ class AcceptInviteBody(BaseModel):
     password: str
 
 
+class AddOrgMemberBody(BaseModel):
+    user_id: int
+    role: OrgRole = OrgRole.member
+
+
+class UpdateOrgMemberRoleBody(BaseModel):
+    role: OrgRole
+
+
+class AddEmailDomainBody(BaseModel):
+    domain: str
+    default_role: OrgRole = OrgRole.member
+
+
+class CreateTokenRequest(BaseModel):
+    name: str
+
+
+class CLIRequestBody(BaseModel):
+    code: str
+    org_slug: Optional[str] = None
+
+
+class CLIApproveBody(BaseModel):
+    code: str
+    org_slug: str
+
+
 class AddProjectMemberBody(BaseModel):
     user_id: int
+
+
+class GitLabConnectRequest(BaseModel):
+    gitlab_url: str
+    token: str
+
+
+class EnableProjectRequest(BaseModel):
+    path_with_namespace: str = ""
+    name: str = ""
+    web_url: str = ""
+    default_branch: str = "main"
+
+
+class CreateBranchPreviewRequest(BaseModel):
+    branch: str

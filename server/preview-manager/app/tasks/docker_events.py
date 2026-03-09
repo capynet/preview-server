@@ -1,7 +1,6 @@
 """Background task: monitor cloud VM status for real-time updates."""
 
 import asyncio
-import json
 import logging
 
 from app.database import get_previews_with_active_vms, update_preview_vm
@@ -37,7 +36,7 @@ async def _check_vm_status():
 
     for p in previews:
         vm_id = p["vm_id"]
-        project = p["project"]
+        project_slug = p.get("project_slug", "")
         preview_name = p["preview_name"]
 
         try:
@@ -45,10 +44,10 @@ async def _check_vm_status():
             if server is None:
                 # VM disappeared — clean up DB
                 logger.warning(
-                    f"VM {vm_id} for {project}/{preview_name} not found, "
+                    f"VM {vm_id} for {project_slug}/{preview_name} not found, "
                     "cleaning up DB entry"
                 )
-                await update_preview_vm(project, preview_name, None, None)
+                await update_preview_vm(p["id"], None, None)
 
                 # Broadcast update
                 from app.websockets import preview_list_manager

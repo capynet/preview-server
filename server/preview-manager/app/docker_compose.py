@@ -137,10 +137,12 @@ def generate_docker_compose(
     commit_sha: str = "",
     mr_iid: int | None = None,
     extra_env: dict[str, str] | None = None,
+    url_hash: str = "",
+    org_slug: str = "",
 ) -> dict:
     """Generate a docker-compose.yml dict for a preview environment."""
     prefix = _container_prefix(project_name, preview_name)
-    domain = f"{prefix}.mr.preview-mr.com"
+    domain = f"{url_hash}.mr.preview-mr.com" if url_hash else f"{prefix}.mr.preview-mr.com"
     url = f"https://{domain}"
 
     # Determine DB image from unified "database" property (e.g. "mysql:8.0", "mariadb:10.6")

@@ -35,6 +35,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- NEcesito tener tier free y paid one. el free permite crear una sola preview por poryecto sin limites en nada mas. (ampliar mas la idea)  
 - Drush aliases para los preview para poder lanzar comando "preview drush"
 - Extraer toda la configuracion sensible (claves token etc) a lugar seguro y configurable para poder actualizarlos en el futuro sin tanto ptoblema. 
 - Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace cargo el desarrolladdor?
@@ -149,3 +150,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Cuando dse crea el cache de la db se hace a la hora de crear el primer preview. Me pregunto si es posible sacar ese caso a un proceso en backgrround para no bloquear la generacion del preview. Y si no es posible por lo menos dar un poco mas de info "creando cache de esta db apras er usadaen las siguientes preview." ademas si se puede informar el progreso mejor que mejor.
 - El backend ya tiene los endpoints (/api/config/cloud-resources y /api/config/cloud-costs), pero falta la UI en el frontend para mostrarlos
 - viste que tengo estadisticas de cpu ram y disco en el server principal? podriamos suar ese widget dentro de los detalles de cada preview para ver los recursos usados en cada uno?  
+- cada tenent u organizacion podria configurar sus propios dominios? la url de preview seguiria siendo funcionar. lo del dominio custom seria añadirlo encima. 

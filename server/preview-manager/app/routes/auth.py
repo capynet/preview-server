@@ -1,40 +1,34 @@
-"""Auth routes: OAuth login, sessions, tokens, CLI device flow, user management"""
+"""Auth routes: setup, login, OAuth, sessions, CLI device flow."""
 
 import logging
-import re
 import secrets
-import time
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
 
 from config.settings import settings
 from app.auth import database as db
-from app.auth.dependencies import SESSION_COOKIE, get_current_user, require_role
-from app.database import update_last_accessed
+from app.auth.dependencies import SESSION_COOKIE, get_current_user
+from app.database import (
+    add_org_member, get_invitation_by_token, get_preview_by_domain,
+    list_user_organizations, mark_invitation_accepted, match_email_domain,
+    update_last_accessed,
+)
 from app.auth.models import (
     AcceptInviteBody,
-    AddProjectMemberBody,
     CLIApproveBody,
     CLIRequestBody,
-    CreateTokenRequest,
-    InviteBody,
     LoginBody,
-    Role,
+    OrgRole,
     SetupBody,
-
-    UpdateRoleBody,
-    UserWithRole,
-    has_min_role,
+    UserWithContext,
 )
-from app.auth.email import send_invitation_email
 from app.auth.oauth import get_provider
-from app import config_store
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
 
 def _set_session_cookie(response: Response, session_id: str):
     response.set_cookie(
@@ -56,23 +50,23 @@ def _delete_session_cookie(response: Response):
 
 @router.get("/setup/status")
 async def setup_status():
-    """Check if initial setup has been completed (i.e. at least one user exists)."""
     done = await db.is_setup_complete()
     return {"setup_complete": done}
 
 
 @router.post("/setup")
 async def initial_setup(body: SetupBody):
-    """Create the first admin user with email+password. Only works when no users exist."""
+    """Create the first superadmin user. Only works when no users exist."""
     if await db.is_setup_complete():
         raise HTTPException(status_code=400, detail="Setup already completed")
 
     if len(body.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    user = await db.create_user_with_password(body.email, body.name or "Admin", body.password)
-    await db.set_role(user["id"], Role.admin.value)
-    logger.info(f"Initial setup: admin user {body.email} created")
+    user = await db.create_user_with_password(
+        body.email, body.name or "Admin", body.password, is_superadmin=True
+    )
+    logger.info(f"Initial setup: superadmin {body.email} created")
 
     session_id = await db.create_session(user["id"])
 
@@ -86,14 +80,9 @@ async def initial_setup(body: SetupBody):
 
 @router.post("/login")
 async def password_login(body: LoginBody):
-    """Login with email+password."""
     user = await db.get_user_by_email_and_password(body.email, body.password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    role = await db.get_role(user["id"])
-    if role is None:
-        raise HTTPException(status_code=403, detail="No role assigned")
 
     session_id = await db.create_session(user["id"])
 
@@ -109,7 +98,6 @@ async def password_login(body: LoginBody):
 
 @router.get("/login/{provider}")
 async def oauth_login(provider: str):
-    """Redirect to OAuth provider."""
     if provider == "gitlab":
         return RedirectResponse("/api/gitlab/auth/login")
     try:
@@ -123,7 +111,6 @@ async def oauth_login(provider: str):
 
 @router.get("/callback/{provider}")
 async def oauth_callback(provider: str, code: str, state: str = ""):
-    """OAuth callback: upsert user, create session, redirect to frontend."""
     if provider == "gitlab":
         return RedirectResponse(f"/api/gitlab/auth/callback?code={code}&state={state}")
     try:
@@ -138,71 +125,69 @@ async def oauth_callback(provider: str, code: str, state: str = ""):
         logger.error(f"OAuth error for {provider}: {e}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"OAuth error: {e}")
 
+    user, is_new = await _resolve_oauth_user(info)
+    if not user:
+        return RedirectResponse(f"{settings.frontend_url}/auth/login?error=not_invited")
+
+    session_id = await db.create_session(user["id"])
+    response = RedirectResponse(settings.frontend_url)
+    _set_session_cookie(response, session_id)
+    return response
+
+
+async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
+    """Resolve or create a user from OAuth info. Returns (user, is_new)."""
     # Lookup by provider account first
     oauth_account = await db.get_oauth_account(info.provider, info.provider_user_id)
 
     if oauth_account:
         user = await db.get_user_by_id(oauth_account["user_id"])
-    else:
-        # Try to link by email
-        user_dict = await db.get_user_by_email(info.email)
-        if user_dict:
-            user = user_dict
-            await db.create_oauth_account(user["id"], info.provider, info.provider_user_id, info.provider_username)
-            logger.info(f"Linked {info.provider} account to existing user {info.email}")
-        else:
-            # Check if there's a pending invitation for this email
-            invitation = await db.get_invitation_by_email(info.email)
-            count = await db.user_count()
+        return user, False
 
-            # Only allow signup if first user, has invitation, or matches allowed domain
-            domain_role = await config_store.match_allowed_domain(info.email) if count > 0 else None
-            if count > 0 and not invitation and not domain_role:
-                logger.warning(f"OAuth signup rejected for {info.email}: no invitation")
-                return RedirectResponse(f"{settings.frontend_url}/auth/login?error=not_invited")
+    # Try to link by email
+    user_dict = await db.get_user_by_email(info.email)
+    if user_dict:
+        await db.create_oauth_account(user_dict["id"], info.provider, info.provider_user_id, info.provider_username)
+        return user_dict, False
 
-            # Create new user
-            user = await db.create_user(info.email, info.name, info.avatar_url)
-            await db.create_oauth_account(user["id"], info.provider, info.provider_user_id, info.provider_username)
-            logger.info(f"Created new user {info.email} via {info.provider}")
+    # New user
+    count = await db.user_count()
 
-            if count == 0:
-                await db.set_role(user["id"], Role.admin.value)
-                logger.info(f"First user {info.email} assigned admin role")
-            elif invitation:
-                await db.set_role(user["id"], invitation["role"])
-                await db.mark_invitation_accepted(invitation["id"])
-                if invitation.get("project_slug"):
-                    await db.add_project_member(user["id"], invitation["project_slug"], invitation["invited_by"])
-                logger.info(f"User {info.email} accepted invitation with role {invitation['role']}")
-            else:
-                await db.set_role(user["id"], domain_role)
-                logger.info(f"User {info.email} auto-registered with role {domain_role} via allowed domain")
+    # Check invitation
+    invitation = await get_invitation_by_token(None)  # Can't check by token here
+    from app.database import get_invitation_by_email
+    invitation = await get_invitation_by_email(info.email)
 
-    if not user:
-        raise HTTPException(status_code=500, detail="Failed to resolve user")
+    # Check allowed email domain
+    domain_match = await match_email_domain(info.email) if count > 0 else None
 
-    # Check user has a role
-    role = await db.get_role(user["id"])
-    if role is None:
-        return RedirectResponse(f"{settings.frontend_url}/auth/login?error=no_role")
+    if count > 0 and not invitation and not domain_match:
+        logger.warning(f"OAuth signup rejected for {info.email}: no invitation or domain match")
+        return None, False
 
-    session_id = await db.create_session(user["id"])
+    # Create user
+    is_superadmin = count == 0
+    user = await db.create_user(info.email, info.name, info.avatar_url, is_superadmin=is_superadmin)
+    await db.create_oauth_account(user["id"], info.provider, info.provider_user_id, info.provider_username)
 
-    response = RedirectResponse(settings.frontend_url)
-    _set_session_cookie(response, session_id)
-    return response
+    if is_superadmin:
+        logger.info(f"First user {info.email} assigned superadmin")
+    elif invitation:
+        await mark_invitation_accepted(invitation["id"])
+        await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
+        logger.info(f"User {info.email} accepted invitation for org {invitation['organization_id']} with role {invitation['role']}")
+    elif domain_match:
+        await add_org_member(user["id"], domain_match["organization_id"], domain_match["default_role"])
+        logger.info(f"User {info.email} auto-joined org {domain_match['organization_id']} via domain match")
+
+    return user, True
 
 
 # ---- Forward Auth for Preview URLs ----
 
 @router.get("/verify-preview")
 async def verify_preview(request: Request):
-    """Caddy forward_auth: validate session for preview URLs.
-
-    Returns 200 if authenticated, 302 redirect to login if not.
-    Also updates last_accessed_at for the preview.
-    """
+    """Caddy forward_auth: validate session for preview URLs."""
     session_id = request.cookies.get(SESSION_COOKIE)
     if not session_id:
         return _redirect_to_login(request)
@@ -212,47 +197,18 @@ async def verify_preview(request: Request):
         return _redirect_to_login(request)
 
     # Update last_accessed_at for the preview
-    # The subdomain format is {preview_name}-{project}.mr.preview-mr.com
-    # For MR previews: mr-123-drupal-test.mr.preview-mr.com
-    # For branch previews: branch-develop-drupal-test.mr.preview-mr.com
     host = request.headers.get("x-forwarded-host", "")
-    # Strip domain alias prefix if present (e.g. "at--branch-foo-soudal" → "branch-foo-soudal")
-    if "--" in host.split(".")[0]:
-        host = host.split("--", 1)[1]
-    match = re.match(r"(.+?)\.mr\.preview-mr\.com", host)
-    if match:
-        subdomain = match.group(1)  # e.g. "mr-123-drupal-test" or "branch-develop-drupal-test"
-        # Try MR pattern first (unambiguous)
-        mr_match = re.match(r"(mr-\d+)-(.+)", subdomain)
-        if mr_match:
-            preview_name = mr_match.group(1)
-            project = mr_match.group(2)
-        else:
-            # For branch previews, find the split point by checking project dirs
-            preview_name = None
-            project = None
-            parts = subdomain.split("-")
-            # Try splitting from the end — project name is the last segment(s)
-            for i in range(len(parts) - 1, 0, -1):
-                candidate_project = "-".join(parts[i:])
-                candidate_preview = "-".join(parts[:i])
-                preview_dir = Path(settings.previews_base_path) / candidate_project / candidate_preview
-                if preview_dir.exists():
-                    preview_name = candidate_preview
-                    project = candidate_project
-                    break
-
-        if preview_name and project:
-            try:
-                await update_last_accessed(project, preview_name)
-            except Exception as e:
-                logger.warning(f"Failed to update last_accessed_at for {project}/{preview_name}: {e}")
+    preview = await get_preview_by_domain(host)
+    if preview:
+        try:
+            await update_last_accessed(preview["id"])
+        except Exception as e:
+            logger.warning(f"Failed to update last_accessed_at: {e}")
 
     return Response(status_code=200)
 
 
 def _redirect_to_login(request: Request) -> RedirectResponse:
-    """Build a redirect to the login page with the original URL as redirect_to."""
     original_host = request.headers.get("x-forwarded-host", "")
     original_proto = request.headers.get("x-forwarded-proto", "https")
     original_uri = request.headers.get("x-forwarded-uri", "/")
@@ -264,44 +220,31 @@ def _redirect_to_login(request: Request) -> RedirectResponse:
 # ---- Session ----
 
 @router.post("/logout")
-async def logout(response: Response, user: UserWithRole = Depends(get_current_user)):
-    # We need the session id to delete it. For simplicity, just clear cookie.
+async def logout(response: Response, user: UserWithContext = Depends(get_current_user)):
     _delete_session_cookie(response)
     return {"success": True}
 
 
 @router.get("/me")
-async def get_me(user: UserWithRole = Depends(get_current_user)):
-    return user
-
-
-# ---- API Tokens ----
-
-@router.get("/tokens")
-async def list_tokens(user: UserWithRole = Depends(require_role(Role.manager))):
-    tokens = await db.list_api_tokens(user.id)
-    return {"tokens": tokens}
-
-
-@router.post("/tokens")
-async def create_token(body: CreateTokenRequest, user: UserWithRole = Depends(require_role(Role.manager))):
-    token_id, raw_token = await db.create_api_token(user.id, body.name)
-    return {"id": token_id, "token": raw_token, "name": body.name}
-
-
-@router.delete("/tokens/{token_id}")
-async def revoke_token(token_id: int, user: UserWithRole = Depends(require_role(Role.manager))):
-    deleted = await db.delete_api_token(token_id, user.id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Token not found")
-    return {"success": True}
+async def get_me(user: UserWithContext = Depends(get_current_user)):
+    orgs = await list_user_organizations(user.id)
+    return {
+        "id": user.id,
+        "email": user.email,
+        "name": user.name,
+        "avatar_url": user.avatar_url,
+        "is_superadmin": user.is_superadmin,
+        "organizations": [
+            {"id": o["id"], "slug": o["slug"], "name": o["name"], "role": o["role"]}
+            for o in orgs
+        ],
+    }
 
 
 # ---- CLI Device Flow ----
 
 @router.post("/cli/request")
 async def cli_request(body: CLIRequestBody):
-    """CLI posts a code to create a pending auth request."""
     existing = await db.get_cli_auth_request(body.code)
     if existing:
         raise HTTPException(status_code=409, detail="Code already exists")
@@ -310,20 +253,24 @@ async def cli_request(body: CLIRequestBody):
 
 
 @router.post("/cli/approve")
-async def cli_approve(body: CLIApproveBody, user: UserWithRole = Depends(get_current_user)):
-    """Browser approves a CLI auth request, generating a token."""
+async def cli_approve(body: CLIApproveBody, user: UserWithContext = Depends(get_current_user)):
     req = await db.get_cli_auth_request(body.code)
     if not req or req["status"] != "pending":
         raise HTTPException(status_code=404, detail="Request not found or already processed")
 
-    token_id, raw_token = await db.create_api_token(user.id, f"CLI ({body.code[:8]})")
+    # Find the org
+    from app.database import get_organization_by_slug
+    org = await get_organization_by_slug(body.org_slug)
+    if not org:
+        raise HTTPException(status_code=404, detail=f"Organization '{body.org_slug}' not found")
+
+    token_id, raw_token = await db.create_api_token(user.id, org["id"], f"CLI ({body.code[:8]})")
     await db.approve_cli_auth_request(body.code, user.id, raw_token)
     return {"success": True}
 
 
 @router.get("/cli/poll/{code}")
 async def cli_poll(code: str):
-    """CLI polls for token."""
     req = await db.get_cli_auth_request(code)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -334,106 +281,25 @@ async def cli_poll(code: str):
     return {"status": req["status"]}
 
 
-# ---- User Management ----
-
-@router.get("/users")
-async def list_users(user: UserWithRole = Depends(require_role(Role.manager))):
-    users = await db.list_users()
-    return {"users": users}
-
-
-@router.put("/users/{user_id}/role")
-async def update_user_role(
-    user_id: int,
-    body: UpdateRoleBody,
-    user: UserWithRole = Depends(require_role(Role.admin)),
-):
-    target = await db.get_user_by_id(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    await db.set_role(user_id, body.role.value)
-    return {"success": True}
-
-
-@router.delete("/users/{user_id}")
-async def remove_user(
-    user_id: int,
-    user: UserWithRole = Depends(require_role(Role.admin)),
-):
-    if user_id == user.id:
-        raise HTTPException(status_code=400, detail="Cannot delete yourself")
-    target = await db.get_user_by_id(user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    # Managers can't delete admins
-    target_role = await db.get_role(user_id)
-    if target_role == Role.admin.value and not has_min_role(user.role, Role.admin):
-        raise HTTPException(status_code=403, detail="Cannot delete an admin")
-    await db.delete_user(user_id)
-    return {"success": True}
-
-
-# ---- Invitations ----
-
-@router.post("/invitations")
-async def create_invitation(
-    body: InviteBody,
-    user: UserWithRole = Depends(require_role(Role.manager)),
-):
-    """Create an invitation and send email."""
-    existing_user = await db.get_user_by_email(body.email)
-    if existing_user:
-        raise HTTPException(status_code=400, detail="A user with this email already exists")
-
-    existing_inv = await db.get_invitation_by_email(body.email)
-    if existing_inv:
-        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
-
-    invitation = await db.create_invitation(body.email, body.role.value, user.id, body.project_slug)
-
-    try:
-        send_invitation_email(body.email, invitation["token"], body.role.value, user.name)
-    except Exception:
-        pass  # logged in email module, don't fail the endpoint
-
-    return {
-        "id": invitation["id"],
-        "email": invitation["email"],
-        "role": invitation["role"],
-        "project_slug": invitation.get("project_slug"),
-        "created_at": invitation["created_at"],
-        "expires_at": invitation["expires_at"],
-    }
-
-
-@router.get("/invitations")
-async def list_invitations(user: UserWithRole = Depends(require_role(Role.admin))):
-    invitations = await db.list_invitations()
-    return {"invitations": invitations}
-
-
-@router.delete("/invitations/{invitation_id}")
-async def cancel_invitation(
-    invitation_id: int,
-    user: UserWithRole = Depends(require_role(Role.admin)),
-):
-    await db.delete_invitation(invitation_id)
-    return {"success": True}
-
+# ---- Invitation Accept (public) ----
 
 @router.get("/invitations/validate")
 async def validate_invitation(token: str):
-    """Public: validate an invitation token."""
-    invitation = await db.get_invitation_by_token(token)
+    invitation = await get_invitation_by_token(token)
     if not invitation:
         raise HTTPException(status_code=404, detail="Invalid or expired invitation")
-    return {"email": invitation["email"], "role": invitation["role"]}
+    from app.database import get_organization_by_id
+    org = await get_organization_by_id(invitation["organization_id"])
+    return {
+        "email": invitation["email"],
+        "role": invitation["role"],
+        "organization": {"slug": org["slug"], "name": org["name"]} if org else None,
+    }
 
 
 @router.post("/invitations/accept")
 async def accept_invitation(body: AcceptInviteBody):
-    """Public: accept an invitation with password."""
-    invitation = await db.get_invitation_by_token(body.token)
+    invitation = await get_invitation_by_token(body.token)
     if not invitation:
         raise HTTPException(status_code=404, detail="Invalid or expired invitation")
 
@@ -445,61 +311,15 @@ async def accept_invitation(body: AcceptInviteBody):
         raise HTTPException(status_code=400, detail="A user with this email already exists")
 
     user = await db.create_user_with_password(invitation["email"], body.name, body.password)
-    await db.set_role(user["id"], invitation["role"])
-    await db.mark_invitation_accepted(invitation["id"])
+    await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
+    await mark_invitation_accepted(invitation["id"])
 
     # Auto-add to project if invitation was for a specific project
-    if invitation.get("project_slug"):
-        await db.add_project_member(user["id"], invitation["project_slug"], invitation["invited_by"])
+    if invitation.get("project_id"):
+        from app.database import add_project_member
+        await add_project_member(user["id"], invitation["project_id"], invitation["invited_by"])
 
     session_id = await db.create_session(user["id"])
-
-    response = Response(
-        content='{"success": true}',
-        media_type="application/json",
-    )
+    response = Response(content='{"success": true}', media_type="application/json")
     _set_session_cookie(response, session_id)
     return response
-
-
-# ---- Project Members ----
-
-@router.get("/projects/{project_slug}/members")
-async def list_project_members(
-    project_slug: str,
-    user: UserWithRole = Depends(require_role(Role.manager)),
-):
-    members = await db.list_project_members(project_slug)
-    invitations = await db.list_invitations(project_slug=project_slug)
-    return {"members": members, "invitations": invitations}
-
-
-@router.post("/projects/{project_slug}/members")
-async def add_project_member(
-    project_slug: str,
-    body: AddProjectMemberBody,
-    user: UserWithRole = Depends(require_role(Role.manager)),
-):
-    target = await db.get_user_by_id(body.user_id)
-    if not target:
-        raise HTTPException(status_code=404, detail="User not found")
-    await db.add_project_member(body.user_id, project_slug, user.id)
-    return {"success": True}
-
-
-@router.delete("/projects/{project_slug}/members/{user_id}")
-async def remove_project_member(
-    project_slug: str,
-    user_id: int,
-    user: UserWithRole = Depends(require_role(Role.manager)),
-):
-    await db.remove_project_member(user_id, project_slug)
-    return {"success": True}
-
-
-@router.get("/my-projects")
-async def my_projects(user: UserWithRole = Depends(get_current_user)):
-    if has_min_role(user.role, Role.admin):
-        return {"all": True, "projects": []}
-    slugs = await db.get_user_project_slugs(user.id)
-    return {"all": False, "projects": slugs}

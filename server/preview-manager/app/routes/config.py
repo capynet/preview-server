@@ -1,86 +1,107 @@
-"""Configuration and health check endpoints"""
+"""Configuration and health check endpoints — multi-tenant org system."""
 
 import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from config.settings import settings
-from app.auth.dependencies import require_role
-from app.auth.models import Role, UserWithRole
-from app import config_store
-from app.database import get_project, upsert_project
+from app.auth.dependencies import require_org_role, get_org_context
+from app.auth.models import OrgRole, UserWithContext, CreateTokenRequest
+from app.database import (
+    get_organization_by_id,
+    update_organization,
+    get_project_by_slug,
+    upsert_project,
+    get_project,
+)
+from app.auth import database as auth_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.get("/api/config")
-async def get_app_config(user: UserWithRole = Depends(require_role(Role.admin))):
-    """Get application configuration"""
+# ---------------------------------------------------------------------------
+# Org-level auto-stop
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/settings/auto-stop")
+async def get_org_auto_stop(
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Get org-level auto-stop configuration."""
+    org = user.org
     return {
-        "gitlab_url": settings.gitlab_url,
+        "enabled": org.auto_stop_enabled,
+        "minutes": org.auto_stop_minutes,
     }
 
 
-@router.get("/api/config/gitlab-url")
-async def get_gitlab_url(user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Get GitLab URL (available to all authenticated users)."""
-    return {"gitlab_url": settings.gitlab_url}
-
-
-@router.post("/api/config")
-async def save_app_config(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
-    """Save application configuration"""
-    try:
-        body = await request.json()
-
-        gitlab_url = body.get("gitlab_url", settings.gitlab_url)
-
-        await config_store.set_config("gitlab_url", gitlab_url)
-
-        settings.gitlab_url = gitlab_url
-
-        logger.info("App configuration saved to database")
-
-        return {
-            "success": True,
-            "message": "Configuration saved successfully"
-        }
-    except Exception as e:
-        logger.error(f"Error saving config: {e}")
-        raise HTTPException(status_code=500, detail=f"Error saving configuration: {str(e)}")
-
-
-# ---- Auto-stop configuration ----
-
-@router.get("/api/config/auto-stop")
-async def get_auto_stop_config(user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Get global auto-stop configuration."""
-    enabled = await config_store.get_config("auto_stop_enabled")
-    minutes = await config_store.get_config("auto_stop_minutes")
-    return {
-        "enabled": enabled == "true",
-        "minutes": int(minutes) if minutes else 60,
-    }
-
-
-@router.put("/api/config/auto-stop")
-async def save_auto_stop_config(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
-    """Save global auto-stop configuration."""
+@router.put("/api/orgs/{org}/settings/auto-stop")
+async def save_org_auto_stop(
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Save org-level auto-stop configuration."""
     body = await request.json()
-    await config_store.set_config("auto_stop_enabled", "true" if body.get("enabled") else "false")
+    updates = {}
+    if "enabled" in body:
+        updates["auto_stop_enabled"] = 1 if body["enabled"] else 0
     if "minutes" in body:
-        await config_store.set_config("auto_stop_minutes", str(int(body["minutes"])))
+        updates["auto_stop_minutes"] = int(body["minutes"])
+    if updates:
+        await update_organization(user.org.id, **updates)
     return {"success": True}
 
 
-@router.get("/api/config/auto-stop/{project}")
-async def get_project_auto_stop_config(project: str, user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Get per-project auto-stop configuration."""
-    proj = await get_project(project)
-    if proj and proj["auto_stop_enabled"] is not None:
+# ---------------------------------------------------------------------------
+# Org-level auto-erase
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/settings/auto-erase")
+async def get_org_auto_erase(
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Get org-level auto-erase configuration."""
+    org = user.org
+    return {
+        "enabled": org.auto_erase_enabled,
+        "days": org.auto_erase_days,
+    }
+
+
+@router.put("/api/orgs/{org}/settings/auto-erase")
+async def save_org_auto_erase(
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Save org-level auto-erase configuration."""
+    body = await request.json()
+    updates = {}
+    if "enabled" in body:
+        updates["auto_erase_enabled"] = 1 if body["enabled"] else 0
+    if "days" in body:
+        updates["auto_erase_days"] = int(body["days"])
+    if updates:
+        await update_organization(user.org.id, **updates)
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Project-level auto-stop override
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/projects/{project}/auto-stop")
+async def get_project_auto_stop(
+    project: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
+    """Get per-project auto-stop override."""
+    proj = await get_project_by_slug(user.org.id, project)
+    if proj and proj.get("auto_stop_enabled") is not None:
         return {
             "override": True,
             "enabled": bool(proj["auto_stop_enabled"]),
@@ -89,46 +110,39 @@ async def get_project_auto_stop_config(project: str, user: UserWithRole = Depend
     return {"override": False, "enabled": None, "minutes": None}
 
 
-@router.put("/api/config/auto-stop/{project}")
-async def save_project_auto_stop_config(project: str, request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
-    """Save per-project auto-stop configuration."""
+@router.put("/api/orgs/{org}/projects/{project}/auto-stop")
+async def save_project_auto_stop(
+    project: str,
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
+    """Save per-project auto-stop override."""
     body = await request.json()
     if body.get("override") is False:
-        await upsert_project(project, auto_stop_enabled=None, auto_stop_minutes=None)
+        await upsert_project(
+            user.org.id, project, auto_stop_enabled=None, auto_stop_minutes=None
+        )
     else:
         enabled = 1 if body.get("enabled") else 0
         minutes = int(body["minutes"]) if "minutes" in body else None
-        await upsert_project(project, auto_stop_enabled=enabled, auto_stop_minutes=minutes)
+        await upsert_project(
+            user.org.id, project, auto_stop_enabled=enabled, auto_stop_minutes=minutes
+        )
     return {"success": True}
 
 
-@router.get("/api/config/auto-erase")
-async def get_auto_erase_config(user: UserWithRole = Depends(require_role(Role.viewer))):
-    """Get global auto-erase configuration."""
-    enabled = await config_store.get_config("auto_erase_enabled")
-    days = await config_store.get_config("auto_erase_days")
-    return {
-        "enabled": enabled == "true",
-        "days": int(days) if days else 7,
-    }
+# ---------------------------------------------------------------------------
+# Project environment variables
+# ---------------------------------------------------------------------------
 
 
-@router.put("/api/config/auto-erase")
-async def save_auto_erase_config(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
-    """Save global auto-erase configuration."""
-    body = await request.json()
-    await config_store.set_config("auto_erase_enabled", "true" if body.get("enabled") else "false")
-    if "days" in body:
-        await config_store.set_config("auto_erase_days", str(int(body["days"])))
-    return {"success": True}
-
-
-# ---- Project environment variables ----
-
-@router.get("/api/config/env-vars/{project}")
-async def get_project_env_vars(project: str, user: UserWithRole = Depends(require_role(Role.viewer))):
+@router.get("/api/orgs/{org}/projects/{project}/env-vars")
+async def get_project_env_vars(
+    project: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Get environment variables for a project."""
-    proj = await get_project(project)
+    proj = await get_project_by_slug(user.org.id, project)
     if not proj or not proj.get("env_vars"):
         return {"env_vars": {}}
     try:
@@ -137,8 +151,12 @@ async def get_project_env_vars(project: str, user: UserWithRole = Depends(requir
         return {"env_vars": {}}
 
 
-@router.put("/api/config/env-vars/{project}")
-async def save_project_env_vars(project: str, request: Request, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.put("/api/orgs/{org}/projects/{project}/env-vars")
+async def save_project_env_vars(
+    project: str,
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
     """Save environment variables for a project."""
     body = await request.json()
     env_vars = body.get("env_vars", {})
@@ -146,14 +164,21 @@ async def save_project_env_vars(project: str, request: Request, user: UserWithRo
         raise HTTPException(status_code=400, detail="env_vars must be an object")
     for k, v in env_vars.items():
         if not isinstance(k, str) or not isinstance(v, str):
-            raise HTTPException(status_code=400, detail="All keys and values must be strings")
-    await upsert_project(project, env_vars=json.dumps(env_vars))
+            raise HTTPException(
+                status_code=400, detail="All keys and values must be strings"
+            )
+    await upsert_project(user.org.id, project, env_vars=json.dumps(env_vars))
 
     # Check if there are active previews that would need a rebuild
     from app.database import get_all_previews
-    all_previews = await get_all_previews()
-    active_previews = [p["preview_name"] for p in all_previews
-                       if p["project"] == project and p["status"] in ("active", "failed")]
+
+    all_previews = await get_all_previews(org_id=user.org.id)
+    active_previews = [
+        p["preview_name"]
+        for p in all_previews
+        if p.get("project_slug") == project
+        and p["status"] in ("active", "failed")
+    ]
 
     return {
         "success": True,
@@ -163,70 +188,56 @@ async def save_project_env_vars(project: str, request: Request, user: UserWithRo
     }
 
 
-# ---- Allowed email domains ----
-
-@router.get("/api/config/allowed-domains")
-async def get_allowed_domains(user: UserWithRole = Depends(require_role(Role.admin))):
-    """Get allowed email domains for auto-registration."""
-    domains = await config_store.load_allowed_domains()
-    return {"domains": domains}
+# ---------------------------------------------------------------------------
+# API tokens (per user, scoped to org)
+# ---------------------------------------------------------------------------
 
 
-@router.put("/api/config/allowed-domains")
-async def save_allowed_domains(request: Request, user: UserWithRole = Depends(require_role(Role.admin))):
-    """Save allowed email domains for auto-registration."""
-    body = await request.json()
-    domains = body.get("domains", [])
-    if not isinstance(domains, list):
-        raise HTTPException(status_code=400, detail="domains must be a list")
-    for entry in domains:
-        if not isinstance(entry, dict) or "domain" not in entry or "role" not in entry:
-            raise HTTPException(status_code=400, detail="Each entry must have 'domain' and 'role'")
-        if entry["role"] not in ("viewer", "manager"):
-            raise HTTPException(status_code=400, detail="Role must be 'viewer' or 'manager'")
-        if not entry["domain"] or not isinstance(entry["domain"], str):
-            raise HTTPException(status_code=400, detail="Domain must be a non-empty string")
-    await config_store.save_allowed_domains(domains)
-    return {"success": True, "domains": domains}
-
-
-@router.get("/api/config/cloud-resources")
-async def get_cloud_resources_list(
-    project: str | None = None,
-    resource_type: str | None = None,
-    limit: int = 200,
-    user: UserWithRole = Depends(require_role(Role.viewer)),
+@router.get("/api/orgs/{org}/tokens")
+async def list_tokens(
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
 ):
-    """List cloud resource usage logs (VMs and volumes)."""
-    from app.database import get_cloud_resources
-    resources = await get_cloud_resources(
-        project=project,
-        resource_type=resource_type,
-        limit=limit,
+    """List API tokens for the current user in this org."""
+    tokens = await auth_db.list_api_tokens(user.id, user.org.id)
+    return {"tokens": tokens}
+
+
+@router.post("/api/orgs/{org}/tokens")
+async def create_token(
+    body: CreateTokenRequest,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Create an API token for the current user in this org."""
+    token_id, raw_token = await auth_db.create_api_token(
+        user.id, user.org.id, body.name
     )
-    return {"resources": resources, "total": len(resources)}
+    return {"token_id": token_id, "token": raw_token}
 
 
-@router.get("/api/config/cloud-costs")
-async def get_cloud_costs(
-    project: str | None = None,
-    user: UserWithRole = Depends(require_role(Role.viewer)),
+@router.delete("/api/orgs/{org}/tokens/{token_id}")
+async def delete_token(
+    token_id: int,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
 ):
-    """Get cloud cost summary grouped by project and resource type."""
-    from app.database import get_cloud_cost_summary
-    summary = await get_cloud_cost_summary(project=project)
-    return {"summary": summary}
+    """Delete an API token."""
+    deleted = await auth_db.delete_api_token(token_id, user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Health & root
+# ---------------------------------------------------------------------------
 
 
 @router.get("/api/health")
 async def health_check():
-    """Health check endpoint"""
-    return {
-        "status": "healthy"
-    }
+    """Health check endpoint."""
+    return {"status": "healthy"}
 
 
 @router.get("/")
 async def root():
-    """Root endpoint"""
+    """Root endpoint."""
     return {"status": "ok"}

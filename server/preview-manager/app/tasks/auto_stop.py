@@ -7,9 +7,9 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from app import config_store
 from app.database import (
     get_all_previews, get_project, has_running_deployment,
+    list_organizations, compute_url_hash,
 )
 from app.cloud import cloud_manager
 
@@ -33,78 +33,85 @@ async def auto_stop_loop():
 
 async def _check_and_stop():
     """Check all previews and stop those that exceed their inactivity threshold."""
-    global_enabled = await config_store.get_config("auto_stop_enabled")
-    if global_enabled != "true":
-        return
-
-    global_minutes_str = await config_store.get_config("auto_stop_minutes")
-    global_minutes = int(global_minutes_str) if global_minutes_str else 60
-
-    previews = await get_all_previews()
-    if not previews:
-        return
-
-    now = datetime.now(timezone.utc)
-    stopped_count = 0
-
-    for p in previews:
-        project = p["project"]
-        preview_name = p["preview_name"]
-
-        # Only stop previews that have an active VM
-        if not p.get("vm_id"):
+    # Iterate over all organizations
+    orgs = await list_organizations()
+    for org in orgs:
+        if not org.get("auto_stop_enabled"):
             continue
 
-        # Check per-project override
-        proj = await get_project(project)
-        if proj and proj["auto_stop_enabled"] is not None:
-            if not proj["auto_stop_enabled"]:
+        org_minutes = org.get("auto_stop_minutes") or 60
+
+        previews = await get_all_previews(org_id=org["id"])
+        if not previews:
+            continue
+
+        now = datetime.now(timezone.utc)
+        stopped_count = 0
+
+        for p in previews:
+            preview_name = p["preview_name"]
+            project_slug = p.get("project_slug", "")
+            org_slug = p.get("org_slug", org["slug"])
+
+            # Only stop previews that have an active VM
+            if not p.get("vm_id"):
                 continue
-            threshold_minutes = proj["auto_stop_minutes"] if proj["auto_stop_minutes"] else global_minutes
-        else:
-            threshold_minutes = global_minutes
 
-        # Determine last activity
-        last_accessed = p.get("last_accessed_at")
-        last_deployed = p.get("last_deployed_at")
+            # Check per-project override
+            project_id = p.get("project_id")
+            if project_id:
+                proj = await get_project(project_id)
+                if proj and proj.get("auto_stop_enabled") is not None:
+                    if not proj["auto_stop_enabled"]:
+                        continue
+                    threshold_minutes = proj.get("auto_stop_minutes") or org_minutes
+                else:
+                    threshold_minutes = org_minutes
+            else:
+                threshold_minutes = org_minutes
 
-        last_activity = None
-        for ts in (last_accessed, last_deployed):
-            if ts:
-                try:
-                    dt = datetime.fromisoformat(ts)
-                    if last_activity is None or dt > last_activity:
-                        last_activity = dt
-                except ValueError:
-                    pass
+            # Determine last activity
+            last_accessed = p.get("last_accessed_at")
+            last_deployed = p.get("last_deployed_at")
 
-        if not last_activity:
-            continue
+            last_activity = None
+            for ts in (last_accessed, last_deployed):
+                if ts:
+                    try:
+                        dt = datetime.fromisoformat(ts)
+                        if last_activity is None or dt > last_activity:
+                            last_activity = dt
+                    except ValueError:
+                        pass
 
-        idle_seconds = (now - last_activity).total_seconds()
-        if idle_seconds < threshold_minutes * 60:
-            continue
+            if not last_activity:
+                continue
 
-        # Skip if there's an active deployment
-        if await has_running_deployment(p["id"]):
-            continue
+            idle_seconds = (now - last_activity).total_seconds()
+            if idle_seconds < threshold_minutes * 60:
+                continue
 
-        # Shutdown VM (keeps disk intact)
-        logger.info(
-            f"Auto-stopping {project}/{preview_name}: "
-            f"idle for {int(idle_seconds / 60)} min (threshold: {threshold_minutes} min)"
-        )
-        try:
-            # Remove Caddy direct route so wildcard handles wake-up
-            from app.caddy_api import caddy_manager
-            domain = f"{preview_name}-{project}.mr.preview-mr.com"
-            await caddy_manager.remove_preview_route(domain)
+            # Skip if there's an active deployment
+            if await has_running_deployment(p["id"]):
+                continue
 
-            await cloud_manager.shutdown_vm(p["vm_id"])
-            stopped_count += 1
-            logger.info(f"Auto-stopped {project}/{preview_name} (VM shutdown)")
-        except Exception as e:
-            logger.error(f"Failed to auto-stop {project}/{preview_name}: {e}")
+            # Shutdown VM (keeps disk intact)
+            logger.info(
+                f"Auto-stopping {org_slug}/{project_slug}/{preview_name}: "
+                f"idle for {int(idle_seconds / 60)} min (threshold: {threshold_minutes} min)"
+            )
+            try:
+                # Remove Caddy direct route so wildcard handles wake-up
+                from app.caddy_api import caddy_manager
+                url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+                domain = f"{url_hash}.mr.preview-mr.com"
+                await caddy_manager.remove_preview_route(domain)
 
-    if stopped_count:
-        logger.info(f"Auto-stop: stopped {stopped_count} preview(s)")
+                await cloud_manager.shutdown_vm(p["vm_id"])
+                stopped_count += 1
+                logger.info(f"Auto-stopped {org_slug}/{project_slug}/{preview_name} (VM shutdown)")
+            except Exception as e:
+                logger.error(f"Failed to auto-stop {project_slug}/{preview_name}: {e}")
+
+        if stopped_count:
+            logger.info(f"Auto-stop: stopped {stopped_count} preview(s) in org '{org['slug']}'")

@@ -1,4 +1,4 @@
-"""Preview CRUD and action endpoints — cloud VM version."""
+"""Preview CRUD and action endpoints — multi-tenant org-scoped, cloud VM version."""
 
 import asyncio
 import json
@@ -20,18 +20,25 @@ from app.database import (
     list_deployments as db_list_deployments,
     get_deployment as db_get_deployment,
     update_preview_vm,
+    get_project_by_slug,
+    compute_url_hash,
+    update_last_accessed,
+    list_user_organizations,
 )
-from app.auth.dependencies import require_role
-from app.auth.models import Role, UserWithRole, has_min_role
+from app.auth.dependencies import require_org_role, get_current_user
+from app.auth.models import OrgRole, UserWithContext, has_min_role
 from app.auth import database as auth_db
-from app import config_store
 from app.cloud import cloud_manager
 from app.remote import RemoteExecutor
 from app.deployment import VM_PREVIEW_DIR
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+# Org-scoped router for /api/orgs/{org}/projects/{project}/previews/...
+router = APIRouter(prefix="/api/orgs/{org}/projects/{project}")
+
+# Separate router for cross-org preview listing (used by websocket, superadmin)
+global_router = APIRouter()
 
 
 def _sanitize_branch_name(branch: str) -> str:
@@ -40,6 +47,17 @@ def _sanitize_branch_name(branch: str) -> str:
     sanitized = re.sub(r"[^a-zA-Z0-9\-]", "", sanitized)
     sanitized = re.sub(r"-+", "-", sanitized).strip("-")
     return sanitized
+
+
+async def _resolve_project(user: UserWithContext, project_slug: str) -> dict:
+    """Resolve a project from org context. Raises 404 if not found."""
+    project = await get_project_by_slug(user.org.id, project_slug)
+    if not project:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Project '{project_slug}' not found in organization '{user.org.slug}'",
+        )
+    return project
 
 
 def _build_preview_info(state: dict) -> PreviewInfo:
@@ -63,6 +81,10 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         except (json.JSONDecodeError, TypeError):
             env_vars = {}
 
+    org_slug = state.get("org_slug", "")
+    project_slug = state.get("project_slug", state.get("project", ""))
+    url_hash = state.get("url_hash", "")
+
     # Extract stack info from docker-compose.yml (local copy)
     exposed_services: dict[str, str] = {}
     stack: dict[str, str] = {}
@@ -74,7 +96,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                 import yaml
                 compose = yaml.safe_load(compose_file.read_text()) or {}
                 services = compose.get("services", {})
-                preview_domain = state["url"].replace("https://", "").replace("http://", "")
+                preview_domain = f"{url_hash}.mr.preview-mr.com"
 
                 # Exposed services (port mappings on non-php services)
                 for svc_name, svc in services.items():
@@ -91,7 +113,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
                     stack["PHP"] = php_image.split(":php")[-1]
                     stack["Webserver"] = "OpenLiteSpeed"
 
-                # Stack: Database — strip registry prefix (e.g. "91.99.157.66:5000/mysql:5.7" → "mysql:5.7")
+                # Stack: Database — strip registry prefix (e.g. "91.99.157.66:5000/mysql:5.7" -> "mysql:5.7")
                 db_image = (services.get("db") or {}).get("image", "")
                 if db_image:
                     stack["Database"] = db_image.split("/")[-1]
@@ -120,7 +142,9 @@ def _build_preview_info(state: dict) -> PreviewInfo:
 
     return PreviewInfo(
         preview_name=state["preview_name"],
-        project=state["project"],
+        project_slug=project_slug,
+        org_slug=org_slug,
+        url_hash=url_hash,
         mr_id=state.get("mr_id"),
         status=state["status"],
         url=state["url"],
@@ -147,20 +171,21 @@ class CreateBranchPreviewRequest(BaseModel):
     branch: str
 
 
-@router.post("/api/previews/{project}/branch")
+@router.post("/previews/branch")
 async def create_branch_preview(
     project: str,
     body: CreateBranchPreviewRequest,
     background_tasks: BackgroundTasks,
-    user: UserWithRole = Depends(require_role(Role.manager)),
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
 ):
     """Create a preview from a branch (not tied to a MR)."""
     import httpx
-    from app.routes.gitlab import _get_gitlab_token
+    from app.routes.gitlab import _get_org_gitlab_token
 
-    enabled_ids = await config_store.load_enabled_project_ids()
-    if not enabled_ids:
-        raise HTTPException(status_code=400, detail="No projects are enabled")
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+    project_slug = proj["slug"]
+    org_slug = user.org.slug
 
     sanitized = _sanitize_branch_name(body.branch)
     if not sanitized:
@@ -168,23 +193,23 @@ async def create_branch_preview(
 
     preview_name = f"branch-{sanitized}"
 
-    existing = await get_preview(project, preview_name)
+    existing = await get_preview(project_id, preview_name)
     if existing:
         raise HTTPException(
             status_code=409,
-            detail=f"Preview {preview_name} already exists for project {project}"
+            detail=f"Preview {preview_name} already exists for project {project_slug}"
         )
 
-    token = await _get_gitlab_token()
-    project_path = await config_store.get_project_path_by_slug(project)
+    gitlab_url, token = await _get_org_gitlab_token(user.org.id)
+    project_path = proj.get("gitlab_project_path")
     if not project_path:
-        raise HTTPException(status_code=404, detail=f"Project '{project}' not found in enabled projects")
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' has no GitLab project path configured")
     encoded_path = project_path.replace("/", "%2F")
 
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{settings.gitlab_url}/api/v4/projects/{encoded_path}/repository/branches/{body.branch}",
+                f"{gitlab_url}/api/v4/projects/{encoded_path}/repository/branches/{body.branch}",
                 headers={"PRIVATE-TOKEN": token},
                 timeout=15,
             )
@@ -199,26 +224,26 @@ async def create_branch_preview(
         raise HTTPException(status_code=502, detail=f"GitLab API error: {e}")
 
     commit_sha = branch_data["commit"]["id"]
+    url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+    preview_url = f"https://{url_hash}.mr.preview-mr.com"
+    preview_path = str(PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name))
 
     await PreviewStateManager.save_state(
-        project, preview_name,
+        project_id, preview_name,
         branch=body.branch,
         commit_sha=commit_sha,
         status="pending",
-        url=f"https://{preview_name}-{project}.mr.preview-mr.com",
-        path=str(Path(settings.previews_base_path) / project / preview_name),
+        url=preview_url,
+        url_hash=url_hash,
+        path=preview_path,
         auto_update=0,
     )
 
     from app.routes.webhooks import _clone_and_deploy
     background_tasks.add_task(
         _clone_and_deploy,
-        project_path,
-        project,
-        preview_name,
-        body.branch,
-        commit_sha,
-        user.email,
+        user.org.id, org_slug, project_id, project_slug, project_path,
+        preview_name, body.branch, commit_sha, user.email,
     )
 
     return {
@@ -226,6 +251,7 @@ async def create_branch_preview(
         "preview_name": preview_name,
         "branch": body.branch,
         "commit_sha": commit_sha,
+        "url_hash": url_hash,
         "message": f"Creating preview {preview_name} from branch {body.branch}",
     }
 
@@ -235,11 +261,19 @@ async def create_branch_preview(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/previews/{project}/{preview_name}", response_model=PreviewInfo)
-async def get_preview_endpoint(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.viewer))):
-    state = await PreviewStateManager.load_state(project, preview_name)
+@router.get("/previews/{preview_name}", response_model=PreviewInfo)
+async def get_preview_endpoint(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+):
+    proj = await _resolve_project(user, project)
+    state = await PreviewStateManager.load_state(proj["id"], preview_name)
     if not state:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
+    # Enrich state with org/project slugs
+    state["org_slug"] = user.org.slug
+    state["project_slug"] = proj["slug"]
     return _build_preview_info(state)
 
 
@@ -249,14 +283,17 @@ class UpdatePreviewRequest(BaseModel):
     env_vars: Optional[dict[str, str]] = None
 
 
-@router.patch("/api/previews/{project}/{preview_name}")
+@router.patch("/previews/{preview_name}")
 async def update_preview_endpoint(
     project: str,
     preview_name: str,
     body: UpdatePreviewRequest,
-    user: UserWithRole = Depends(require_role(Role.manager)),
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
 ):
-    state = await PreviewStateManager.load_state(project, preview_name)
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+
+    state = await PreviewStateManager.load_state(project_id, preview_name)
     if not state:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
 
@@ -269,9 +306,11 @@ async def update_preview_endpoint(
         updates["env_vars"] = json.dumps(body.env_vars)
 
     if updates:
-        await PreviewStateManager.save_state(project, preview_name, **updates)
+        await PreviewStateManager.save_state(project_id, preview_name, **updates)
 
-    updated = await PreviewStateManager.load_state(project, preview_name)
+    updated = await PreviewStateManager.load_state(project_id, preview_name)
+    updated["org_slug"] = user.org.slug
+    updated["project_slug"] = proj["slug"]
     result = _build_preview_info(updated)
 
     if body.env_vars is not None:
@@ -290,11 +329,17 @@ def _get_preview_status(preview: dict) -> str:
         return preview.get("status", "unknown")
 
 
-async def get_preview_list_base(include_docker_status: bool = True) -> dict:
-    """Core logic to list all previews with cloud VM status."""
+async def get_preview_list_base(
+    include_docker_status: bool = True,
+    org_id: Optional[int] = None,
+) -> dict:
+    """Core logic to list all previews with cloud VM status.
+
+    This is an internal helper, not a route endpoint.
+    """
     t_total = time.monotonic()
 
-    rows = await get_all_previews()
+    rows = await get_all_previews(org_id=org_id)
     t_db = time.monotonic()
     logger.info(f"[TIMING] DB query: {t_db - t_total:.3f}s ({len(rows)} previews found)")
 
@@ -320,9 +365,13 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
         # Determine status from VM state
         status = _get_preview_status(row)
 
+        url_hash = row.get("url_hash", "")
+
         previews.append({
             "name": row["preview_name"],
-            "project": row["project"],
+            "project": row.get("project_slug", ""),
+            "org_slug": row.get("org_slug", ""),
+            "url_hash": url_hash,
             "mr_id": row.get("mr_id"),
             "status": status,
             "url": row["url"],
@@ -342,48 +391,58 @@ async def get_preview_list_base(include_docker_status: bool = True) -> dict:
     }
 
 
-async def delete_preview_internal(project: str, preview_name: str):
+async def delete_preview_internal(
+    org_slug: str, project_slug: str, project_id: int, preview_name: str,
+):
     """Core delete logic: destroy VM, remove from DB."""
     # Clear any in-flight deploy lock so a recreated preview won't be blocked
     from app.routes.webhooks import clear_deploy_lock
-    clear_deploy_lock(project, preview_name)
+    clear_deploy_lock(project_slug, preview_name)
 
-    preview = await get_preview(project, preview_name)
+    preview = await get_preview(project_id, preview_name)
 
     # Destroy VM if exists
     if preview and preview.get("vm_id"):
         try:
             await cloud_manager.destroy_vm(preview["vm_id"])
-            logger.info(f"Destroyed VM for {project}/{preview_name}")
+            logger.info(f"Destroyed VM for {org_slug}/{project_slug}/{preview_name}")
         except Exception as e:
-            logger.warning(f"Error destroying VM for {project}/{preview_name}: {e}")
+            logger.warning(f"Error destroying VM for {org_slug}/{project_slug}/{preview_name}: {e}")
 
     # Remove Caddy direct route
     from app.caddy_api import caddy_manager
-    domain = f"{preview_name}-{project}.mr.preview-mr.com"
+    url_hash = preview.get("url_hash", "") if preview else compute_url_hash(org_slug, project_slug, preview_name)
+    domain = f"{url_hash}.mr.preview-mr.com"
     await caddy_manager.remove_preview_route(domain)
 
     # Delete from DB
-    await PreviewStateManager.delete_state(project, preview_name)
+    await PreviewStateManager.delete_state(project_id, preview_name)
 
     # Clean up local preview directory (compose files etc.)
-    preview_path = PreviewStateManager.get_preview_path(project, preview_name)
+    preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
     if preview_path.exists():
         import shutil
         shutil.rmtree(preview_path, ignore_errors=True)
         logger.info(f"Cleaned up local directory: {preview_path}")
 
-    logger.info(f"Preview {project}/{preview_name} fully deleted")
+    logger.info(f"Preview {org_slug}/{project_slug}/{preview_name} fully deleted")
 
 
-@router.delete("/api/previews/{project}/{preview_name}")
-async def delete_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
-    state = await PreviewStateManager.load_state(project, preview_name)
+@router.delete("/previews/{preview_name}")
+async def delete_preview(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+
+    state = await PreviewStateManager.load_state(project_id, preview_name)
     if not state:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
 
     try:
-        await delete_preview_internal(project, preview_name)
+        await delete_preview_internal(user.org.slug, proj["slug"], project_id, preview_name)
         return {
             "success": True,
             "message": f"Preview {project}/{preview_name} deleted successfully"
@@ -394,36 +453,79 @@ async def delete_preview(project: str, preview_name: str, user: UserWithRole = D
 
 
 # ---------------------------------------------------------------------------
-# REST endpoints for CLI
+# Global preview list (cross-org, for websocket / superadmin)
 # ---------------------------------------------------------------------------
 
 
-@router.get("/api/previews")
-async def list_previews(status: bool = True, user: UserWithRole = Depends(require_role(Role.viewer))):
-    result = await get_preview_list_base(include_docker_status=status)
+@global_router.get("/api/previews")
+async def list_previews(
+    status: bool = True,
+    user: UserWithContext = Depends(get_current_user),
+):
+    """List all previews across orgs.
 
-    if not has_min_role(user.role, Role.admin):
-        allowed_slugs = set(await auth_db.get_user_project_slugs(user.id))
-        result["previews"] = [p for p in result["previews"] if p["project"] in allowed_slugs]
-        result["total"] = len(result["previews"])
+    Superadmin sees all previews. Regular users see previews for their orgs only.
+    """
+    if user.is_superadmin:
+        result = await get_preview_list_base(include_docker_status=status)
+    else:
+        # Gather previews across all user's orgs
+        user_orgs = await list_user_organizations(user.id)
+        all_previews = []
+        for org in user_orgs:
+            org_result = await get_preview_list_base(include_docker_status=status, org_id=org["id"])
+            all_previews.extend(org_result["previews"])
+        result = {"previews": all_previews, "total": len(all_previews)}
 
     return result
 
 
-async def _get_executor(project: str, preview_name: str) -> tuple[RemoteExecutor, dict]:
+# ---------------------------------------------------------------------------
+# Org-scoped preview list
+# ---------------------------------------------------------------------------
+
+
+@router.get("/previews")
+async def list_org_previews(
+    project: str,
+    status: bool = True,
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+):
+    """List previews for a specific project in the org."""
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+
+    # Get all previews for this org, then filter by project
+    result = await get_preview_list_base(include_docker_status=status, org_id=user.org.id)
+    result["previews"] = [p for p in result["previews"] if p["project"] == proj["slug"]]
+    result["total"] = len(result["previews"])
+    return result
+
+
+# ---------------------------------------------------------------------------
+# REST endpoints for CLI / actions
+# ---------------------------------------------------------------------------
+
+
+async def _get_executor(project_id: int, preview_name: str, project_slug: str) -> tuple[RemoteExecutor, dict]:
     """Get a RemoteExecutor for the preview's VM. Raises 503 if no VM."""
-    preview = await get_preview(project, preview_name)
+    preview = await get_preview(project_id, preview_name)
     if not preview:
-        raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
+        raise HTTPException(status_code=404, detail=f"Preview {project_slug}/{preview_name} not found")
     if not preview.get("vm_id") or not preview.get("vm_ip"):
         raise HTTPException(status_code=503, detail="Preview VM is not running. Visit the preview URL to wake it up.")
     return RemoteExecutor(preview["vm_ip"]), preview
 
 
-@router.post("/api/previews/{project}/{preview_name}/stop")
-async def stop_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.post("/previews/{preview_name}/stop")
+async def stop_preview(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Stop a preview (shutdown VM, keep disk intact)."""
-    preview = await get_preview(project, preview_name)
+    proj = await _resolve_project(user, project)
+    preview = await get_preview(proj["id"], preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
 
@@ -437,15 +539,20 @@ async def stop_preview(project: str, preview_name: str, user: UserWithRole = Dep
         return {"success": False, "output": "", "error": str(e)}
 
 
-@router.post("/api/previews/{project}/{preview_name}/start")
-async def start_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.post("/previews/{preview_name}/start")
+async def start_preview(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Start a preview (power on shutdown VM)."""
-    preview = await get_preview(project, preview_name)
+    proj = await _resolve_project(user, project)
+    preview = await get_preview(proj["id"], preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
 
     if not preview.get("vm_id"):
-        return {"success": False, "output": "", "error": "No VM found — use rebuild to create a new one"}
+        return {"success": False, "output": "", "error": "No VM found -- use rebuild to create a new one"}
 
     try:
         vm_ip = await cloud_manager.power_on_vm(preview["vm_id"])
@@ -458,16 +565,21 @@ async def start_preview(project: str, preview_name: str, user: UserWithRole = De
         )
         await proc.communicate()
 
-        await update_preview_vm(project, preview_name, preview["vm_id"], vm_ip)
+        await update_preview_vm(preview["id"], preview["vm_id"], vm_ip)
         return {"success": True, "output": f"VM powered on (IP: {vm_ip})", "error": ""}
     except Exception as e:
         return {"success": False, "output": "", "error": str(e)}
 
 
-@router.post("/api/previews/{project}/{preview_name}/restart")
-async def restart_preview(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.post("/previews/{preview_name}/restart")
+async def restart_preview(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Restart containers on the VM."""
-    executor, preview = await _get_executor(project, preview_name)
+    proj = await _resolve_project(user, project)
+    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
     try:
         proc = await executor.run_shell(
             "cd /var/www/preview/code && docker compose restart"
@@ -483,12 +595,19 @@ async def restart_preview(project: str, preview_name: str, user: UserWithRole = 
         return {"success": False, "output": "", "error": str(e)}
 
 
-@router.post("/api/previews/{project}/{preview_name}/drush-uli")
-async def drush_uli(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.viewer))):
+@router.post("/previews/{preview_name}/drush-uli")
+async def drush_uli(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+):
     """Get a one-time login link (drush uli) via SSH."""
-    executor, preview = await _get_executor(project, preview_name)
-    preview_url = f"https://{preview_name}-{project}.mr.preview-mr.com"
-    php_container = f"{preview_name}-{project}-php"
+    proj = await _resolve_project(user, project)
+    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
+
+    url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
+    preview_url = f"https://{url_hash}.mr.preview-mr.com"
+    php_container = f"{preview_name}-{proj['slug']}-php"
 
     proc = await executor.run_shell(
         f"docker exec {php_container} vendor/bin/drush uli --uri={preview_url}"
@@ -502,16 +621,22 @@ async def drush_uli(project: str, preview_name: str, user: UserWithRole = Depend
     }
 
 
-@router.post("/api/previews/{project}/{preview_name}/drush")
-async def drush_command(project: str, preview_name: str, request: Request, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.post("/previews/{preview_name}/drush")
+async def drush_command(
+    project: str,
+    preview_name: str,
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Run an arbitrary drush command via SSH."""
     body = await request.json()
     args_str = body.get("args", "")
     if not args_str:
         raise HTTPException(status_code=400, detail="Missing 'args' in request body")
 
-    executor, preview = await _get_executor(project, preview_name)
-    php_container = f"{preview_name}-{project}-php"
+    proj = await _resolve_project(user, project)
+    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
+    php_container = f"{preview_name}-{proj['slug']}-php"
 
     proc = await executor.run_shell(
         f"docker exec {php_container} vendor/bin/drush {args_str}"
@@ -525,34 +650,35 @@ async def drush_command(project: str, preview_name: str, request: Request, user:
     }
 
 
-@router.post("/api/previews/{project}/{preview_name}/rebuild")
+@router.post("/previews/{preview_name}/rebuild")
 async def rebuild_preview(
     project: str,
     preview_name: str,
     background_tasks: BackgroundTasks,
     force_new: bool = False,
-    user: UserWithRole = Depends(require_role(Role.manager)),
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
 ):
     """Re-clone the preview from GitLab (internal rebuild)."""
-    state = await PreviewStateManager.load_state(project, preview_name)
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+    project_slug = proj["slug"]
+
+    state = await PreviewStateManager.load_state(project_id, preview_name)
     if not state:
         raise HTTPException(status_code=404, detail="Preview not found")
     if not state.get("branch"):
         raise HTTPException(status_code=400, detail="Cannot determine branch for this preview")
 
-    project_path = await config_store.get_project_path_by_slug(project)
+    project_path = proj.get("gitlab_project_path")
     if not project_path:
-        raise HTTPException(status_code=400, detail=f"Project '{project}' not found in enabled projects")
+        raise HTTPException(status_code=400, detail=f"Project '{project_slug}' has no GitLab project path configured")
 
     from app.routes.webhooks import _clone_and_deploy
 
     background_tasks.add_task(
         _clone_and_deploy,
-        project_path,
-        project,
-        preview_name,
-        state["branch"],
-        state.get("commit_sha", ""),
+        user.org.id, user.org.slug, project_id, project_slug, project_path,
+        preview_name, state["branch"], state.get("commit_sha", ""),
         "rebuild" if force_new else "update",
         state.get("mr_id"),
         force_new,
@@ -560,47 +686,55 @@ async def rebuild_preview(
 
     return {
         "success": True,
-        "output": f"Rebuild started for {project}/{preview_name} (branch: {state['branch']}, force_new={force_new})",
+        "output": f"Rebuild started for {project_slug}/{preview_name} (branch: {state['branch']}, force_new={force_new})",
         "error": "",
     }
 
 
-@router.get("/api/previews/{project}/{preview_name}/deployments")
+@router.get("/previews/{preview_name}/deployments")
 async def list_preview_deployments(
-    project: str, preview_name: str,
+    project: str,
+    preview_name: str,
     limit: int = 50,
-    user: UserWithRole = Depends(require_role(Role.viewer)),
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
 ):
-    preview = await get_preview(project, preview_name)
+    proj = await _resolve_project(user, project)
+    preview = await get_preview(proj["id"], preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
     deployments = await db_list_deployments(preview["id"], limit=limit)
     return {"deployments": deployments, "total": len(deployments)}
 
 
-@router.get("/api/previews/{project}/{preview_name}/deployments/{deployment_id}")
+@router.get("/previews/{preview_name}/deployments/{deployment_id}")
 async def get_preview_deployment(
-    project: str, preview_name: str, deployment_id: int,
-    user: UserWithRole = Depends(require_role(Role.viewer)),
+    project: str,
+    preview_name: str,
+    deployment_id: int,
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
 ):
     deployment = await db_get_deployment(deployment_id)
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
-    preview = await get_preview(project, preview_name)
+    proj = await _resolve_project(user, project)
+    preview = await get_preview(proj["id"], preview_name)
     if not preview or deployment["preview_id"] != preview["id"]:
         raise HTTPException(status_code=404, detail="Deployment not found for this preview")
     return deployment
 
 
-@router.get("/api/previews/{project}/{preview_name}/deployments/{deployment_id}/live-logs")
+@router.get("/previews/{preview_name}/deployments/{deployment_id}/live-logs")
 async def get_deployment_live_logs(
-    project: str, preview_name: str, deployment_id: int,
+    project: str,
+    preview_name: str,
+    deployment_id: int,
     offset: int = 0,
-    user: UserWithRole = Depends(require_role(Role.viewer)),
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
 ):
     from app.websockets import deployment_log_broadcaster
 
-    preview = await get_preview(project, preview_name)
+    proj = await _resolve_project(user, project)
+    preview = await get_preview(proj["id"], preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
 
@@ -628,11 +762,16 @@ async def get_deployment_live_logs(
     }
 
 
-@router.get("/api/previews/{project}/{preview_name}/db/download")
-async def download_db(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.get("/previews/{preview_name}/db/download")
+async def download_db(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Stream a gzipped SQL dump from the preview VM."""
-    executor, preview = await _get_executor(project, preview_name)
-    php_container = f"{preview_name}-{project}-php"
+    proj = await _resolve_project(user, project)
+    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
+    php_container = f"{preview_name}-{proj['slug']}-php"
 
     async def generate():
         proc = await executor.run_shell(
@@ -645,7 +784,7 @@ async def download_db(project: str, preview_name: str, user: UserWithRole = Depe
             yield chunk
         await proc.wait()
 
-    filename = f"{project}-{preview_name}.sql.gz"
+    filename = f"{proj['slug']}-{preview_name}.sql.gz"
     return StreamingResponse(
         generate(),
         media_type="application/gzip",
@@ -653,10 +792,15 @@ async def download_db(project: str, preview_name: str, user: UserWithRole = Depe
     )
 
 
-@router.get("/api/previews/{project}/{preview_name}/files/download")
-async def download_files(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.manager))):
+@router.get("/previews/{preview_name}/files/download")
+async def download_files(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
     """Stream a tar.gz of the preview's files directory from the VM."""
-    executor, preview = await _get_executor(project, preview_name)
+    proj = await _resolve_project(user, project)
+    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
 
     tar_excludes = "--exclude=./css --exclude=./js --exclude=./php"
     files_dir = "/var/www/preview/code/web/sites/default/files"
@@ -672,7 +816,7 @@ async def download_files(project: str, preview_name: str, user: UserWithRole = D
             yield chunk
         await proc.wait()
 
-    filename = f"{project}-{preview_name}-files.tar.gz"
+    filename = f"{proj['slug']}-{preview_name}-files.tar.gz"
     return StreamingResponse(
         generate(),
         media_type="application/gzip",
@@ -680,10 +824,15 @@ async def download_files(project: str, preview_name: str, user: UserWithRole = D
     )
 
 
-@router.get("/api/previews/{project}/{preview_name}/stats")
-async def preview_vm_stats(project: str, preview_name: str, user: UserWithRole = Depends(require_role(Role.viewer))):
+@router.get("/previews/{preview_name}/stats")
+async def preview_vm_stats(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+):
     """Get CPU, RAM and disk stats from the preview's VM."""
-    executor, preview = await _get_executor(project, preview_name)
+    proj = await _resolve_project(user, project)
+    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
 
     script = (
         "import json, os, time\n"
