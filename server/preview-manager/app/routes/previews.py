@@ -320,7 +320,12 @@ async def update_preview_endpoint(
 
 
 def _get_preview_status(preview: dict) -> str:
-    """Determine preview status based on VM state."""
+    """Determine preview status based on VM state and active deployments."""
+    # If there's an active deployment running, the preview is building
+    latest_status = preview.get("latest_deployment_status")
+    if latest_status and latest_status == "running":
+        return "building"
+
     if preview.get("vm_id"):
         return "running"
     elif preview.get("status") in ("creating", "pending"):
@@ -370,6 +375,7 @@ async def get_preview_list_base(
         previews.append({
             "name": row["preview_name"],
             "project": row.get("project_slug", ""),
+            "project_slug": row.get("project_slug", ""),
             "org_slug": row.get("org_slug", ""),
             "url_hash": url_hash,
             "mr_id": row.get("mr_id"),
@@ -832,7 +838,12 @@ async def preview_vm_stats(
 ):
     """Get CPU, RAM and disk stats from the preview's VM."""
     proj = await _resolve_project(user, project)
-    executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
+    preview = await get_preview(proj["id"], preview_name)
+    if not preview:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    if not preview.get("vm_id") or not preview.get("vm_ip"):
+        return {"status": "unavailable", "reason": "VM not ready"}
+    executor = RemoteExecutor(preview["vm_ip"])
 
     script = (
         "import json, os, time\n"
@@ -868,14 +879,17 @@ async def preview_vm_stats(
     import base64
     encoded = base64.b64encode(script.encode()).decode()
     cmd = f"echo {encoded} | base64 -d | python3"
-    proc = await executor.run_shell(cmd)
-    stdout, stderr = await proc.communicate()
+    try:
+        proc = await executor.run_shell(cmd)
+        stdout, stderr = await proc.communicate()
+    except Exception:
+        return {"status": "unavailable", "reason": "VM not reachable"}
     if proc.returncode != 0:
-        logger.warning("VM stats SSH failed (rc=%d) for %s/%s: %s", proc.returncode, project, preview_name, stderr.decode().strip()[-500:])
-        raise HTTPException(status_code=503, detail="Failed to get VM stats")
+        return {"status": "unavailable", "reason": "VM not reachable"}
 
     try:
-        return json.loads(stdout.decode().strip())
-    except Exception as e:
-        logger.warning("VM stats parse failed for %s/%s: %s | stdout: %s", project, preview_name, e, stdout.decode().strip()[-200:])
-        raise HTTPException(status_code=503, detail="Failed to parse VM stats")
+        data = json.loads(stdout.decode().strip())
+        data["status"] = "ok"
+        return data
+    except Exception:
+        return {"status": "unavailable", "reason": "Failed to parse stats"}

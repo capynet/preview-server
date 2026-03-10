@@ -76,7 +76,7 @@ async def create_org(body: CreateOrgBody, user: UserWithContext = Depends(get_cu
     if existing:
         raise HTTPException(status_code=409, detail=f"Organization '{slug}' already exists")
 
-    org = await create_organization(slug, body.name)
+    org = await create_organization(slug, body.name, color=body.color)
     await add_org_member(user.id, org["id"], OrgRole.owner.value)
     logger.info(f"Organization '{slug}' created by {user.email}")
 

@@ -287,27 +287,10 @@ class PreviewDeployer:
         # 7. Pull images from private registry
         await self._step_pull_images()
 
-        # 8. Check DB cache in S3
-        db_spec = self._preview_config["database"]
-        # Download base DB to temp for cache key computation
-        tmp_db = Path(tempfile.mktemp(suffix=".sql.gz"))
-        try:
-            await storage_manager.download_base_db(self.project_slug, tmp_db)
-            cache_key = _compute_db_cache_key(self.project_slug, db_spec, tmp_db)
-        finally:
-            tmp_db.unlink(missing_ok=True)
-
-        use_cache = await storage_manager.db_cache_exists(self.project_slug, cache_key)
-
-        if use_cache:
-            await self._restore_db_cache(cache_key)
-            await self._docker_up()
-            await self._wait_for_db()
-        else:
-            await self._docker_up()
-            await self._wait_for_db()
-            await self._import_db()
-            await self._create_db_cache(cache_key)
+        # 8. Start containers and import DB (cache disabled for now)
+        await self._docker_up()
+        await self._wait_for_db()
+        await self._import_db()
 
         # 9. Composer install
         await self._composer_install()
@@ -373,7 +356,7 @@ class PreviewDeployer:
         t0 = time.monotonic()
 
         # Start VM creation and poll progress
-        create_task = asyncio.ensure_future(cloud_manager.create_vm(name))
+        create_task = asyncio.ensure_future(cloud_manager.create_vm(name, project_id=self.project_id, preview_name=self.preview_name))
         last_elapsed = 0
         while not create_task.done():
             await asyncio.sleep(10)

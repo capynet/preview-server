@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Project Configuration — Preview Manager Docs</title>
+  <meta name="description" content="How to configure a Drupal project for preview environments with Preview Manager.">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0b;
+      --surface: #141416;
+      --border: #23232a;
+      --text: #e4e4e7;
+      --text-muted: #8b8b96;
+      --accent: #6d5cff;
+      --accent-hover: #8475ff;
+      --green: #22c55e;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { color: var(--accent-hover); }
+
+    /* Nav */
+    nav {
+      padding: 20px 0;
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: var(--bg);
+      z-index: 100;
+    }
+    nav .nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .logo {
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.02em;
+    }
+    .logo span { color: var(--accent); }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .nav-link {
+      font-size: 14px;
+      padding: 8px 20px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-muted);
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .nav-link:hover { border-color: var(--accent); color: var(--text); }
+    .nav-link.active { border-color: var(--accent); color: var(--text); }
+
+    /* Layout */
+    .page-layout {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+      display: flex;
+      gap: 48px;
+      align-items: flex-start;
+    }
+
+    /* Sidebar */
+    .sidebar {
+      position: sticky;
+      top: 85px;
+      width: 220px;
+      flex-shrink: 0;
+      padding: 32px 0;
+    }
+    .sidebar-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 16px;
+    }
+    .sidebar-nav {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .sidebar-nav a {
+      display: block;
+      font-size: 13px;
+      color: var(--text-muted);
+      padding: 6px 12px;
+      border-radius: 6px;
+      border-left: 2px solid transparent;
+      transition: color 0.15s, background 0.15s, border-color 0.15s;
+    }
+    .sidebar-nav a:hover {
+      color: var(--text);
+      background: rgba(109, 92, 255, 0.06);
+    }
+    .sidebar-nav a.active {
+      color: var(--accent);
+      background: rgba(109, 92, 255, 0.08);
+      border-left-color: var(--accent);
+    }
+
+    /* Content */
+    .content {
+      flex: 1;
+      min-width: 0;
+      padding: 40px 0 80px;
+      max-width: 780px;
+    }
+    .content h1 {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+      line-height: 1.15;
+      margin-bottom: 12px;
+    }
+    .content .subtitle {
+      font-size: 16px;
+      color: var(--text-muted);
+      margin-bottom: 48px;
+      line-height: 1.6;
+    }
+    .content .subtitle code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+    }
+    .content h2 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-top: 56px;
+      margin-bottom: 16px;
+      padding-top: 24px;
+      border-top: 1px solid var(--border);
+      scroll-margin-top: 90px;
+    }
+    .content h2:first-of-type {
+      margin-top: 0;
+      border-top: none;
+      padding-top: 0;
+    }
+    .content h3 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-top: 32px;
+      margin-bottom: 12px;
+    }
+    .content p {
+      margin-bottom: 16px;
+      color: var(--text);
+      font-size: 15px;
+    }
+    .content p.note {
+      color: var(--text-muted);
+      font-size: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+    }
+    .content p.note code {
+      background: rgba(109, 92, 255, 0.1);
+      border: 1px solid rgba(109, 92, 255, 0.2);
+    }
+
+    /* Code blocks */
+    .code-block {
+      position: relative;
+      margin-bottom: 24px;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .code-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 16px;
+      background: #18181b;
+      border-bottom: 1px solid var(--border);
+    }
+    .code-lang {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--text-muted);
+    }
+    .copy-btn {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      font-family: inherit;
+    }
+    .copy-btn:hover {
+      color: var(--text);
+      border-color: var(--accent);
+    }
+    .copy-btn.copied {
+      color: var(--green);
+      border-color: var(--green);
+    }
+    .code-block pre {
+      background: var(--surface);
+      padding: 16px;
+      overflow-x: auto;
+      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      color: var(--text);
+    }
+    .code-block pre code {
+      font-family: inherit;
+    }
+
+    /* Inline code */
+    code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
+    }
+
+    /* Tables */
+    .table-wrap {
+      overflow-x: auto;
+      margin-bottom: 24px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    thead {
+      background: #18181b;
+    }
+    th {
+      text-align: left;
+      padding: 10px 16px;
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text);
+    }
+    td code {
+      font-size: 12px;
+    }
+    tr:last-child td {
+      border-bottom: none;
+    }
+    tbody tr:hover {
+      background: rgba(109, 92, 255, 0.03);
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+
+    /* YAML syntax highlighting */
+    .hl-comment { color: #6b6b76; }
+    .hl-key { color: #7dd3fc; }
+    .hl-string { color: #86efac; }
+    .hl-value { color: #fbbf24; }
+    .hl-bool { color: #f472b6; }
+
+    /* PHP syntax highlighting */
+    .hl-php-tag { color: #f472b6; }
+    .hl-php-comment { color: #6b6b76; }
+    .hl-php-keyword { color: #c084fc; }
+    .hl-php-function { color: #7dd3fc; }
+    .hl-php-string { color: #86efac; }
+    .hl-php-var { color: #fbbf24; }
+    .hl-php-const { color: #f472b6; }
+
+    /* Bash syntax highlighting */
+    .hl-bash-comment { color: #6b6b76; }
+    .hl-bash-var { color: #fbbf24; }
+    .hl-bash-string { color: #86efac; }
+    .hl-bash-cmd { color: #7dd3fc; }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+      .sidebar {
+        display: none;
+      }
+      .page-layout {
+        gap: 0;
+      }
+      .content h1 {
+        font-size: 28px;
+      }
+      .content h2 {
+        font-size: 20px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+<nav>
+  <div class="nav-inner">
+    <a href="/" class="logo">Preview<span>.</span></a>
+    <div class="nav-links">
+      <a href="/docs/configuration" class="nav-link active">Docs</a>
+      <a href="/cli" class="nav-link">CLI</a>
+      <a href="https://app.preview-mr.com" class="nav-link">Open App</a>
+    </div>
+  </div>
+</nav>
+
+<div class="page-layout">
+  <aside class="sidebar">
+    <div class="sidebar-title">On this page</div>
+    <ul class="sidebar-nav">
+      <li><a href="#file-structure" class="active">File structure</a></li>
+      <li><a href="#preview-yml">preview.yml</a></li>
+      <li><a href="#settings-php-include">settings.php include</a></li>
+      <li><a href="#settings-preview-php">settings.preview.php</a></li>
+      <li><a href="#deploy-scripts">Deploy scripts</a></li>
+      <li><a href="#environment-variables">Environment variables</a></li>
+      <li><a href="#base-database-files">Base database &amp; files</a></li>
+    </ul>
+  </aside>
+
+  <main class="content">
+    <h1>Project Configuration</h1>
+    <p class="subtitle">How to configure a Drupal project for preview environments. Run <code>preview setup project</code> from your project root to scaffold these files automatically.</p>
+
+    <!-- File structure -->
+    <h2 id="file-structure">File structure</h2>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">Directory</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code>your-project/
+&#x251C;&#x2500;&#x2500; preview.yml                          # Preview configuration
+&#x251C;&#x2500;&#x2500; web/sites/default/                   # (or docroot/)
+&#x2502;   &#x251C;&#x2500;&#x2500; settings.php                     # Modified: include snippet added
+&#x2502;   &#x2514;&#x2500;&#x2500; settings.preview.php             # Created: environment overrides
+&#x2514;&#x2500;&#x2500; scripts/preview/
+    &#x251C;&#x2500;&#x2500; new/deploy.sh                    # Runs on first deploy
+    &#x2514;&#x2500;&#x2500; update/deploy.sh                 # Runs on code updates</code></pre>
+    </div>
+
+    <!-- preview.yml -->
+    <h2 id="preview-yml">preview.yml</h2>
+    <p>The main configuration file for your project. Place it in the repository root.</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">YAML</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code><span class="hl-comment"># Preview Manager configuration</span>
+<span class="hl-comment"># See: https://preview-mr.com/docs/configuration</span>
+
+<span class="hl-comment"># PHP version for the preview container.</span>
+<span class="hl-comment"># Supported: 8.1, 8.2, 8.3, 8.4</span>
+<span class="hl-key">php_version</span>: <span class="hl-string">"8.3"</span>
+
+<span class="hl-comment"># Database engine and version.</span>
+<span class="hl-comment"># Examples: mysql:5.7, mysql:8.0, mysql:8.4, mariadb:10.6, mariadb:11.4</span>
+<span class="hl-key">database</span>: <span class="hl-value">mysql:8.0</span>
+
+<span class="hl-comment"># Document root relative to the project root.</span>
+<span class="hl-comment"># Auto-detected if not set (checks web/ then docroot/).</span>
+<span class="hl-key">docroot</span>: <span class="hl-value">web</span>
+
+<span class="hl-comment"># Optional services. Set a version to enable, false to disable.</span>
+<span class="hl-comment"># When enabled, PREV_*_HOST env vars are set automatically.</span>
+<span class="hl-comment"># Note: redis and valkey are mutually exclusive (valkey wins).</span>
+<span class="hl-key">redis</span>: <span class="hl-bool">false</span>          <span class="hl-comment"># e.g. "7", "6"</span>
+<span class="hl-key">valkey</span>: <span class="hl-bool">false</span>         <span class="hl-comment"># e.g. "8", "7" (Redis-compatible fork)</span>
+<span class="hl-key">solr</span>: <span class="hl-bool">false</span>           <span class="hl-comment"># e.g. "9", "8"</span>
+
+<span class="hl-comment"># Solr configset &mdash; path relative to project root with schema.xml etc.</span>
+<span class="hl-comment"># Generate with: drush search-api-solr:get-server-config</span>
+<span class="hl-comment"># solr_configset: "etc/solr"</span>
+
+<span class="hl-comment"># Custom environment variables injected into the PHP container.</span>
+<span class="hl-comment"># Available in settings.preview.php via getenv().</span>
+<span class="hl-comment"># env:</span>
+<span class="hl-comment">#   APP_ENV: preview</span>
+<span class="hl-comment">#   MY_CUSTOM_VAR: some-value</span>
+
+<span class="hl-comment"># Expose service ports via authenticated subdomain routing.</span>
+<span class="hl-comment"># Each entry maps a service name to its port.</span>
+<span class="hl-comment"># Accessible at {service}--{preview-domain}.mr.preview-mr.com</span>
+<span class="hl-comment"># expose:</span>
+<span class="hl-comment">#   solr: 8983</span>
+
+<span class="hl-comment"># Domain aliases &mdash; additional subdomains that route to this preview.</span>
+<span class="hl-comment"># Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com</span>
+<span class="hl-comment"># Useful for multi-site setups. Available as PREV_DOMAIN_ALIASES env var.</span>
+<span class="hl-comment"># domain_aliases:</span>
+<span class="hl-comment">#   - admin</span>
+<span class="hl-comment">#   - fr</span>
+<span class="hl-comment">#   - de</span>
+
+<span class="hl-comment"># LiteSpeed Cache &mdash; enable the built-in OLS cache module.</span>
+<span class="hl-comment"># Requires the Drupal "lite_speed_cache" module.</span>
+<span class="hl-comment"># litespeed_cache: true</span>
+
+<span class="hl-comment"># Deploy scripts &mdash; executed inside the PHP container.</span>
+<span class="hl-comment"># Paths relative to the project root. Set to false or omit to skip.</span>
+<span class="hl-key">deploy</span>:
+  <span class="hl-key">new</span>: <span class="hl-value">scripts/preview/new/deploy.sh</span>
+  <span class="hl-key">update</span>: <span class="hl-value">scripts/preview/update/deploy.sh</span></code></pre>
+    </div>
+
+    <h3>Defaults</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Option</th><th>Default</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>PHP version</td><td><code>8.3</code></td></tr>
+          <tr><td>Database</td><td><code>mysql:8.0</code></td></tr>
+          <tr><td>Docroot</td><td><code>web</code> (auto-detected)</td></tr>
+          <tr><td>Redis / Valkey</td><td>disabled</td></tr>
+          <tr><td>Solr</td><td>disabled</td></tr>
+          <tr><td>LiteSpeed Cache</td><td>disabled</td></tr>
+          <tr><td>Expose</td><td>none</td></tr>
+          <tr><td>Domain aliases</td><td>none</td></tr>
+          <tr><td>Deploy scripts</td><td>none</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- settings.php include -->
+    <h2 id="settings-php-include">settings.php include</h2>
+    <p>Add this snippet at the end of your <code>settings.php</code> file to load preview-specific configuration when running inside a preview container.</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">PHP</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code><span class="hl-php-comment">// Preview environment settings.</span>
+<span class="hl-php-keyword">if</span> (<span class="hl-php-function">getenv</span>(<span class="hl-php-string">'PREV_IS_PREVIEW'</span>)) {
+  <span class="hl-php-keyword">include</span> <span class="hl-php-const">__DIR__</span> . <span class="hl-php-string">'/settings.preview.php'</span>;
+}</code></pre>
+    </div>
+    <p class="note"><code>PREV_IS_PREVIEW</code> is only set inside preview containers, so this snippet has no effect in other environments.</p>
+
+    <!-- settings.preview.php -->
+    <h2 id="settings-preview-php">settings.preview.php</h2>
+    <p>This file is managed by you for custom overrides. The internal configuration (database connection, file paths, trusted host patterns) is handled automatically by <code>settings.preview.internal.php</code>, which is generated by the deployer.</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">PHP</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code><span class="hl-php-tag">&lt;?php</span>
+
+<span class="hl-php-comment">/**
+ * @file
+ * Preview environment overrides.
+ *
+ * Loaded after the internal preview configuration which sets up
+ * database, file paths, and trusted host patterns automatically.
+ */</span>
+
+<span class="hl-php-comment">// Example: disable CSS/JS aggregation</span>
+<span class="hl-php-comment">// $config['system.performance']['css']['preprocess'] = FALSE;</span>
+<span class="hl-php-comment">// $config['system.performance']['js']['preprocess'] = FALSE;</span></code></pre>
+    </div>
+
+    <!-- Deploy scripts -->
+    <h2 id="deploy-scripts">Deploy scripts</h2>
+    <p>Deploy scripts run inside the PHP container at two distinct phases:</p>
+    <p><strong>new</strong> &mdash; Runs on the first deploy, after the database and files have been imported. Use this for initial setup tasks like running <code>drush deploy</code>.</p>
+    <p><strong>update</strong> &mdash; Runs on subsequent code updates (new commits pushed to the branch). The database and files are not re-imported.</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">Bash</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code><span class="hl-bash-comment">#!/usr/bin/env bash</span>
+<span class="hl-bash-cmd">set</span> -euo pipefail
+
+<span class="hl-bash-var">DRUSH</span>=<span class="hl-bash-string">"vendor/bin/drush"</span>
+<span class="hl-bash-cmd">echo</span> <span class="hl-bash-string">"Running new preview deploy script..."</span>
+<span class="hl-bash-var">$DRUSH</span> deploy
+<span class="hl-bash-cmd">echo</span> <span class="hl-bash-string">"Deploy complete."</span></code></pre>
+    </div>
+
+    <h3>Per-preview overrides</h3>
+    <p>Create a file named <code>scripts/preview/new/mr-123-deploy.sh</code> to override the default deploy script for a specific preview (in this case, <code>mr-123</code>).</p>
+
+    <!-- Environment variables -->
+    <h2 id="environment-variables">Environment variables</h2>
+    <p>These variables are available inside preview containers and in <code>settings.preview.php</code> via <code>getenv()</code>.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Variable</th><th>Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>PREV_IS_PREVIEW</code></td><td>Always <code>"true"</code> in preview environments</td></tr>
+          <tr><td><code>PREV_PROJECT_NAME</code></td><td>Project slug</td></tr>
+          <tr><td><code>PREV_PREVIEW_NAME</code></td><td>Preview name (e.g. <code>mr-123</code>, <code>branch-develop</code>)</td></tr>
+          <tr><td><code>PREV_MR_IID</code></td><td>Merge request IID</td></tr>
+          <tr><td><code>PREV_BRANCH</code></td><td>Git branch name</td></tr>
+          <tr><td><code>PREV_COMMIT_SHA</code></td><td>Git commit SHA</td></tr>
+          <tr><td><code>PREV_URL</code></td><td>Full preview URL (<code>https://...</code>)</td></tr>
+          <tr><td><code>PREV_DOMAIN</code></td><td>Preview domain (without protocol)</td></tr>
+          <tr><td><code>PREV_DB_HOST</code></td><td>Database hostname</td></tr>
+          <tr><td><code>PREV_DB_NAME</code></td><td>Database name</td></tr>
+          <tr><td><code>PREV_DB_USER</code></td><td>Database username</td></tr>
+          <tr><td><code>PREV_DB_PASSWORD</code></td><td>Database password</td></tr>
+          <tr><td><code>PREV_FILE_PUBLIC_PATH</code></td><td>Public files path</td></tr>
+          <tr><td><code>PREV_FILE_PRIVATE_PATH</code></td><td>Private files path</td></tr>
+          <tr><td><code>PREV_FILE_TEMP_PATH</code></td><td>Temp files path</td></tr>
+          <tr><td><code>PREV_FILE_TRANSLATIONS_PATH</code></td><td>Translations directory</td></tr>
+          <tr><td><code>PREV_REDIS_HOST</code></td><td>Redis hostname (if redis/valkey enabled)</td></tr>
+          <tr><td><code>PREV_SOLR_HOST</code></td><td>Solr hostname (if enabled)</td></tr>
+          <tr><td><code>PREV_SOLR_CORE</code></td><td>Solr core name (if enabled)</td></tr>
+          <tr><td><code>PREV_DOMAIN_ALIASES</code></td><td>Comma-separated alias domains</td></tr>
+          <tr><td><code>PREV_LITESPEED_CACHE</code></td><td><code>"true"</code> if LiteSpeed Cache enabled</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">Custom variables defined in the <code>env</code> key of <code>preview.yml</code> are injected without the <code>PREV_</code> prefix.</p>
+
+    <!-- Base database & files -->
+    <h2 id="base-database-files">Base database &amp; files</h2>
+    <p>Preview environments need a starting database and optionally public files to work with.</p>
+
+    <h3>Database (required)</h3>
+    <p>Upload a gzipped SQL dump using the CLI:</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">Shell</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code>preview push db</code></pre>
+    </div>
+
+    <h3>Files (optional)</h3>
+    <p>Upload public files as a tar.gz archive. Use the <code>--strip-heavy-files</code> flag to exclude large files above a given threshold:</p>
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-lang">Shell</span>
+        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+      </div>
+      <pre><code>preview push files --strip-heavy-files 2mb</code></pre>
+    </div>
+  </main>
+</div>
+
+<footer>
+  <p>Preview Manager</p>
+</footer>
+
+<script>
+function copyCode(btn) {
+  const pre = btn.closest('.code-block').querySelector('pre');
+  const text = pre.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+// Sidebar active section highlight
+document.addEventListener('DOMContentLoaded', () => {
+  const links = document.querySelectorAll('.sidebar-nav a');
+  const sections = [];
+
+  links.forEach(link => {
+    const id = link.getAttribute('href').slice(1);
+    const el = document.getElementById(id);
+    if (el) sections.push({ id, el, link });
+  });
+
+  function updateActive() {
+    let current = sections[0];
+    for (const s of sections) {
+      if (s.el.getBoundingClientRect().top <= 120) {
+        current = s;
+      }
+    }
+    links.forEach(l => l.classList.remove('active'));
+    if (current) current.link.classList.add('active');
+  }
+
+  window.addEventListener('scroll', updateActive, { passive: true });
+  updateActive();
+});
+</script>
+
+</body>
+</html>

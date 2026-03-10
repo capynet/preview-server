@@ -33,46 +33,53 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["gitlab"])
 
-# ---- In-memory cache for GitLab project listing (per org) ----
-_projects_cache: dict[int, tuple[list[dict], float]] = {}
+# ---- In-memory cache for GitLab project listing (per org, per page) ----
+# Structure: {org_id: {page_number: (projects_list, timestamp)}}
+_pages_cache: dict[int, dict[int, tuple[list[dict], float]]] = {}
 _PROJECTS_CACHE_TTL = 3600  # 1 hour
+_GITLAB_PAGE_SIZE = 20
 
 
 def _invalidate_projects_cache(org_id: int):
-    _projects_cache.pop(org_id, None)
+    _pages_cache.pop(org_id, None)
 
 
 async def _fetch_all_gitlab_projects(gitlab_url: str, token: str, org_id: int) -> list[dict]:
-    cached = _projects_cache.get(org_id)
-    if cached and (time.monotonic() - cached[1]) < _PROJECTS_CACHE_TTL:
-        return cached[0]
+    org_cache = _pages_cache.setdefault(org_id, {})
+    now = time.monotonic()
 
     all_projects = []
     page = 1
     async with httpx.AsyncClient(timeout=60) as client:
         while True:
-            resp = await client.get(
-                f"{gitlab_url}/api/v4/projects",
-                headers={"PRIVATE-TOKEN": token},
-                params={
-                    "membership": "true",
-                    "archived": "false",
-                    "per_page": 100,
-                    "page": page,
-                    "order_by": "name",
-                    "sort": "asc",
-                },
-            )
-            resp.raise_for_status()
-            projects_page = resp.json()
+            # Use cached page if still valid
+            cached_page = org_cache.get(page)
+            if cached_page and (now - cached_page[1]) < _PROJECTS_CACHE_TTL:
+                projects_page = cached_page[0]
+            else:
+                resp = await client.get(
+                    f"{gitlab_url}/api/v4/projects",
+                    headers={"PRIVATE-TOKEN": token},
+                    params={
+                        "membership": "true",
+                        "archived": "false",
+                        "per_page": _GITLAB_PAGE_SIZE,
+                        "page": page,
+                        "order_by": "name",
+                        "sort": "asc",
+                    },
+                )
+                resp.raise_for_status()
+                projects_page = resp.json()
+                org_cache[page] = (projects_page, time.monotonic())
+
             if not projects_page:
                 break
             all_projects.extend(projects_page)
-            if len(projects_page) < 100:
+            if len(projects_page) < _GITLAB_PAGE_SIZE:
                 break
             page += 1
 
-    _projects_cache[org_id] = (all_projects, time.monotonic())
     return all_projects
 
 
@@ -270,6 +277,28 @@ async def gitlab_disconnect(user: UserWithContext = Depends(require_org_role(Org
     await update_organization(user.org.id, gitlab_url=None, gitlab_access_token=None)
     _invalidate_projects_cache(user.org.id)
     return {"success": True}
+
+
+@router.get("/orgs/{org}/gitlab/projects/enabled")
+async def gitlab_enabled_projects(user: UserWithContext = Depends(require_org_role(OrgRole.viewer))):
+    """Return only projects that have previews enabled (from local DB, no GitLab call)."""
+    from app.database import list_projects
+    enabled_projects = await list_projects(user.org.id)
+    return {
+        "projects": [
+            {
+                "id": p.get("gitlab_project_id"),
+                "name": p.get("name") or p["slug"],
+                "path_with_namespace": p.get("gitlab_project_path", ""),
+                "description": "",
+                "web_url": p.get("gitlab_web_url", ""),
+                "default_branch": p.get("gitlab_default_branch", "main"),
+                "previews_enabled": True,
+            }
+            for p in enabled_projects
+            if p.get("gitlab_project_id")
+        ]
+    }
 
 
 @router.get("/orgs/{org}/gitlab/projects")

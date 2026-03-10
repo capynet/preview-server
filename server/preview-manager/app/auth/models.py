@@ -47,7 +47,7 @@ class Organization(BaseModel):
     auto_stop_enabled: bool = True
     auto_stop_minutes: int = 15
     auto_erase_enabled: bool = False
-    auto_erase_days: int = 30
+    auto_erase_days: int = 10
     created_at: str
     updated_at: str
 
@@ -116,11 +116,13 @@ class LoginBody(BaseModel):
 class CreateOrgBody(BaseModel):
     name: str
     slug: str
+    color: Optional[str] = "#6366f1"
 
 
 class UpdateOrgBody(BaseModel):
     name: Optional[str] = None
     avatar_url: Optional[str] = None
+    color: Optional[str] = None
     auto_stop_enabled: Optional[bool] = None
     auto_stop_minutes: Optional[int] = None
     auto_erase_enabled: Optional[bool] = None

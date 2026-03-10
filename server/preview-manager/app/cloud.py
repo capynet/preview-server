@@ -81,6 +81,8 @@ class HetznerCloudManager:
     async def create_vm(
         self,
         name: str,
+        project_id: int = 0,
+        preview_name: str = "",
     ) -> Server:
         """Create a VM from snapshot."""
         client = _get_client()
@@ -122,7 +124,6 @@ class HetznerCloudManager:
         # Log resource for billing
         import json
         from app.database import log_cloud_resource
-        project, preview = self._parse_vm_name(name)
         price_hourly = float(server_type.data_model.prices[0]["price_hourly"]["gross"])
         price_monthly = float(server_type.data_model.prices[0]["price_monthly"]["gross"])
         spec = json.dumps({
@@ -132,12 +133,13 @@ class HetznerCloudManager:
             "disk_gb": server_type.data_model.disk,
             "ip": server.data_model.public_net.ipv4.ip,
         })
-        await log_cloud_resource(
-            project=project, preview_name=preview,
-            resource_type="vm", resource_id=server.data_model.id,
-            resource_name=name, spec=spec,
-            price_hourly=price_hourly, price_monthly=price_monthly,
-        )
+        if project_id:
+            await log_cloud_resource(
+                project_id=project_id, preview_name=preview_name,
+                resource_type="vm", resource_id=server.data_model.id,
+                resource_name=name, spec=spec,
+                price_hourly=price_hourly, price_monthly=price_monthly,
+            )
 
         return server
 
@@ -191,97 +193,6 @@ class HetznerCloudManager:
         except Exception:
             return None
 
-    async def create_volume(self, name: str, size_gb: int):
-        """Create a block storage volume, or reuse existing one with same name."""
-        client = _get_client()
-
-        # Check if volume already exists (from a previous failed deploy)
-        existing = await _run(client.volumes.get_by_name, name)
-        if existing:
-            logger.info("Reusing existing volume: %s (id=%d)", name, existing.data_model.id)
-            # Detach if still attached to a deleted/old server
-            if existing.data_model.server:
-                try:
-                    action = await _run(existing.detach)
-                    await _run(action.wait_until_finished)
-                except Exception:
-                    pass
-            return existing
-
-        location = Location(name=settings.hetzner_location)
-        response = await _run(
-            client.volumes.create,
-            name=name,
-            size=size_gb,
-            location=location,
-            format="ext4",
-        )
-        volume = response.volume
-        logger.info("Created volume: %s (id=%d, %d GB)", name, volume.data_model.id, size_gb)
-
-        if response.action:
-            await _run(response.action.wait_until_finished)
-
-        # Log resource for billing
-        import json
-        from app.database import log_cloud_resource
-        project, preview = self._parse_volume_name(name)
-        # Hetzner volume pricing: ~0.052 EUR/GB/month
-        price_monthly = size_gb * 0.052
-        price_hourly = price_monthly / 730  # avg hours per month
-        spec = json.dumps({"size_gb": size_gb})
-        await log_cloud_resource(
-            project=project, preview_name=preview,
-            resource_type="volume", resource_id=volume.data_model.id,
-            resource_name=name, spec=spec,
-            price_hourly=price_hourly, price_monthly=price_monthly,
-        )
-
-        return volume
-
-    async def attach_volume(self, server_id: int, volume_id: int, automount: bool = True) -> None:
-        """Attach a volume to a server."""
-        client = _get_client()
-        volume = await _run(client.volumes.get_by_id, volume_id)
-        if not volume:
-            raise RuntimeError(f"Volume {volume_id} not found")
-        server = await _run(client.servers.get_by_id, server_id)
-        if not server:
-            raise RuntimeError(f"Server {server_id} not found")
-        action = await _run(volume.attach, server, automount=automount)
-        await _run(action.wait_until_finished)
-        logger.info("Attached volume %d to server %d", volume_id, server_id)
-
-    async def detach_volume(self, volume_id: int) -> None:
-        """Detach a volume from its server."""
-        client = _get_client()
-        volume = await _run(client.volumes.get_by_id, volume_id)
-        if not volume:
-            raise RuntimeError(f"Volume {volume_id} not found")
-        if volume.data_model.server is None:
-            return  # Already detached
-        action = await _run(volume.detach)
-        await _run(action.wait_until_finished)
-        logger.info("Detached volume %d", volume_id)
-
-    async def delete_volume(self, volume_id: int) -> None:
-        """Delete a volume permanently."""
-        client = _get_client()
-        volume = await _run(client.volumes.get_by_id, volume_id)
-        if not volume:
-            logger.warning("Volume %d not found, already deleted?", volume_id)
-            return
-        # Detach first if attached
-        if volume.data_model.server:
-            action = await _run(volume.detach)
-            await _run(action.wait_until_finished)
-        await _run(volume.delete)
-        logger.info("Deleted volume %d", volume_id)
-
-        # Log resource destruction for billing
-        from app.database import finish_cloud_resource
-        await finish_cloud_resource("volume", volume_id)
-
     async def wait_for_vm_ready(self, server_id: int, timeout: int = 300) -> str:
         """Wait until VM is running and SSH is reachable. Returns the IP address."""
         import time
@@ -311,32 +222,6 @@ class HetznerCloudManager:
         executor = RemoteExecutor(ip)
         await executor.wait_for_ssh(timeout=remaining)
         return ip
-
-    @staticmethod
-    def _parse_vm_name(name: str) -> tuple[str, str]:
-        """Parse 'prev-{project}-{preview}' into (project, preview)."""
-        # name format: prev-{project}-{preview_name}
-        if name.startswith("prev-"):
-            rest = name[5:]  # remove "prev-"
-            # preview_name is the part before the last project segment
-            # Since both can contain dashes, we rely on the known pattern
-            # prev-{project}-{preview_name} where preview_name = mr-N or branch-X
-            parts = rest.split("-", 1)
-            if len(parts) == 2:
-                # This is tricky since project can have dashes too
-                # We'll just return the full rest and let callers handle it
-                return parts[0], parts[1] if len(parts) > 1 else ""
-        return name, ""
-
-    @staticmethod
-    def _parse_volume_name(name: str) -> tuple[str, str]:
-        """Parse 'vol-{project}-{preview}' into (project, preview)."""
-        if name.startswith("vol-"):
-            rest = name[4:]
-            parts = rest.split("-", 1)
-            if len(parts) == 2:
-                return parts[0], parts[1]
-        return name, ""
 
     async def get_active_vms(self) -> list[Server]:
         """List all VMs with the prev- prefix."""

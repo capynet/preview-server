@@ -96,7 +96,7 @@ async def get_org_context(
             auto_stop_enabled=bool(org.get("auto_stop_enabled", 1)),
             auto_stop_minutes=org.get("auto_stop_minutes", 15),
             auto_erase_enabled=bool(org.get("auto_erase_enabled", 0)),
-            auto_erase_days=org.get("auto_erase_days", 30),
+            auto_erase_days=org.get("auto_erase_days", 10),
             created_at=org["created_at"], updated_at=org["updated_at"],
         )
         user.org_role = OrgRole.owner
@@ -115,7 +115,7 @@ async def get_org_context(
         auto_stop_enabled=bool(org.get("auto_stop_enabled", 1)),
         auto_stop_minutes=org.get("auto_stop_minutes", 15),
         auto_erase_enabled=bool(org.get("auto_erase_enabled", 0)),
-        auto_erase_days=org.get("auto_erase_days", 30),
+        auto_erase_days=org.get("auto_erase_days", 10),
         created_at=org["created_at"], updated_at=org["updated_at"],
     )
     user.org_role = OrgRole(membership["role"])

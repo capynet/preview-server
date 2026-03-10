@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS organizations (
     auto_stop_enabled INTEGER NOT NULL DEFAULT 1,
     auto_stop_minutes INTEGER NOT NULL DEFAULT 15,
     auto_erase_enabled INTEGER NOT NULL DEFAULT 0,
-    auto_erase_days INTEGER NOT NULL DEFAULT 30,
+    auto_erase_days INTEGER NOT NULL DEFAULT 10,
+    color TEXT NOT NULL DEFAULT '#6366f1',
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
@@ -246,8 +247,8 @@ async def create_organization(slug: str, name: str, **fields) -> dict:
             """INSERT INTO organizations
                (slug, name, avatar_url, gitlab_url, gitlab_access_token,
                 auto_stop_enabled, auto_stop_minutes, auto_erase_enabled, auto_erase_days,
-                created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                color, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 slug, name,
                 fields.get("avatar_url"),
@@ -256,7 +257,8 @@ async def create_organization(slug: str, name: str, **fields) -> dict:
                 fields.get("auto_stop_enabled", 1),
                 fields.get("auto_stop_minutes", 15),
                 fields.get("auto_erase_enabled", 0),
-                fields.get("auto_erase_days", 30),
+                fields.get("auto_erase_days", 10),
+                fields.get("color", "#6366f1"),
                 now, now,
             ),
         )

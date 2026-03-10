@@ -19,6 +19,7 @@ var ErrNotAuthenticated = fmt.Errorf("authentication failed")
 type Client struct {
 	BaseURL    string
 	Token      string
+	Org        string
 	HTTPClient *http.Client
 }
 
@@ -48,12 +49,19 @@ type Preview struct {
 	BasicAuthPass  *string `json:"basic_auth_pass"`
 }
 
-func New(baseURL, token string) *Client {
+func New(baseURL, token, org string) *Client {
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		Token:      token,
+		Org:        org,
 		HTTPClient: &http.Client{},
 	}
+}
+
+// orgProjectPrefix returns the URL prefix for org-scoped project endpoints.
+// e.g. "https://api.example.com/api/orgs/myorg/projects/myproject"
+func (c *Client) orgProjectPrefix(project string) string {
+	return fmt.Sprintf("%s/api/orgs/%s/projects/%s", c.BaseURL, c.Org, project)
 }
 
 func (c *Client) doRequest(method, url string, body io.Reader) (*http.Response, error) {
@@ -107,7 +115,7 @@ func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
 }
 
 func (c *Client) PostAction(project string, mrID int, action string) (*ActionResult, error) {
-	url := fmt.Sprintf("%s/api/previews/%s/mr-%d/%s", c.BaseURL, project, mrID, action)
+	url := fmt.Sprintf("%s/previews/mr-%d/%s", c.orgProjectPrefix(project), mrID, action)
 
 	resp, err := c.doRequest("POST", url, nil)
 	if err != nil {
@@ -132,7 +140,7 @@ func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult
 }
 
 func (c *Client) PostDrushByName(project string, previewName string, args string) (*ActionResult, error) {
-	url := fmt.Sprintf("%s/api/previews/%s/%s/drush", c.BaseURL, project, previewName)
+	url := fmt.Sprintf("%s/previews/%s/drush", c.orgProjectPrefix(project), previewName)
 
 	payload := fmt.Sprintf(`{"args": %q}`, args)
 	resp, err := c.doRequest("POST", url, strings.NewReader(payload))
@@ -165,7 +173,7 @@ type BaseFilesStatus struct {
 }
 
 func (c *Client) GetBaseFilesStatus(slug string) (*BaseFilesStatus, error) {
-	url := fmt.Sprintf("%s/api/projects/%s/base-files", c.BaseURL, slug)
+	url := fmt.Sprintf("%s/base-files", c.orgProjectPrefix(slug))
 
 	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {
@@ -220,7 +228,7 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 	// 2. Request presigned URL(s) from API
 	presignBody, _ := json.Marshal(map[string]interface{}{"total_size": written})
 	resp, err := c.doRequest("POST",
-		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/presign", c.BaseURL, slug, kind),
+		fmt.Sprintf("%s/base-files/%s/upload/presign", c.orgProjectPrefix(slug), kind),
 		bytes.NewReader(presignBody))
 	if err != nil {
 		return fmt.Errorf("presign request failed: %w", err)
@@ -270,7 +278,7 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 	}
 	confirmBody, _ := json.Marshal(confirmPayload)
 	confirmResp, err := c.doRequest("POST",
-		fmt.Sprintf("%s/api/projects/%s/base-files/%s/upload/complete", c.BaseURL, slug, kind),
+		fmt.Sprintf("%s/base-files/%s/upload/complete", c.orgProjectPrefix(slug), kind),
 		bytes.NewReader(confirmBody))
 	if err != nil {
 		return fmt.Errorf("confirm request failed: %w", err)
@@ -460,7 +468,7 @@ func formatBytes(b int64) string {
 }
 
 func (c *Client) DownloadStream(project string, previewName string, kind string, w io.Writer) error {
-	url := fmt.Sprintf("%s/api/previews/%s/%s/%s/download", c.BaseURL, project, previewName, kind)
+	url := fmt.Sprintf("%s/previews/%s/%s/download", c.orgProjectPrefix(project), previewName, kind)
 
 	resp, err := c.doRequest("GET", url, nil)
 	if err != nil {

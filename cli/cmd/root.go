@@ -17,6 +17,7 @@ import (
 )
 
 var apiClient *client.Client
+var orgFlag string
 
 // Version is set by main.go from the embedded VERSION file.
 var Version = "dev"
@@ -51,7 +52,19 @@ var rootCmd = &cobra.Command{
 			fmt.Fprintln(os.Stderr, "This will open a browser to authorize the CLI with your preview server.")
 			os.Exit(1)
 		}
-		apiClient = client.New(cfg.APIURL, cfg.Token)
+
+		// Resolve org: flag > config
+		org := orgFlag
+		if org == "" {
+			org = cfg.Org
+		}
+		if org == "" {
+			fmt.Fprintln(os.Stderr, "No organization configured. Run 'preview login' to set up your organization,")
+			fmt.Fprintln(os.Stderr, "or use --org <slug> to specify one.")
+			os.Exit(1)
+		}
+
+		apiClient = client.New(cfg.APIURL, cfg.Token, org)
 	},
 }
 
@@ -121,6 +134,7 @@ func configPath() string {
 type config struct {
 	APIURL           string `json:"api_url"`
 	Token            string `json:"token,omitempty"`
+	Org              string `json:"org,omitempty"`
 	LastVersionCheck int64  `json:"last_version_check,omitempty"`
 	LatestVersion    string `json:"latest_version,omitempty"`
 }
@@ -144,6 +158,7 @@ func saveConfig(cfg config) error {
 }
 
 func init() {
+	rootCmd.PersistentFlags().StringVar(&orgFlag, "org", "", "Organization slug (overrides config)")
 }
 
 // detectGitBranch returns the current git branch name.
