@@ -146,6 +146,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         org_slug=org_slug,
         url_hash=url_hash,
         mr_id=state.get("mr_id"),
+        mr_title=state.get("mr_title"),
         status=state["status"],
         url=state["url"],
         path=state["path"],

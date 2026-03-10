@@ -85,6 +85,7 @@ class PreviewDeployer:
         commit_sha: str,
         triggered_by: str | None = None,
         mr_iid: int | None = None,
+        mr_title: str | None = None,
         deployment_id: int | None = None,
         *,
         org_slug: str = "",
@@ -105,6 +106,7 @@ class PreviewDeployer:
         self.commit_sha = commit_sha
         self.triggered_by = triggered_by
         self.mr_iid = mr_iid
+        self.mr_title = mr_title
 
         self.force_new = False
         self.preview_path = PreviewStateManager.get_preview_path(
@@ -1279,6 +1281,8 @@ if (getenv('PREV_IS_PREVIEW')) {
 
         if self.mr_iid is not None:
             fields["mr_id"] = self.mr_iid
+        if self.mr_title is not None:
+            fields["mr_title"] = self.mr_title
 
         if not existing:
             fields["created_at"] = now

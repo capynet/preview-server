@@ -148,6 +148,7 @@ CREATE TABLE IF NOT EXISTS previews (
     preview_name TEXT NOT NULL,
     url_hash TEXT NOT NULL,
     mr_id INTEGER,
+    mr_title TEXT,
     branch TEXT NOT NULL,
     commit_sha TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'creating',
@@ -232,9 +233,27 @@ async def init_db():
     try:
         await db.executescript(SCHEMA)
         await db.commit()
+
+        # Migrations for existing databases
+        await _run_migrations(db)
+
         logger.info(f"Database initialized at {_db_path}")
     finally:
         await db.close()
+
+
+async def _run_migrations(db):
+    """Apply schema migrations for columns added after initial release."""
+    migrations = [
+        ("previews", "mr_title", "ALTER TABLE previews ADD COLUMN mr_title TEXT"),
+    ]
+    for table, column, sql in migrations:
+        cur = await db.execute(f"PRAGMA table_info({table})")
+        columns = [row[1] for row in await cur.fetchall()]
+        if column not in columns:
+            await db.execute(sql)
+            await db.commit()
+            logger.info(f"Migration: added column {table}.{column}")
 
 
 # ---- Organization CRUD ----
@@ -738,17 +757,18 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
             now = _now()
             await db.execute(
                 """INSERT INTO previews
-                   (project_id, preview_name, url_hash, mr_id, branch, commit_sha, status, url, path,
+                   (project_id, preview_name, url_hash, mr_id, mr_title, branch, commit_sha, status, url, path,
                     created_at, last_deployed_at,
                     last_deployment_status, last_deployment_error,
                     last_deployment_duration, last_deployment_completed_at,
                     auto_update, pinned, env_vars)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     project_id,
                     preview_name,
                     fields.get("url_hash", ""),
                     fields.get("mr_id"),
+                    fields.get("mr_title"),
                     fields.get("branch", "unknown"),
                     fields.get("commit_sha", ""),
                     fields.get("status", "creating"),
