@@ -380,6 +380,7 @@ async def get_preview_list_base(
             "org_slug": row.get("org_slug", ""),
             "url_hash": url_hash,
             "mr_id": row.get("mr_id"),
+            "mr_title": row.get("mr_title"),
             "status": status,
             "url": row["url"],
             "branch": row["branch"],
