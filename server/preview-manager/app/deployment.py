@@ -262,7 +262,8 @@ class PreviewDeployer:
             await proc.communicate()
         else:
             # Create new VM
-            vm_name = f"prev-{self.project_slug}-{self.preview_name}"
+            raw = f"{self.project_slug}-{self.preview_name}"
+            vm_name = f"prev-{hashlib.md5(raw.encode()).hexdigest()[:8]}"
             server = await self._step_create_vm(vm_name)
             self._vm_id = server.data_model.id
             self._vm_ip = server.data_model.public_net.ipv4.ip
