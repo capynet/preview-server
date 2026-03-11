@@ -56,23 +56,47 @@ RUN LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
     && ln -sf /usr/local/lsws/lsphp${LSPHP_VER}/bin/lsphp /usr/local/lsws/fcgi-bin/lsphp \
     && ln -sf /usr/local/lsws/lsphp${LSPHP_VER}/bin/php /usr/local/bin/php
 
-# Install NVM (Node Version Manager) — no Node installed by default.
-# Projects use .nvmrc to specify their Node version.
+# Install NVM (Node Version Manager) with pre-installed LTS versions.
+# Projects can use .nvmrc to specify their Node version; nvm use is automatic via BASH_ENV.
 ENV NVM_DIR=/usr/local/nvm
 ENV BASH_ENV=/etc/nvm.sh
 RUN mkdir -p $NVM_DIR \
     && curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash \
     && printf 'export NVM_DIR=/usr/local/nvm\n[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"\n' > /etc/nvm.sh \
     && echo 'export NVM_DIR=/usr/local/nvm' >> /etc/bash.bashrc \
-    && echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> /etc/bash.bashrc
+    && echo '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"' >> /etc/bash.bashrc \
+    && . "$NVM_DIR/nvm.sh" \
+    && nvm install 18 \
+    && nvm install 20 \
+    && nvm install --lts \
+    && nvm alias default lts/* \
+    && nvm cache clear
 
 # Create wrapper scripts so nvm/node/npm/npx work from #!/bin/sh scripts.
 # nvm is a bash function, so sh scripts cannot source it directly.
 # These wrappers invoke bash, load nvm, then exec the real command.
-RUN printf '#!/bin/bash\nexport NVM_DIR=/usr/local/nvm\n. "$NVM_DIR/nvm.sh"\nnvm "$@"\n' > /usr/local/bin/nvm \
+# If .nvmrc exists in the current or parent dirs, auto-install that version.
+RUN cat > /usr/local/bin/nvm-auto.sh <<'NVMSCRIPT'
+export NVM_DIR=/usr/local/nvm
+. "$NVM_DIR/nvm.sh"
+# Walk up to find .nvmrc
+_dir="$PWD"
+while [ "$_dir" != "/" ]; do
+    if [ -f "$_dir/.nvmrc" ]; then
+        _ver=$(cat "$_dir/.nvmrc" | tr -d '[:space:]')
+        if ! nvm which "$_ver" &>/dev/null; then
+            nvm install "$_ver" >/dev/null 2>&1
+        fi
+        nvm use "$_ver" >/dev/null 2>&1
+        break
+    fi
+    _dir=$(dirname "$_dir")
+done
+NVMSCRIPT
+RUN printf '#!/bin/bash\nsource /usr/local/bin/nvm-auto.sh\nnvm "$@"\n' > /usr/local/bin/nvm \
     && chmod +x /usr/local/bin/nvm \
     && for cmd in node npm npx; do \
-        printf '#!/bin/bash\nexport NVM_DIR=/usr/local/nvm\n. "$NVM_DIR/nvm.sh"\nexec %s "$@"\n' "$cmd" > /usr/local/bin/$cmd \
+        printf '#!/bin/bash\nsource /usr/local/bin/nvm-auto.sh\nexec %s "$@"\n' "$cmd" > /usr/local/bin/$cmd \
         && chmod +x /usr/local/bin/$cmd; \
     done
 

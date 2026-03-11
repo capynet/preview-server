@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -210,7 +211,7 @@ async def create_branch_preview(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
-                f"{gitlab_url}/api/v4/projects/{encoded_path}/repository/branches/{body.branch}",
+                f"{gitlab_url}/api/v4/projects/{encoded_path}/repository/branches/{quote(body.branch, safe='')}",
                 headers={"PRIVATE-TOKEN": token},
                 timeout=15,
             )

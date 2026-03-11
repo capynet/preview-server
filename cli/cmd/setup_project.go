@@ -249,7 +249,6 @@ solr: false           # e.g. "9", "8"
 # "new" runs when a preview is created for the first time (after DB + files import).
 # "update" runs when new commits are pushed to the MR.
 #
-# You can override per-MR by creating: scripts/preview/{phase}/mr-{id}-deploy.sh
 deploy:
   new: scripts/preview/new/deploy.sh
   update: scripts/preview/update/deploy.sh

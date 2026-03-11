@@ -255,9 +255,9 @@ class PreviewDeployer:
             logger.info(f"Reusing existing VM {self._vm_id} ({self._vm_ip})")
             await self._log_raw(f"{DIM}Reusing existing VM {self._vm_id} ({self._vm_ip}){RESET}\n")
 
-            # Stop existing containers
+            # Stop existing containers and remove volumes (DB will be reimported)
             proc = await self._executor.run_shell(
-                f"cd {VM_PREVIEW_DIR}/code && docker compose down --remove-orphans 2>/dev/null; true"
+                f"cd {VM_PREVIEW_DIR}/code && docker compose down --remove-orphans -v 2>/dev/null; true"
             )
             await proc.communicate()
         else:
