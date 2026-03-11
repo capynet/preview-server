@@ -416,7 +416,7 @@ async def list_project_branches(project_id: int, user: UserWithContext = Depends
                 resp = await client.get(
                     f"{gitlab_url}/api/v4/projects/{project_id}/repository/branches",
                     headers={"PRIVATE-TOKEN": token},
-                    params={"per_page": 100, "page": page},
+                    params={"per_page": 100, "page": page, "order_by": "updated", "sort": "desc"},
                     timeout=15,
                 )
                 resp.raise_for_status()
@@ -462,7 +462,7 @@ async def list_project_branches_by_slug(project_slug: str, user: UserWithContext
                 resp = await client.get(
                     f"{gitlab_url}/api/v4/projects/{encoded_path}/repository/branches",
                     headers={"PRIVATE-TOKEN": token},
-                    params={"per_page": 100, "page": page},
+                    params={"per_page": 100, "page": page, "order_by": "updated", "sort": "desc"},
                     timeout=15,
                 )
                 resp.raise_for_status()
