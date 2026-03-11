@@ -39,16 +39,6 @@ async def lifespan(app: FastAPI):
     # Initialize PostgreSQL pool
     await init_pool()
 
-    # Run Alembic migrations
-    try:
-        from alembic.config import Config
-        from alembic import command
-        alembic_cfg = Config("alembic.ini")
-        command.upgrade(alembic_cfg, "head")
-        logger.info("Alembic migrations applied")
-    except Exception as e:
-        logger.warning(f"Alembic migration error (may be first run): {e}")
-
     # Initialize Valkey
     await init_valkey()
 
@@ -135,10 +125,29 @@ app.include_router(router)
 app.router.lifespan_context = lifespan
 
 
+def run_migrations():
+    """Run Alembic migrations once before forking workers."""
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied")
+    except Exception as e:
+        logger.warning(f"Alembic migration error (may be first run): {e}")
+
+
 def main():
     """Main application entry point"""
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
+
+    # Run migrations once in the parent process before forking workers
+    run_migrations()
+
+    # Seed default data (only if DB is empty)
+    from seed import seed_database
+    seed_database()
 
     uvicorn.run(
         "main:app",

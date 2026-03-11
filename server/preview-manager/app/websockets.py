@@ -332,16 +332,17 @@ class SystemResourcesManager:
 
 system_resources_manager = SystemResourcesManager()
 
+# Circular buffer: last 30 snapshots (2s interval = 60s of history)
+_RESOURCE_HISTORY_MAX = 30
+_resource_history: list[dict] = []
+
 
 async def system_resources_loop():
-    """Background loop that broadcasts system resource metrics every 2 seconds."""
+    """Background loop that collects system resource metrics every 2 seconds.
+    Always collects (to fill the history buffer), broadcasts only when clients are connected."""
     logger.info("Starting system resources broadcast loop")
     while True:
         try:
-            if not system_resources_manager.active_connections:
-                await asyncio.sleep(2)
-                continue
-
             mem = psutil.virtual_memory()
             cpu = psutil.cpu_percent(interval=None)
             disk = psutil.disk_usage(str(Path(settings.previews_base_path).resolve()))
@@ -371,22 +372,30 @@ async def system_resources_loop():
             except Exception as e:
                 logger.debug(f"Error getting docker stats: {e}")
 
-            message = {
-                "type": "system_resources",
-                "resources": {
-                    "memory_percent": mem.percent,
-                    "memory_available_gb": round(mem.available / (1024**3), 2),
-                    "memory_total_gb": round(mem.total / (1024**3), 2),
-                    "cpu_percent": cpu,
-                    "cpu_count": psutil.cpu_count(),
-                    "disk_percent": disk.percent,
-                    "disk_used_gb": round(disk.used / (1024**3), 2),
-                    "disk_total_gb": round(disk.total / (1024**3), 2),
-                },
-                "stats": stats,
+            snapshot = {
+                "memory_percent": mem.percent,
+                "memory_available_gb": round(mem.available / (1024**3), 2),
+                "memory_total_gb": round(mem.total / (1024**3), 2),
+                "cpu_percent": cpu,
+                "cpu_count": psutil.cpu_count(),
+                "disk_percent": disk.percent,
+                "disk_used_gb": round(disk.used / (1024**3), 2),
+                "disk_total_gb": round(disk.total / (1024**3), 2),
             }
 
-            await system_resources_manager.broadcast(message)
+            # Always append to history buffer
+            _resource_history.append(snapshot)
+            if len(_resource_history) > _RESOURCE_HISTORY_MAX:
+                _resource_history.pop(0)
+
+            if system_resources_manager.active_connections:
+                message = {
+                    "type": "system_resources",
+                    "resources": snapshot,
+                    "stats": stats,
+                }
+                await system_resources_manager.broadcast(message)
+
             await asyncio.sleep(2)
 
         except asyncio.CancelledError:
@@ -536,6 +545,14 @@ async def websocket_system_resources(websocket: WebSocket):
     """WebSocket endpoint for real-time system resource metrics."""
     await _authenticate_ws(websocket)
     await system_resources_manager.connect(websocket)
+
+    # Send buffered history so the client has a chart immediately
+    if _resource_history:
+        try:
+            await websocket.send_json({"type": "history", "snapshots": list(_resource_history)})
+        except Exception:
+            pass
+
     try:
         while True:
             try:
