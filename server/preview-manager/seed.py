@@ -57,7 +57,7 @@ def seed_database():
         cur.execute("SELECT COUNT(*) FROM users")
         count = cur.fetchone()[0]
         if count > 0:
-            logger.info(f"Seed skipped: {count} user(s) already exist")
+            print(f"Seed skipped: {count} user(s) already exist")
             cur.close()
             conn.close()
             return
@@ -120,10 +120,11 @@ def seed_database():
         )
 
         conn.commit()
-        logger.info(f"Seed complete: admin (id={admin_id}), test user (id={test_user_id}), org '{ORG_SLUG}', project '{PROJECT_SLUG}'")
+        print(f"Seed complete: admin (id={admin_id}), test user (id={test_user_id}), org '{ORG_SLUG}', project '{PROJECT_SLUG}'")
 
     except Exception as e:
-        logger.error(f"Seed error: {e}", exc_info=True)
+        print(f"Seed error: {e}")
+        import traceback; traceback.print_exc()
         try:
             conn.rollback()
         except Exception:
