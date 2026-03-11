@@ -29,8 +29,10 @@ class Settings(BaseSettings):
     gitlab_url: str = "https://gitlab.com"
     gitlab_webhook_secret: str = ""
 
-    # Auth
-    db_path: str = "/var/www/preview-manager/preview-manager.db"
+    # Database
+    database_url: str = "postgresql://preview_manager:preview_manager@localhost:5432/preview_manager"
+    valkey_url: str = "redis://localhost:6379"
+
     secret_key: str = "change-me-in-production"
     gitlab_oauth_client_id: str = ""
     gitlab_oauth_client_secret: str = ""
@@ -54,6 +56,9 @@ class Settings(BaseSettings):
     hetzner_snapshot_id: int = 0
     hetzner_ssh_private_key_path: str = ""
     hetzner_ssh_public_key: str = ""
+
+    # Uvicorn
+    uvicorn_workers: int = 2
 
     # Hetzner Object Storage (S3)
     hetzner_s3_endpoint: str = ""

@@ -1,6 +1,5 @@
 """GitLab connection and project management — org-scoped."""
 
-import asyncio
 import logging
 import secrets
 import time
@@ -87,9 +86,7 @@ def _get_org_gitlab(user: UserWithContext) -> tuple[str, str]:
     """Get GitLab URL and token from the org context."""
     if not user.org or not user.org.gitlab_url:
         raise HTTPException(status_code=400, detail="GitLab not connected for this organization")
-    from app.database import get_db
     # We need the raw token which is not in the Organization model
-    # Read it directly
     return user.org.gitlab_url, ""
 
 

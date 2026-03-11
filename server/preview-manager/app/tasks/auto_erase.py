@@ -1,9 +1,9 @@
-"""Background task: auto-erase previews after prolonged inactivity.
+"""Auto-erase previews after prolonged inactivity.
 
 For cloud previews: destroy VM (if any) + delete volume + clean DB.
+Called as an arq cron job (every hour).
 """
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -11,23 +11,8 @@ from app.database import get_all_previews, list_organizations
 
 logger = logging.getLogger(__name__)
 
-CHECK_INTERVAL_SECONDS = 3600  # 1 hour
 
-
-async def auto_erase_loop():
-    """Run every CHECK_INTERVAL_SECONDS, deleting previews inactive for too long."""
-    await asyncio.sleep(60)
-    logger.info("Auto-erase background task started")
-
-    while True:
-        try:
-            await _check_and_erase()
-        except Exception as e:
-            logger.error(f"Auto-erase loop error: {e}", exc_info=True)
-        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
-
-
-async def _check_and_erase():
+async def check_and_erase():
     """Check all previews and delete those that exceed the inactivity threshold."""
     orgs = await list_organizations()
     for org in orgs:

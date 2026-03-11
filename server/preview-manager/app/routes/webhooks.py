@@ -4,7 +4,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Header, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from config.settings import settings
 from app.database import (
@@ -19,18 +19,17 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
 
-# Track in-flight deploys to deduplicate concurrent webhook calls
-_deploy_locks: dict[str, asyncio.Lock] = {}
-
-
-def clear_deploy_lock(project_slug: str, preview_name: str):
+async def clear_deploy_lock(project_slug: str, preview_name: str):
     """Remove the deploy lock for a preview (e.g. after deletion).
 
     This prevents stale locks from blocking new deploys when a preview
     is deleted and recreated with the same name.
     """
-    key = f"{project_slug}/{preview_name}"
-    _deploy_locks.pop(key, None)
+    try:
+        from app.valkey import release_deploy_lock
+        await release_deploy_lock(f"{project_slug}/{preview_name}")
+    except Exception:
+        pass
 
 
 async def _clone_and_deploy(
@@ -47,26 +46,28 @@ async def _clone_and_deploy(
     force_new: bool = False,
     mr_title: str | None = None,
 ):
-    """Clone repo on VM and run deployment (runs in background).
+    """Clone repo on VM and run deployment.
 
-    For cloud VMs, the clone happens inside the deployer on the VM via SSH.
-    We still need the local preview_path for generating compose locally.
+    Called from arq worker (task_deploy_preview) or in-process background task.
+    Uses Valkey distributed lock to prevent duplicate concurrent deploys.
     """
     from app.deployment import PreviewDeployer
     from app.state import PreviewStateManager
     from app.routes.gitlab import _get_org_gitlab_token
+    from app.valkey import acquire_deploy_lock, release_deploy_lock, is_deploy_locked
 
     deploy_key = f"{project_slug}/{preview_name}"
 
-    if deploy_key not in _deploy_locks:
-        _deploy_locks[deploy_key] = asyncio.Lock()
-    lock = _deploy_locks[deploy_key]
-
-    if lock.locked():
-        logger.info(f"Skipping duplicate webhook for {deploy_key} — deploy already in progress")
+    # Distributed lock via Valkey (TTL 30min to prevent stale locks)
+    if await is_deploy_locked(deploy_key):
+        logger.info(f"Skipping duplicate deploy for {deploy_key} — already in progress")
         return
 
-    async with lock:
+    if not await acquire_deploy_lock(deploy_key):
+        logger.info(f"Could not acquire lock for {deploy_key} — deploy already in progress")
+        return
+
+    try:
         logger.info(f"Starting deploy for {deploy_key} (branch={source_branch}, commit={commit_sha[:8]})")
 
         # Create deployment record early so UI can show progress immediately
@@ -76,7 +77,7 @@ async def _clone_and_deploy(
         early_deployment_id = None
         if preview:
             early_deployment_id = await create_deployment(preview["id"], triggered_by)
-            deployment_log_broadcaster.register(early_deployment_id)
+            await deployment_log_broadcaster.register(early_deployment_id)
             await preview_list_manager.force_broadcast()
 
         # Ensure local preview directory exists (for compose generation)
@@ -143,6 +144,8 @@ async def _clone_and_deploy(
             logger.error(f"Deploy failed for {deploy_key}")
         else:
             logger.info(f"Deploy completed successfully for {deploy_key}")
+    finally:
+        await release_deploy_lock(deploy_key)
 
 
 async def _local_shallow_clone(
@@ -209,19 +212,9 @@ async def _local_shallow_clone(
         return False
 
 
-async def _delete_preview(org_slug: str, project_slug: str, project_id: int, preview_name: str):
-    """Delete a preview by delegating to the existing delete logic."""
-    from app.routes.previews import delete_preview_internal
-    try:
-        await delete_preview_internal(org_slug, project_slug, project_id, preview_name)
-    except Exception as e:
-        logger.error(f"Failed to delete preview {org_slug}/{project_slug}/{preview_name}: {e}")
-
-
 @router.post("/{org_slug}/gitlab")
 async def gitlab_webhook(
     request: Request,
-    background_tasks: BackgroundTasks,
     org_slug: str,
     x_gitlab_token: str = Header(None),
     x_gitlab_event: str = Header(None),
@@ -259,14 +252,14 @@ async def gitlab_webhook(
 
     if object_kind == "push":
         return await _handle_push_event(
-            payload, background_tasks,
+            payload, request,
             org_id=org_id, org_slug=org_slug,
             project_id=project_id, project_slug=project_slug,
             project_path=project_path,
         )
     elif object_kind == "merge_request":
         return await _handle_mr_event(
-            payload, background_tasks,
+            payload, request,
             org_id=org_id, org_slug=org_slug,
             project_id=project_id, project_slug=project_slug,
             project_path=project_path,
@@ -278,7 +271,7 @@ async def gitlab_webhook(
 
 async def _handle_push_event(
     payload: dict,
-    background_tasks: BackgroundTasks,
+    request: Request,
     *,
     org_id: int,
     org_slug: str,
@@ -306,8 +299,8 @@ async def _handle_push_event(
 
     preview_name = existing["preview_name"]
     logger.info(f"Push event: updating {project_slug}/{preview_name}")
-    background_tasks.add_task(
-        _clone_and_deploy,
+    await request.app.state.arq.enqueue_job(
+        "task_deploy_preview",
         org_id, org_slug, project_id, project_slug, project_path,
         preview_name, branch, commit_sha, "webhook-push",
     )
@@ -316,7 +309,7 @@ async def _handle_push_event(
 
 async def _handle_mr_event(
     payload: dict,
-    background_tasks: BackgroundTasks,
+    request: Request,
     *,
     org_id: int,
     org_slug: str,
@@ -336,18 +329,21 @@ async def _handle_mr_event(
     state = attrs.get("state")
 
     if action in ("close", "merge") or state in ("closed", "merged"):
-        background_tasks.add_task(_delete_preview, org_slug, project_slug, project_id, preview_name)
+        await request.app.state.arq.enqueue_job(
+            "task_delete_preview",
+            org_slug, project_slug, project_id, preview_name,
+        )
     elif action in ("open", "reopen", "update"):
         if action == "update":
             existing = await get_preview(project_id, preview_name)
             if existing and not existing.get("auto_update", 1):
                 return {"status": "ignored", "reason": "auto_update disabled"}
 
-        background_tasks.add_task(
-            _clone_and_deploy,
+        await request.app.state.arq.enqueue_job(
+            "task_deploy_preview",
             org_id, org_slug, project_id, project_slug, project_path,
             preview_name, source_branch, commit_sha, "webhook", mr_iid,
-            mr_title=mr_title,
+            False, mr_title,
         )
     else:
         return {"status": "ignored", "reason": f"unhandled action: {action}"}

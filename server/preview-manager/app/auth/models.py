@@ -165,10 +165,6 @@ class CLIApproveBody(BaseModel):
     org_slug: str
 
 
-class AddProjectMemberBody(BaseModel):
-    user_id: int
-
-
 class GitLabConnectRequest(BaseModel):
     gitlab_url: str
     token: str

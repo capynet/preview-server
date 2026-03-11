@@ -1301,3 +1301,15 @@ if (getenv('PREV_IS_PREVIEW')) {
         await PreviewStateManager.save_state(
             self.project_id, self.preview_name, **fields
         )
+
+        # Notify WebSocket layer via Valkey pub/sub
+        try:
+            from app.valkey import publish_event
+            await publish_event("previews:global", {
+                "action": "state_change",
+                "preview_name": self.preview_name,
+                "project_slug": self.project_slug,
+                "status": status,
+            })
+        except Exception:
+            pass  # Valkey may not be available

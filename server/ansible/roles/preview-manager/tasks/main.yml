@@ -37,6 +37,42 @@
     - /home/preview-manager/www/previews/server/preview-manager
     - /var/www/preview-manager
     - /var/www/preview-manager/db-cache
+    - /var/www/preview-manager/infra
+
+# ---- Infrastructure: PostgreSQL + Valkey ----
+
+- name: Deploy infrastructure docker-compose
+  template:
+    src: infra-docker-compose.yml.j2
+    dest: /var/www/preview-manager/infra/docker-compose.yml
+    owner: preview-manager
+    group: preview-manager
+    mode: '0640'
+  tags: [infra]
+
+- name: Start infrastructure containers (PostgreSQL + Valkey)
+  community.docker.docker_compose_v2:
+    project_src: /var/www/preview-manager/infra
+    state: present
+  tags: [infra]
+
+- name: Wait for PostgreSQL to be ready
+  wait_for:
+    host: 127.0.0.1
+    port: 5432
+    delay: 2
+    timeout: 30
+  tags: [infra]
+
+- name: Wait for Valkey to be ready
+  wait_for:
+    host: 127.0.0.1
+    port: 6379
+    delay: 1
+    timeout: 15
+  tags: [infra]
+
+# ---- Application code ----
 
 - name: Copy preview-manager application files
   synchronize:
@@ -49,7 +85,9 @@
       - "--exclude=.env"
       - "--exclude=venv"
       - "--exclude=.git"
-  notify: Restart preview-manager
+  notify:
+    - Restart preview-manager
+    - Restart preview-worker
   tags: [code]
 
 - name: Set proper ownership on preview-manager files
@@ -113,7 +151,9 @@
     mode: '0640'
   tags: [code]
 
-- name: Create systemd service file
+# ---- Systemd services ----
+
+- name: Create preview-manager systemd service
   template:
     src: preview-manager.service.j2
     dest: /etc/systemd/system/preview-manager.service
@@ -125,6 +165,19 @@
   notify:
     - Reload systemd
     - Restart preview-manager
+
+- name: Create preview-worker systemd service
+  template:
+    src: preview-worker.service.j2
+    dest: /etc/systemd/system/preview-worker.service
+    owner: root
+    group: root
+    mode: '0644'
+    force: yes
+  become: yes
+  notify:
+    - Reload systemd
+    - Restart preview-worker
 
 - name: Ensure /var/www is writable by preview-manager
   file:
@@ -150,14 +203,6 @@
     group: preview-manager
     mode: '0775'
     recurse: yes
-
-- name: Ensure database directory has correct permissions
-  file:
-    path: "{{ db_path | default('/var/www/preview-manager/preview-manager.db') | dirname }}"
-    state: directory
-    owner: preview-manager
-    group: preview-manager
-    mode: '0775'
 
 # CLI distribution tasks
 - name: Create CLI distribution directory
@@ -199,6 +244,13 @@
 - name: Enable and start preview-manager service
   systemd:
     name: preview-manager
+    enabled: yes
+    state: started
+    daemon_reload: yes
+
+- name: Enable and start preview-worker service
+  systemd:
+    name: preview-worker
     enabled: yes
     state: started
     daemon_reload: yes

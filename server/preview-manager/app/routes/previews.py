@@ -1,6 +1,5 @@
 """Preview CRUD and action endpoints — multi-tenant org-scoped, cloud VM version."""
 
-import asyncio
 import json
 import logging
 import re
@@ -8,12 +7,11 @@ import time
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 
-from config.settings import settings
 from app.models import PreviewInfo
 from app.state import PreviewStateManager
 from app.database import (
@@ -175,9 +173,9 @@ class CreateBranchPreviewRequest(BaseModel):
 
 @router.post("/previews/branch")
 async def create_branch_preview(
+    request: Request,
     project: str,
     body: CreateBranchPreviewRequest,
-    background_tasks: BackgroundTasks,
     user: UserWithContext = Depends(require_org_role(OrgRole.member)),
 ):
     """Create a preview from a branch (not tied to a MR)."""
@@ -241,9 +239,8 @@ async def create_branch_preview(
         auto_update=0,
     )
 
-    from app.routes.webhooks import _clone_and_deploy
-    background_tasks.add_task(
-        _clone_and_deploy,
+    await request.app.state.arq.enqueue_job(
+        "task_deploy_preview",
         user.org.id, org_slug, project_id, project_slug, project_path,
         preview_name, body.branch, commit_sha, user.email,
     )
@@ -309,6 +306,8 @@ async def update_preview_endpoint(
 
     if updates:
         await PreviewStateManager.save_state(project_id, preview_name, **updates)
+        from app.websockets import preview_list_manager
+        await preview_list_manager.force_broadcast()
 
     updated = await PreviewStateManager.load_state(project_id, preview_name)
     updated["org_slug"] = user.org.slug
@@ -406,7 +405,7 @@ async def delete_preview_internal(
     """Core delete logic: destroy VM, remove from DB."""
     # Clear any in-flight deploy lock so a recreated preview won't be blocked
     from app.routes.webhooks import clear_deploy_lock
-    clear_deploy_lock(project_slug, preview_name)
+    await clear_deploy_lock(project_slug, preview_name)
 
     preview = await get_preview(project_id, preview_name)
 
@@ -433,6 +432,9 @@ async def delete_preview_internal(
         import shutil
         shutil.rmtree(preview_path, ignore_errors=True)
         logger.info(f"Cleaned up local directory: {preview_path}")
+
+    from app.websockets import preview_list_manager
+    await preview_list_manager.force_broadcast()
 
     logger.info(f"Preview {org_slug}/{project_slug}/{preview_name} fully deleted")
 
@@ -661,9 +663,9 @@ async def drush_command(
 
 @router.post("/previews/{preview_name}/rebuild")
 async def rebuild_preview(
+    request: Request,
     project: str,
     preview_name: str,
-    background_tasks: BackgroundTasks,
     force_new: bool = False,
     user: UserWithContext = Depends(require_org_role(OrgRole.member)),
 ):
@@ -682,10 +684,8 @@ async def rebuild_preview(
     if not project_path:
         raise HTTPException(status_code=400, detail=f"Project '{project_slug}' has no GitLab project path configured")
 
-    from app.routes.webhooks import _clone_and_deploy
-
-    background_tasks.add_task(
-        _clone_and_deploy,
+    await request.app.state.arq.enqueue_job(
+        "task_deploy_preview",
         user.org.id, user.org.slug, project_id, project_slug, project_path,
         preview_name, state["branch"], state.get("commit_sha", ""),
         "rebuild" if force_new else "update",
@@ -740,23 +740,30 @@ async def get_deployment_live_logs(
     offset: int = 0,
     user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
 ):
-    from app.websockets import deployment_log_broadcaster
+    from app.valkey import get_deploy_log_buffer, get_deploy_complete
 
     proj = await _resolve_project(user, project)
     preview = await get_preview(proj["id"], preview_name)
     if not preview:
         raise HTTPException(status_code=404, detail="Preview not found")
 
-    entry = deployment_log_broadcaster.get(deployment_id)
-    if entry:
-        lines = entry["logs"][offset:]
-        return {
-            "lines": lines,
-            "offset": offset + len(lines),
-            "complete": entry["complete"],
-            "status": "complete" if entry["complete"] else "running",
-        }
+    # Try Valkey buffer first (active or recently completed deployment)
+    try:
+        buffered = await get_deploy_log_buffer(deployment_id)
+        if buffered:
+            lines = buffered[offset:]
+            complete = await get_deploy_complete(deployment_id)
+            is_complete = complete is not None
+            return {
+                "lines": lines,
+                "offset": offset + len(lines),
+                "complete": is_complete,
+                "status": "complete" if is_complete else "running",
+            }
+    except Exception:
+        pass
 
+    # Fall back to DB for historical deployments
     deployment = await db_get_deployment(deployment_id)
     if not deployment or deployment["preview_id"] != preview["id"]:
         raise HTTPException(status_code=404, detail="Deployment not found")

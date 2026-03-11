@@ -1,4 +1,4 @@
-"""Preview state management using SQLite database."""
+"""Preview state management using PostgreSQL database."""
 
 import logging
 from pathlib import Path
@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class PreviewStateManager:
-    """Manage preview state using SQLite database."""
+    """Manage preview state using PostgreSQL database."""
 
     @staticmethod
     def get_preview_path(org_slug: str, project_slug: str, preview_name: str) -> Path:

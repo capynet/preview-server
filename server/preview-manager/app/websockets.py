@@ -119,72 +119,49 @@ action_manager = ActionManager()
 # ---------------------------------------------------------------------------
 
 class DeploymentLogBroadcaster:
-    """Tracks deployment log subscribers and broadcasts log lines in real-time."""
+    """Valkey-backed deployment log broadcaster.
 
-    def __init__(self):
-        # key: deployment_id, value: dict with logs buffer and subscribers
-        self._deployments: dict[int, dict] = {}
+    Works across processes: the deployer (in arq worker or in-process) publishes
+    logs to Valkey, and WebSocket clients subscribe via Valkey pub/sub.
+    """
 
-    def register(self, deployment_id: int):
-        """Register a new deployment for broadcasting."""
-        self._deployments[deployment_id] = {
-            "logs": [],
-            "subscribers": [],
-            "complete": False,
-        }
+    async def register(self, deployment_id: int):
+        """Register a new deployment for log tracking in Valkey."""
+        try:
+            from app.valkey import get_valkey
+            v = get_valkey()
+            await v.sadd("active_deployments", str(deployment_id))
+            await v.expire("active_deployments", 7200)
+        except Exception:
+            pass
 
     def get(self, deployment_id: int) -> Optional[dict]:
-        return self._deployments.get(deployment_id)
+        """Compatibility: returns truthy dict. Actual check uses Valkey."""
+        return {"exists": True}
 
     async def add_log(self, deployment_id: int, line: str):
-        """Buffer a log line and broadcast to subscribers."""
-        entry = self._deployments.get(deployment_id)
-        if not entry:
-            return
-        entry["logs"].append(line)
-        disconnected = []
-        for ws in entry["subscribers"]:
-            try:
-                await ws.send_json({"type": "log", "line": line})
-            except Exception:
-                disconnected.append(ws)
-        for ws in disconnected:
-            if ws in entry["subscribers"]:
-                entry["subscribers"].remove(ws)
+        """Buffer log line in Valkey and publish for real-time streaming."""
+        try:
+            from app.valkey import buffer_deploy_log, publish_event
+            await buffer_deploy_log(deployment_id, line)
+            await publish_event(f"deploy_logs:{deployment_id}", {"type": "log", "line": line})
+        except Exception:
+            pass  # Don't break deployment if Valkey is down
 
     async def complete(self, deployment_id: int, success: bool):
-        """Mark deployment as complete and notify subscribers."""
-        entry = self._deployments.get(deployment_id)
-        if not entry:
-            return
-        entry["complete"] = True
-        msg = {"type": "complete", "success": success}
-        for ws in entry["subscribers"]:
-            try:
-                await ws.send_json(msg)
-            except Exception:
-                pass
-        # Clean up after 30 seconds
-        asyncio.get_event_loop().call_later(30, lambda: self._deployments.pop(deployment_id, None))
-
-    async def subscribe(self, deployment_id: int, ws: WebSocket):
-        """Subscribe to a deployment's logs. Replays buffered logs first."""
-        entry = self._deployments.get(deployment_id)
-        if not entry:
-            await ws.send_json({"type": "error", "message": "Deployment not found or already completed"})
-            return
-        # Replay buffered logs
-        for line in entry["logs"]:
-            await ws.send_json({"type": "log", "line": line})
-        if entry["complete"]:
-            await ws.send_json({"type": "complete", "success": True})
-        else:
-            entry["subscribers"].append(ws)
+        """Mark deployment as complete in Valkey and notify subscribers."""
+        try:
+            from app.valkey import mark_deploy_complete, publish_event, get_valkey
+            await mark_deploy_complete(deployment_id, success)
+            await publish_event(f"deploy_logs:{deployment_id}", {"type": "complete", "success": success})
+            v = get_valkey()
+            await v.srem("active_deployments", str(deployment_id))
+        except Exception:
+            pass
 
     def unsubscribe(self, deployment_id: int, ws: WebSocket):
-        entry = self._deployments.get(deployment_id)
-        if entry and ws in entry["subscribers"]:
-            entry["subscribers"].remove(ws)
+        """No-op — cleanup handled in WS endpoint via Valkey pubsub."""
+        pass
 
 
 deployment_log_broadcaster = DeploymentLogBroadcaster()
@@ -233,7 +210,17 @@ class PreviewListManager:
             self.disconnect(connection)
 
     async def force_broadcast(self):
-        """Immediately broadcast the current preview list to all clients."""
+        """Immediately broadcast the current preview list to all clients.
+
+        Also publishes a Valkey event so other workers can pick it up.
+        """
+        # Publish event to Valkey for cross-worker notification
+        try:
+            from app.valkey import publish_event
+            await publish_event("previews:global", {"action": "refresh"})
+        except Exception:
+            pass  # Valkey may not be available yet during startup
+
         if not self.active_connections:
             return
         try:
@@ -251,13 +238,38 @@ class PreviewListManager:
             logger.error(f"Force broadcast error: {e}", exc_info=True)
 
     async def check_and_broadcast_loop(self):
-        """Background task that checks for preview list changes and broadcasts updates (two-phase)"""
+        """Background task that listens for Valkey pub/sub events and broadcasts updates.
+
+        Falls back to periodic polling if Valkey is unavailable.
+        """
         from app.routes.previews import get_preview_list_base
 
-        logger.info(f"Starting preview list background checker (interval: {self.check_interval}s)")
+        logger.info("Starting preview list event listener")
+
+        # Try Valkey pub/sub first
+        pubsub = None
+        try:
+            from app.valkey import subscribe
+            pubsub = await subscribe("previews:global")
+            logger.info("Listening to Valkey pub/sub for preview updates")
+        except Exception as e:
+            logger.warning(f"Valkey pub/sub not available, falling back to polling: {e}")
 
         while len(self.active_connections) > 0:
             try:
+                got_event = False
+                if pubsub:
+                    # Wait for event with timeout (so we can check connections)
+                    msg = await asyncio.wait_for(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=self.check_interval),
+                        timeout=self.check_interval + 1,
+                    )
+                    if msg and msg.get("type") == "message":
+                        got_event = True
+                else:
+                    await asyncio.sleep(self.check_interval)
+
+                # Fetch and broadcast if event received or periodic check
                 result = await get_preview_list_base()
                 current_state = json.dumps(result["previews"], sort_keys=True, default=str)
 
@@ -271,16 +283,20 @@ class PreviewListManager:
                     })
                     self.last_state = current_state
 
-                await asyncio.sleep(self.check_interval)
-
             except asyncio.CancelledError:
-                logger.info("Preview list background checker cancelled")
+                logger.info("Preview list event listener cancelled")
                 break
+            except asyncio.TimeoutError:
+                # Normal timeout from wait_for, just continue
+                continue
             except Exception as e:
-                logger.error(f"Error in preview list background checker: {e}", exc_info=True)
+                logger.error(f"Error in preview list event listener: {e}", exc_info=True)
                 await asyncio.sleep(self.check_interval)
 
-        logger.info("Preview list background checker stopped")
+        if pubsub:
+            await pubsub.unsubscribe("previews:global")
+            await pubsub.close()
+        logger.info("Preview list event listener stopped")
 
 
 # Global manager instance
@@ -539,29 +555,63 @@ async def websocket_system_resources(websocket: WebSocket):
 
 @router.websocket("/ws/deployments/{deployment_id}/logs")
 async def websocket_deployment_logs(websocket: WebSocket, deployment_id: int):
-    """WebSocket endpoint for real-time deployment log streaming."""
+    """WebSocket endpoint for real-time deployment log streaming via Valkey."""
     await _authenticate_ws(websocket)
     await websocket.accept()
 
-    entry = deployment_log_broadcaster.get(deployment_id)
-    if not entry:
-        await websocket.send_json({"type": "error", "message": "No active deployment with this ID"})
-        await websocket.close()
-        return
-
     logger.info(f"Deployment logs WS subscribed: deployment_id={deployment_id}")
-    await deployment_log_broadcaster.subscribe(deployment_id, websocket)
 
+    from app.valkey import get_deploy_log_buffer, get_deploy_complete, subscribe as valkey_subscribe
+
+    # Replay buffered logs from Valkey
     try:
-        while not entry.get("complete", False):
+        buffered = await get_deploy_log_buffer(deployment_id)
+        for line in buffered:
+            await websocket.send_json({"type": "log", "line": line})
+    except Exception as e:
+        logger.warning(f"Error replaying deployment logs: {e}")
+
+    # Check if already complete
+    try:
+        complete = await get_deploy_complete(deployment_id)
+        if complete is not None:
+            await websocket.send_json({"type": "complete", "success": complete})
+            await websocket.close()
+            return
+    except Exception:
+        pass
+
+    # Subscribe to Valkey channel for live updates
+    pubsub = None
+    try:
+        pubsub = await valkey_subscribe(f"deploy_logs:{deployment_id}")
+
+        while True:
             try:
-                await asyncio.wait_for(websocket.receive_text(), timeout=2.0)
+                msg = await asyncio.wait_for(
+                    pubsub.get_message(ignore_subscribe_messages=True, timeout=2.0),
+                    timeout=3.0,
+                )
+                if msg and msg.get("type") == "message":
+                    data = json.loads(msg["data"])
+                    await websocket.send_json(data)
+                    if data.get("type") == "complete":
+                        break
             except asyncio.TimeoutError:
-                continue
+                # Keep alive — check if client is still connected
+                try:
+                    await websocket.send_json({"type": "ping"})
+                except Exception:
+                    break
     except Exception as e:
         logger.info(f"Deployment logs WS closed: deployment_id={deployment_id}, reason={e}")
     finally:
-        deployment_log_broadcaster.unsubscribe(deployment_id, websocket)
+        if pubsub:
+            try:
+                await pubsub.unsubscribe(f"deploy_logs:{deployment_id}")
+                await pubsub.close()
+            except Exception:
+                pass
         try:
             await websocket.close()
         except Exception:

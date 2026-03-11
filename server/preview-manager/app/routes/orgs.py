@@ -101,9 +101,38 @@ async def update_org(body: UpdateOrgBody, user: UserWithContext = Depends(requir
 
 @router.delete("/{org}")
 async def delete_org(user: UserWithContext = Depends(require_org_role(OrgRole.owner))):
-    """Delete organization (owner only)."""
-    # TODO: delete all previews, projects, etc. before deleting org
-    await delete_organization(user.org.id)
+    """Delete organization and all associated resources (owner only).
+
+    Cascade order: destroy VMs → remove Caddy routes → delete previews → delete org.
+    Database CASCADE handles org_members, projects, invitations, tokens, etc.
+    """
+    from app.database import get_all_previews, list_projects
+    from app.routes.previews import delete_preview_internal
+    from app.websockets import preview_list_manager
+
+    org_id = user.org.id
+    org_slug = user.org.slug
+
+    # Get all previews for this org and clean up non-DB resources (VMs, Caddy, files)
+    all_previews = await get_all_previews(org_id=org_id)
+    for preview in all_previews:
+        try:
+            await delete_preview_internal(
+                org_slug,
+                preview.get("project_slug", ""),
+                preview.get("project_id"),
+                preview["preview_name"],
+            )
+        except Exception as e:
+            logger.warning(f"Error cleaning up preview {preview['preview_name']} during org delete: {e}")
+
+    # Database CASCADE deletes: org_members, projects, project_members,
+    # previews, deployments, api_tokens, invitations, email_domains
+    await delete_organization(org_id)
+
+    await preview_list_manager.force_broadcast()
+
+    logger.info(f"Organization '{org_slug}' deleted by {user.email}")
     return {"success": True}
 
 

@@ -29,18 +29,39 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan manager"""
     import asyncio
-    from app.database import init_db
+    from app.database import init_pool, close_pool
+    from app.valkey import init_valkey, close_valkey
     from app.config_store import load_config_to_settings
-    from app.tasks.auto_erase import auto_erase_loop
-    from app.tasks.docker_events import docker_events_loop
     from app.websockets import system_resources_loop
+
     logger.info("Starting Preview Manager Service")
-    await init_db()
+
+    # Initialize PostgreSQL pool
+    await init_pool()
+
+    # Run Alembic migrations
+    try:
+        from alembic.config import Config
+        from alembic import command
+        alembic_cfg = Config("alembic.ini")
+        command.upgrade(alembic_cfg, "head")
+        logger.info("Alembic migrations applied")
+    except Exception as e:
+        logger.warning(f"Alembic migration error (may be first run): {e}")
+
+    # Initialize Valkey
+    await init_valkey()
+
     await load_config_to_settings()
 
-    # Set up Caddy routes: per-preview direct routes + wildcard fallback.
-    # The Caddyfile wildcard uses `abort` so all routing is via admin API,
-    # giving us full control over route ordering (specific before wildcard).
+    # Initialize arq pool for task enqueueing
+    from arq import create_pool as create_arq_pool
+    from arq.connections import RedisSettings
+    arq_pool = await create_arq_pool(RedisSettings.from_dsn(settings.valkey_url))
+    app.state.arq = arq_pool
+    logger.info("arq pool initialized")
+
+    # Set up Caddy routes for active previews
     from app.caddy_api import caddy_manager
     from app.database import get_previews_with_active_vms, compute_url_hash
     try:
@@ -53,29 +74,29 @@ async def lifespan(app: FastAPI):
                 url_hash = p.get("url_hash") or compute_url_hash(org_slug, project_slug, preview_name)
                 domain = f"{url_hash}.mr.preview-mr.com"
                 caddy_manager._preview_upstreams[domain] = (p["vm_ip"], 80)
-        # Single apply to patch all routes at once
         await caddy_manager._apply_routes()
         logger.info(f"Caddy routes ready: {len(active)} preview(s) + wildcard fallback")
     except Exception as e:
         logger.warning(f"Failed to set up Caddy routes: {e}")
 
-    # Start background tasks
-    auto_erase_task = asyncio.create_task(auto_erase_loop())
-    docker_events_task = asyncio.create_task(docker_events_loop())
+    # System resources monitor still runs in-process (lightweight, 2s interval)
     system_resources_task = asyncio.create_task(system_resources_loop())
     logger.info("Preview Manager Service started successfully")
 
     yield
 
-    # Cancel background tasks
-    for task in (auto_erase_task, docker_events_task, system_resources_task):
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    # Shutdown
+    system_resources_task.cancel()
+    try:
+        await system_resources_task
+    except asyncio.CancelledError:
+        pass
 
-    logger.info("Shutting down Preview Manager Service")
+    if hasattr(app.state, "arq") and app.state.arq:
+        await app.state.arq.close()
+    await close_valkey()
+    await close_pool()
+
     logger.info("Preview Manager Service stopped")
 
 
@@ -120,11 +141,12 @@ def main():
     signal.signal(signal.SIGTERM, handle_signal)
 
     uvicorn.run(
-        app,
+        "main:app",
         host=settings.api_host,
         port=settings.api_port,
+        workers=settings.uvicorn_workers,
         log_level="info",
-        access_log=True
+        access_log=True,
     )
 
 

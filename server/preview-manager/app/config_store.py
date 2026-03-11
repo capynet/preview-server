@@ -7,7 +7,7 @@ call. They now read from the proper org/project tables.
 import logging
 from typing import Optional
 
-from app.database import get_db
+from app.database import get_pool
 
 logger = logging.getLogger(__name__)
 

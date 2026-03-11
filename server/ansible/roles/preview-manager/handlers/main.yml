@@ -9,3 +9,9 @@
     name: preview-manager
     state: restarted
   become: yes
+
+- name: Restart preview-worker
+  systemd:
+    name: preview-worker
+    state: restarted
+  become: yes
