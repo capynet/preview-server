@@ -87,7 +87,6 @@
       - "--exclude=.git"
   notify:
     - Restart preview-manager
-    - Restart preview-worker
   tags: [code]
 
 - name: Set proper ownership on preview-manager files
@@ -254,6 +253,13 @@
     enabled: yes
     state: started
     daemon_reload: yes
+
+- name: Gracefully restart preview-worker (waits for running jobs)
+  systemd:
+    name: preview-worker
+    state: restarted
+  become: yes
+  tags: [worker, never]
 
 - name: Wait for service to be ready
   wait_for:

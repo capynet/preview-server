@@ -516,6 +516,18 @@ async def has_running_deployment(preview_id: int) -> bool:
 
 # ---- Deployment CRUD ----
 
+async def get_running_deployment(preview_id: int):
+    """Return the most recent running deployment for a preview, or None."""
+    pool = await get_pool()
+    return await pool.fetchrow(
+        """SELECT id, preview_id, status, triggered_by, started_at
+           FROM deployments
+           WHERE preview_id = $1 AND status = 'running'
+           ORDER BY id DESC LIMIT 1""",
+        preview_id,
+    )
+
+
 async def create_deployment(preview_id: int, triggered_by: str | None = None) -> int:
     pool = await get_pool()
     row = await pool.fetchrow(

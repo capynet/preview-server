@@ -163,9 +163,14 @@ class PreviewDeployer:
         if not self._deployment_id:
             preview = await get_preview(self.project_id, self.preview_name)
             if preview:
-                self._deployment_id = await create_deployment(
-                    preview["id"], self.triggered_by
-                )
+                from app.database import get_running_deployment
+                existing = await get_running_deployment(preview["id"])
+                if existing:
+                    self._deployment_id = existing["id"]
+                else:
+                    self._deployment_id = await create_deployment(
+                        preview["id"], self.triggered_by
+                    )
                 deployment_log_broadcaster.register(self._deployment_id)
                 await preview_list_manager.force_broadcast()
 
@@ -460,7 +465,7 @@ class PreviewDeployer:
             f"git clone --depth 1 --branch {self.branch} '{clone_url}' {code_dir}"
         )
         proc = await self._executor.run_shell(clone_cmd)
-        stdout, stderr = await self._stream_progress(proc, step, t0, 120)
+        stdout, stderr = await self._stream_progress(proc, step, t0, 300)
         elapsed = time.monotonic() - t0
 
         if proc.returncode != 0:

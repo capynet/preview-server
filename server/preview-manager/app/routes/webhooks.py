@@ -71,12 +71,19 @@ async def _clone_and_deploy(
         logger.info(f"Starting deploy for {deploy_key} (branch={source_branch}, commit={commit_sha[:8]})")
 
         # Create deployment record early so UI can show progress immediately
-        from app.database import create_deployment
+        # If a running deployment already exists (e.g. worker restart re-enqueued the job),
+        # reuse it instead of creating a duplicate.
+        from app.database import create_deployment, get_running_deployment
         from app.websockets import deployment_log_broadcaster, preview_list_manager
         preview = await get_preview(project_id, preview_name)
         early_deployment_id = None
         if preview:
-            early_deployment_id = await create_deployment(preview["id"], triggered_by)
+            existing = await get_running_deployment(preview["id"])
+            if existing:
+                early_deployment_id = existing["id"]
+                logger.info(f"Reusing existing running deployment #{early_deployment_id} for {deploy_key}")
+            else:
+                early_deployment_id = await create_deployment(preview["id"], triggered_by)
             await deployment_log_broadcaster.register(early_deployment_id)
             await preview_list_manager.force_broadcast()
 

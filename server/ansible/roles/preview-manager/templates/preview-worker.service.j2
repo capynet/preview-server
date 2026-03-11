@@ -16,6 +16,9 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=preview-worker
 
+# Give running deploy jobs time to finish on restart (15 minutes)
+TimeoutStopSec=900
+
 # Security
 PrivateTmp=true
 

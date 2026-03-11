@@ -86,10 +86,16 @@ async def task_check_vms(ctx):
     await check_vm_status()
 
 
+async def task_cleanup_orphan_vms(ctx):
+    """Destroy Hetzner VMs that have no matching preview in the DB. Runs as cron job."""
+    from app.tasks.orphan_vms import cleanup_orphan_vms
+    await cleanup_orphan_vms()
+
+
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_delete_preview, task_auto_erase, task_check_vms]
+    functions = [task_deploy_preview, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
@@ -99,4 +105,5 @@ class WorkerSettings:
     cron_jobs = [
         cron(task_auto_erase, hour=None, minute=0),  # Every hour
         cron(task_check_vms, hour=None, minute={0, 15, 30, 45}),  # Every 15 min
+        cron(task_cleanup_orphan_vms, hour=None, minute={10, 40}),  # Every 30 min
     ]
