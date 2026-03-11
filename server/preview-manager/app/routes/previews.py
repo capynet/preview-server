@@ -157,6 +157,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         auto_update=bool(state.get("auto_update", 1)),
         pinned=bool(state.get("pinned", 0)),
         env_vars=env_vars,
+        post_deploy_status=state.get("post_deploy_status"),
         exposed_services=exposed_services,
         stack=stack,
     )
@@ -749,10 +750,13 @@ async def get_deployment_live_logs(
 
     # Try Valkey buffer first (active or recently completed deployment)
     try:
-        buffered = await get_deploy_log_buffer(deployment_id)
-        if buffered:
+        from app.valkey import deploy_log_exists
+        complete = await get_deploy_complete(deployment_id)
+        has_buffer = await deploy_log_exists(deployment_id)
+        # If deploy is tracked in Valkey (buffer key exists or complete flag set), use it
+        if has_buffer or complete is not None:
+            buffered = await get_deploy_log_buffer(deployment_id) if has_buffer else []
             lines = buffered[offset:]
-            complete = await get_deploy_complete(deployment_id)
             is_complete = complete is not None
             return {
                 "lines": lines,

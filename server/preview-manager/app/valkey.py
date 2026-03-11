@@ -69,6 +69,11 @@ async def get_deploy_log_buffer(deployment_id: int) -> list[str]:
     return await v.lrange(key, 0, -1)
 
 
+async def deploy_log_exists(deployment_id: int) -> bool:
+    """Check if this deployment is tracked as active in Valkey."""
+    v = get_valkey()
+    return await v.sismember("active_deployments", str(deployment_id))
+
 
 # ---- Deployment status tracking ----
 

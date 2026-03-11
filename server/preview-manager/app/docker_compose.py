@@ -25,6 +25,10 @@ DEFAULTS = {
         "new": None,
         "update": None,
     },
+    "post_deploy": {
+        "new": None,
+        "update": None,
+    },
     "domain_aliases": [],
     "expose": {},
     "litespeed_cache": False,
@@ -37,6 +41,7 @@ def parse_preview_yml(preview_path: Path) -> dict:
     config["services"] = dict(DEFAULTS["services"])
     config["env"] = dict(DEFAULTS["env"])
     config["deploy"] = dict(DEFAULTS["deploy"])
+    config["post_deploy"] = dict(DEFAULTS["post_deploy"])
 
     yml_file = preview_path / "preview.yml"
     if not yml_file.exists():
@@ -93,6 +98,19 @@ def parse_preview_yml(preview_path: Path) -> dict:
         # deploy: false — explicitly disable all deploy scripts
         config["deploy"] = {"new": None, "update": None}
 
+    # Post-deploy scripts — run after a successful deploy
+    # Accept both "post_deploy" and "post-deploy" (hyphen is more natural in YAML)
+    raw_post_deploy = raw.get("post_deploy") or raw.get("post-deploy")
+    if isinstance(raw_post_deploy, dict):
+        for phase in ("new", "update"):
+            val = raw_post_deploy.get(phase)
+            if val is False or val is None:
+                config["post_deploy"][phase] = None
+            elif isinstance(val, str) and val:
+                config["post_deploy"][phase] = val
+    elif raw_post_deploy is False:
+        config["post_deploy"] = {"new": None, "update": None}
+
     # Domain aliases — additional subdomain prefixes routed to this preview.
     # Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com
     if "domain_aliases" in raw and isinstance(raw["domain_aliases"], list):
@@ -114,7 +132,8 @@ def parse_preview_yml(preview_path: Path) -> dict:
     logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
                 f"solr={config['services']['solr']}, litespeed_cache={config['litespeed_cache']}, "
-                f"deploy.new={config['deploy']['new']}, deploy.update={config['deploy']['update']}")
+                f"deploy.new={config['deploy']['new']}, deploy.update={config['deploy']['update']}, "
+                f"post_deploy.new={config['post_deploy']['new']}, post_deploy.update={config['post_deploy']['update']}")
     return config
 
 

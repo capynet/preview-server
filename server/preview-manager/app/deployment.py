@@ -34,6 +34,7 @@ TIMEOUT_IMPORT_DB = 600
 TIMEOUT_IMPORT_FILES = 600
 TIMEOUT_DRUSH = 300
 TIMEOUT_DEPLOY_SCRIPT = 36000
+TIMEOUT_POST_DEPLOY = 18000  # 5 hours — post-deploy can run heavy tasks (indexing, etc.)
 TIMEOUT_DEPLOY_STEP = 300
 
 # Path to custom deploy step scripts (local on coordinator)
@@ -315,6 +316,9 @@ class PreviewDeployer:
 
         await self._reload_webserver()
 
+        # 13. Post-deploy script (runs after everything is up and healthy)
+        await self._run_project_post_deploy_script("new")
+
         # Done — traffic is proxied via wake_preview middleware
 
     # ------------------------------------------------------------------
@@ -350,6 +354,9 @@ class PreviewDeployer:
         await self._activate_redis_cache()
 
         await self._reload_webserver()
+
+        # Post-deploy script (runs after everything is up and healthy)
+        await self._run_project_post_deploy_script("update")
 
         # Done — traffic is proxied via wake_preview middleware
 
@@ -859,6 +866,47 @@ class PreviewDeployer:
             step=f"project-deploy-script-{phase}",
             timeout=TIMEOUT_DEPLOY_SCRIPT,
         )
+
+    async def _run_project_post_deploy_script(self, phase: str):
+        """Run the project post-deploy script for a phase (new/update).
+        Called after the deploy is fully complete and the preview is active.
+        Non-fatal: a failure here is logged but does not fail the deploy."""
+        config = getattr(self, "_preview_config", None)
+        deploy_path = config["post_deploy"][phase] if config else None
+
+        if not deploy_path:
+            return
+
+        logger.info(f"Running post-deploy script ({phase}): {deploy_path}")
+        await self._update_post_deploy_status("running")
+        try:
+            await self._docker_exec(
+                "bash", f"/var/www/html/{deploy_path}",
+                step=f"project-post-deploy-{phase}",
+                timeout=TIMEOUT_POST_DEPLOY,
+            )
+            await self._update_post_deploy_status("success")
+        except Exception as e:
+            logger.warning(f"Post-deploy script ({phase}) failed (non-fatal): {e}")
+            await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed (non-fatal): {e}{RESET}\n")
+            await self._update_post_deploy_status("failed")
+
+    async def _update_post_deploy_status(self, status: str):
+        """Update the post_deploy_status field on the preview."""
+        try:
+            await PreviewStateManager.save_state(
+                self.project_id, self.preview_name,
+                post_deploy_status=status,
+            )
+            from app.valkey import publish_event
+            await publish_event("previews:global", {
+                "action": "state_change",
+                "preview_name": self.preview_name,
+                "project_slug": self.project_slug,
+                "post_deploy_status": status,
+            })
+        except Exception:
+            pass
 
     async def _run_deploy_steps(self, phase: str):
         """Run *.sh scripts from deploy-steps/{phase}/ on the VM."""

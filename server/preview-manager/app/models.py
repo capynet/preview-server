@@ -25,5 +25,6 @@ class PreviewInfo(BaseModel):
     env_vars: dict[str, str] = {}
     mr_title: Optional[str] = None
     mr_url: Optional[str] = None
+    post_deploy_status: Optional[str] = None
     exposed_services: dict[str, str] = {}
     stack: dict[str, str] = {}

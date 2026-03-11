@@ -384,7 +384,7 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                    ORDER BY d2.id DESC LIMIT 1
                ) d ON true
                WHERE proj.organization_id = $1
-               ORDER BY p.last_deployed_at DESC NULLS LAST""",
+               ORDER BY p.created_at DESC""",
             org_id,
         )
     else:
@@ -402,7 +402,7 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                    FROM deployments d2 WHERE d2.preview_id = p.id
                    ORDER BY d2.id DESC LIMIT 1
                ) d ON true
-               ORDER BY p.last_deployed_at DESC NULLS LAST"""
+               ORDER BY p.created_at DESC"""
         )
     return [_row_to_dict(r) for r in rows]
 

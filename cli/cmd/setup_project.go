@@ -110,6 +110,29 @@ func runSetupProject() error {
 		}
 	}
 
+	// 4. Create post-deploy scripts
+	for _, phase := range []string{"new", "update"} {
+		scriptDir := filepath.Join("scripts", "preview", phase)
+		scriptPath := filepath.Join(scriptDir, "post-deploy.sh")
+		os.MkdirAll(scriptDir, 0755)
+		wrote, err = writeFile(scriptPath, postDeployScriptContent(phase))
+		if err != nil {
+			return fmt.Errorf("failed to create %s: %w", scriptPath, err)
+		}
+		os.Chmod(scriptPath, 0755)
+		switch wrote {
+		case "created":
+			created = append(created, scriptPath)
+			fmt.Printf("  ✓ %s — created\n", scriptPath)
+		case "overwritten":
+			overwritten = append(overwritten, scriptPath)
+			fmt.Printf("  ✓ %s — overwritten\n", scriptPath)
+		default:
+			skipped = append(skipped, scriptPath)
+			fmt.Printf("  · %s — already exists\n", scriptPath)
+		}
+	}
+
 	fmt.Println()
 	if len(created) > 0 {
 		fmt.Printf("Created %d file(s).\n", len(created))
@@ -252,6 +275,15 @@ solr: false           # e.g. "9", "8"
 deploy:
   new: scripts/preview/new/deploy.sh
   update: scripts/preview/update/deploy.sh
+
+# Post-deploy scripts — executed after a successful deploy.
+# These run after the preview is fully active and reachable.
+# Useful for cache warming, notifications, or other non-critical tasks.
+# A failure here does NOT mark the deploy as failed.
+#
+# post_deploy:
+#   new: scripts/preview/new/post-deploy.sh
+#   update: scripts/preview/update/post-deploy.sh
 `
 }
 
@@ -294,6 +326,50 @@ echo "Running update preview deploy script..."
 $DRUSH deploy
 
 echo "Update complete."
+`
+}
+
+func postDeployScriptContent(phase string) string {
+	if phase == "new" {
+		return `#!/usr/bin/env bash
+set -euo pipefail
+
+# Post-deploy script for NEW preview environments.
+# Runs after the preview is fully deployed and reachable.
+# Use this for non-critical tasks like cache warming or notifications.
+#
+# Available environment variables (PREV_ prefix):
+#   PREV_IS_PREVIEW, PREV_PROJECT_NAME, PREV_MR_IID, PREV_BRANCH,
+#   PREV_COMMIT_SHA, PREV_URL, PREV_DOMAIN, PREV_DB_HOST, etc.
+
+echo "Running new preview post-deploy script..."
+
+# Example: warm caches
+# vendor/bin/drush cr
+# curl -s "$PREV_URL" > /dev/null
+
+echo "Post-deploy complete."
+`
+	}
+
+	return `#!/usr/bin/env bash
+set -euo pipefail
+
+# Post-deploy script for UPDATED preview environments.
+# Runs after the preview has been updated with new code and is reachable.
+# Use this for non-critical tasks like cache warming or notifications.
+#
+# Available environment variables (PREV_ prefix):
+#   PREV_IS_PREVIEW, PREV_PROJECT_NAME, PREV_MR_IID, PREV_BRANCH,
+#   PREV_COMMIT_SHA, PREV_URL, PREV_DOMAIN, PREV_DB_HOST, etc.
+
+echo "Running update preview post-deploy script..."
+
+# Example: warm caches
+# vendor/bin/drush cr
+# curl -s "$PREV_URL" > /dev/null
+
+echo "Post-deploy complete."
 `
 }
 
