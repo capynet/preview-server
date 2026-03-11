@@ -8,51 +8,15 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from app.auth.dependencies import require_org_role, get_org_context
 from app.auth.models import OrgRole, UserWithContext, CreateTokenRequest
 from app.database import (
-    get_organization_by_id,
     update_organization,
     get_project_by_slug,
     upsert_project,
-    get_project,
 )
 from app.auth import database as auth_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-# ---------------------------------------------------------------------------
-# Org-level auto-stop
-# ---------------------------------------------------------------------------
-
-
-@router.get("/api/orgs/{org}/settings/auto-stop")
-async def get_org_auto_stop(
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
-):
-    """Get org-level auto-stop configuration."""
-    org = user.org
-    return {
-        "enabled": org.auto_stop_enabled,
-        "minutes": org.auto_stop_minutes,
-    }
-
-
-@router.put("/api/orgs/{org}/settings/auto-stop")
-async def save_org_auto_stop(
-    request: Request,
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
-):
-    """Save org-level auto-stop configuration."""
-    body = await request.json()
-    updates = {}
-    if "enabled" in body:
-        updates["auto_stop_enabled"] = 1 if body["enabled"] else 0
-    if "minutes" in body:
-        updates["auto_stop_minutes"] = int(body["minutes"])
-    if updates:
-        await update_organization(user.org.id, **updates)
-    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
@@ -86,48 +50,6 @@ async def save_org_auto_erase(
         updates["auto_erase_days"] = int(body["days"])
     if updates:
         await update_organization(user.org.id, **updates)
-    return {"success": True}
-
-
-# ---------------------------------------------------------------------------
-# Project-level auto-stop override
-# ---------------------------------------------------------------------------
-
-
-@router.get("/api/orgs/{org}/projects/{project}/auto-stop")
-async def get_project_auto_stop(
-    project: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
-):
-    """Get per-project auto-stop override."""
-    proj = await get_project_by_slug(user.org.id, project)
-    if proj and proj.get("auto_stop_enabled") is not None:
-        return {
-            "override": True,
-            "enabled": bool(proj["auto_stop_enabled"]),
-            "minutes": proj["auto_stop_minutes"],
-        }
-    return {"override": False, "enabled": None, "minutes": None}
-
-
-@router.put("/api/orgs/{org}/projects/{project}/auto-stop")
-async def save_project_auto_stop(
-    project: str,
-    request: Request,
-    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
-):
-    """Save per-project auto-stop override."""
-    body = await request.json()
-    if body.get("override") is False:
-        await upsert_project(
-            user.org.id, project, auto_stop_enabled=None, auto_stop_minutes=None
-        )
-    else:
-        enabled = 1 if body.get("enabled") else 0
-        minutes = int(body["minutes"]) if "minutes" in body else None
-        await upsert_project(
-            user.org.id, project, auto_stop_enabled=enabled, auto_stop_minutes=minutes
-        )
     return {"success": True}
 
 

@@ -54,8 +54,6 @@ CREATE TABLE IF NOT EXISTS organizations (
     avatar_url TEXT,
     gitlab_url TEXT,
     gitlab_access_token TEXT,
-    auto_stop_enabled INTEGER NOT NULL DEFAULT 1,
-    auto_stop_minutes INTEGER NOT NULL DEFAULT 15,
     auto_erase_enabled INTEGER NOT NULL DEFAULT 0,
     auto_erase_days INTEGER NOT NULL DEFAULT 10,
     color TEXT NOT NULL DEFAULT '#6366f1',
@@ -125,8 +123,6 @@ CREATE TABLE IF NOT EXISTS projects (
     gitlab_web_url TEXT,
     gitlab_default_branch TEXT DEFAULT 'main',
     env_vars TEXT DEFAULT '{}',
-    auto_stop_enabled INTEGER,
-    auto_stop_minutes INTEGER,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     UNIQUE(organization_id, slug)
@@ -265,16 +261,14 @@ async def create_organization(slug: str, name: str, **fields) -> dict:
         cur = await db.execute(
             """INSERT INTO organizations
                (slug, name, avatar_url, gitlab_url, gitlab_access_token,
-                auto_stop_enabled, auto_stop_minutes, auto_erase_enabled, auto_erase_days,
+                auto_erase_enabled, auto_erase_days,
                 color, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 slug, name,
                 fields.get("avatar_url"),
                 fields.get("gitlab_url"),
                 fields.get("gitlab_access_token"),
-                fields.get("auto_stop_enabled", 1),
-                fields.get("auto_stop_minutes", 15),
                 fields.get("auto_erase_enabled", 0),
                 fields.get("auto_erase_days", 10),
                 fields.get("color", "#6366f1"),
@@ -1015,8 +1009,8 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
                 """INSERT INTO projects
                    (organization_id, slug, name, gitlab_project_id, gitlab_project_path,
                     gitlab_web_url, gitlab_default_branch, env_vars,
-                    auto_stop_enabled, auto_stop_minutes, created_at, updated_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    created_at, updated_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     org_id, slug,
                     fields.get("name"),
@@ -1025,8 +1019,6 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
                     fields.get("gitlab_web_url"),
                     fields.get("gitlab_default_branch", "main"),
                     fields.get("env_vars", "{}"),
-                    fields.get("auto_stop_enabled"),
-                    fields.get("auto_stop_minutes"),
                     now, now,
                 ),
             )
