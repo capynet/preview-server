@@ -4,10 +4,15 @@ Called as an arq cron job (every 30 minutes).
 """
 
 import logging
+from datetime import datetime, timezone, timedelta
 
 from app.database import get_previews_with_active_vms
 
 logger = logging.getLogger(__name__)
+
+# Ignore VMs created less than this many minutes ago to avoid race conditions
+# with deploys that are still in progress.
+GRACE_PERIOD_MINUTES = 10
 
 
 async def cleanup_orphan_vms():
@@ -28,9 +33,12 @@ async def cleanup_orphan_vms():
     db_previews = await get_previews_with_active_vms()
     db_vm_ids = {p["vm_id"] for p in db_previews if p.get("vm_id")}
 
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=GRACE_PERIOD_MINUTES)
+
     orphans = [
         vm for vm in hetzner_vms
         if vm.data_model.id not in db_vm_ids
+        and vm.data_model.created < cutoff
     ]
 
     if not orphans:

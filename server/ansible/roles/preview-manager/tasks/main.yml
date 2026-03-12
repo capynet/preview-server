@@ -87,6 +87,7 @@
       - "--exclude=.git"
   notify:
     - Restart preview-manager
+    - Restart preview-worker
   tags: [code]
 
 - name: Set proper ownership on preview-manager files

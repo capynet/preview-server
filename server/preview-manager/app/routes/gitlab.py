@@ -19,8 +19,10 @@ from app.auth.models import (
 )
 from app.auth.oauth import GitLabOAuth
 from app.database import (
+    _now,
     add_org_member,
     get_organization_by_slug,
+    get_pool,
     get_project_by_gitlab_id,
     get_invitation_by_email,
     mark_invitation_accepted,
@@ -164,11 +166,35 @@ async def gitlab_auth_callback(code: str, state: str = ""):
 
     if oauth_account:
         user = await auth_db.get_user_by_id(oauth_account["user_id"])
+        # Update avatar/name from GitLab on each login
+        if user and (avatar_url or name):
+            updates = {}
+            if avatar_url and user.get("avatar_url") != avatar_url:
+                updates["avatar_url"] = avatar_url
+            if name and user.get("name") != name:
+                updates["name"] = name
+            if updates:
+                pool = await get_pool()
+                sets = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
+                await pool.execute(f"UPDATE users SET {sets}, updated_at = $1 WHERE id = ${len(updates)+2}", _now(), *updates.values(), user["id"])
+                user.update(updates)
     else:
         user_dict = await auth_db.get_user_by_email(email)
         if user_dict:
             user = user_dict
             await auth_db.create_oauth_account(user["id"], "gitlab", provider_user_id, provider_username)
+            # Update avatar/name from GitLab
+            if avatar_url or name:
+                updates = {}
+                if avatar_url and user.get("avatar_url") != avatar_url:
+                    updates["avatar_url"] = avatar_url
+                if name and user.get("name") != name:
+                    updates["name"] = name
+                if updates:
+                    pool = await get_pool()
+                    sets = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
+                    await pool.execute(f"UPDATE users SET {sets}, updated_at = $1 WHERE id = ${len(updates)+2}", _now(), *updates.values(), user["id"])
+                    user.update(updates)
         else:
             count = await auth_db.user_count()
             invitation = await get_invitation_by_email(email)

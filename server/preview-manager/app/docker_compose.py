@@ -45,14 +45,15 @@ def parse_preview_yml(preview_path: Path) -> dict:
 
     yml_file = preview_path / "preview.yml"
     if not yml_file.exists():
-        logger.info(f"No preview.yml found at {yml_file}, using defaults")
-        return config
+        raise FileNotFoundError(
+            f"No preview.yml found in the repository. "
+            f"A preview.yml file is required to create previews."
+        )
 
     try:
         raw = yaml.safe_load(yml_file.read_text()) or {}
     except Exception as e:
-        logger.warning(f"Failed to parse preview.yml: {e}, using defaults")
-        return config
+        raise ValueError(f"Failed to parse preview.yml: {e}")
 
     if "php_version" in raw:
         config["php_version"] = str(raw["php_version"])

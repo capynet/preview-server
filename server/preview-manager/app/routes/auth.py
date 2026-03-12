@@ -10,9 +10,9 @@ from config.settings import settings
 from app.auth import database as db
 from app.auth.dependencies import SESSION_COOKIE, get_current_user
 from app.database import (
-    add_org_member, get_invitation_by_token, get_preview_by_domain,
+    add_org_member, get_invitation_by_token, get_pool, get_preview_by_domain,
     list_user_organizations, mark_invitation_accepted, match_email_domain,
-    update_last_accessed,
+    update_last_accessed, _now,
 )
 from app.auth.models import (
     AcceptInviteBody,
@@ -142,12 +142,36 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
 
     if oauth_account:
         user = await db.get_user_by_id(oauth_account["user_id"])
+        # Update avatar/name from provider on each login
+        if user and (info.avatar_url or info.name):
+            updates = {}
+            if info.avatar_url and user.get("avatar_url") != info.avatar_url:
+                updates["avatar_url"] = info.avatar_url
+            if info.name and user.get("name") != info.name:
+                updates["name"] = info.name
+            if updates:
+                pool = await get_pool()
+                sets = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
+                await pool.execute(f"UPDATE users SET {sets}, updated_at = $1 WHERE id = ${len(updates)+2}", _now(), *updates.values(), user["id"])
+                user.update(updates)
         return user, False
 
     # Try to link by email
     user_dict = await db.get_user_by_email(info.email)
     if user_dict:
         await db.create_oauth_account(user_dict["id"], info.provider, info.provider_user_id, info.provider_username)
+        # Update avatar/name from provider
+        if info.avatar_url or info.name:
+            updates = {}
+            if info.avatar_url and user_dict.get("avatar_url") != info.avatar_url:
+                updates["avatar_url"] = info.avatar_url
+            if info.name and user_dict.get("name") != info.name:
+                updates["name"] = info.name
+            if updates:
+                pool = await get_pool()
+                sets = ", ".join(f"{k} = ${i+2}" for i, k in enumerate(updates))
+                await pool.execute(f"UPDATE users SET {sets}, updated_at = $1 WHERE id = ${len(updates)+2}", _now(), *updates.values(), user_dict["id"])
+                user_dict.update(updates)
         return user_dict, False
 
     # New user

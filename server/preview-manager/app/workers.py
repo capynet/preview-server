@@ -99,16 +99,15 @@ async def task_run_post_deploy(
 
     # Create a deployer instance just for post-deploy
     deployer = PreviewDeployer(
-        org_id=0,
-        org_slug=org_slug,
-        project_id=project_id,
-        project_slug=project_slug,
-        project_path="",
+        project_name=project_slug,
         preview_name=preview_name,
-        source_branch=preview.get("branch", ""),
+        branch=preview.get("branch", ""),
         commit_sha=preview.get("commit_sha", ""),
         triggered_by=triggered_by,
         mr_iid=preview.get("mr_id"),
+        org_slug=org_slug,
+        project_slug=project_slug,
+        project_id=project_id,
     )
     deployer._vm_ip = vm_ip
     deployer._vm_id = preview.get("vm_id")
@@ -163,7 +162,7 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
     max_jobs = 5
-    job_timeout = 3600  # 1 hour max per job
+    job_timeout = 36000  # 10 hours — match TIMEOUT_DEPLOY_SCRIPT
     health_check_interval = 30
     cron_jobs = [
         cron(task_auto_erase, hour=None, minute=0),  # Every hour

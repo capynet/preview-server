@@ -226,7 +226,7 @@ class HetznerCloudManager:
     async def get_active_vms(self) -> list[Server]:
         """List all VMs with the prev- prefix."""
         client = _get_client()
-        servers = await _run(client.servers.get_all, name="prev-")
+        servers = await _run(client.servers.get_all)
         return [s for s in servers if s.data_model.name.startswith("prev-")]
 
 

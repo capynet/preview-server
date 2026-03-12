@@ -172,7 +172,7 @@ class PreviewDeployer:
                     self._deployment_id = await create_deployment(
                         preview["id"], self.triggered_by
                     )
-                deployment_log_broadcaster.register(self._deployment_id)
+                await deployment_log_broadcaster.register(self._deployment_id)
                 await preview_list_manager.force_broadcast()
 
         is_new = await self.is_new()
@@ -505,7 +505,7 @@ class PreviewDeployer:
             f"cd {code_dir} && "
             f"git remote set-url origin '{remote_url}' && "
             f"git fetch origin {self.branch} && "
-            f"git reset --hard origin/{self.branch}"
+            f"git reset --hard FETCH_HEAD"
         )
         proc = await self._executor.run_shell(pull_cmd)
         stdout, stderr = await self._stream_progress(proc, step, t0, 120)
@@ -893,7 +893,7 @@ class PreviewDeployer:
         post_deploy_id = await create_deployment(
             preview["id"], self.triggered_by, deploy_type="post_deploy"
         )
-        deployment_log_broadcaster.register(post_deploy_id)
+        await deployment_log_broadcaster.register(post_deploy_id)
         await preview_list_manager.force_broadcast()
 
         # Use a separate log buffer for post-deploy
