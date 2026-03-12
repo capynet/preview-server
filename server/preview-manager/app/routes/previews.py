@@ -389,6 +389,7 @@ async def get_preview_list_base(
             "last_deployed_at": row.get("last_deployed_at"),
             "last_deployment": last_deployment,
             "post_deploy_status": row.get("post_deploy_status"),
+            "latest_post_deploy_id": row.get("latest_post_deploy_id"),
             "auto_update": bool(row.get("auto_update", 1)),
             "pinned": bool(row.get("pinned", 0)),
         })

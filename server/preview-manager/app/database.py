@@ -374,7 +374,9 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                       o.slug as org_slug,
                       d.id AS latest_deployment_id,
                       d.status AS latest_deployment_status,
-                      d.completed_at AS latest_deployment_completed_at
+                      d.completed_at AS latest_deployment_completed_at,
+                      pd.id AS latest_post_deploy_id,
+                      pd.status AS latest_post_deploy_status
                FROM previews p
                JOIN projects proj ON p.project_id = proj.id
                JOIN organizations o ON proj.organization_id = o.id
@@ -383,6 +385,11 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                    FROM deployments d2 WHERE d2.preview_id = p.id AND d2.type = 'deploy'
                    ORDER BY d2.id DESC LIMIT 1
                ) d ON true
+               LEFT JOIN LATERAL (
+                   SELECT d3.id, d3.status
+                   FROM deployments d3 WHERE d3.preview_id = p.id AND d3.type = 'post_deploy'
+                   ORDER BY d3.id DESC LIMIT 1
+               ) pd ON true
                WHERE proj.organization_id = $1
                ORDER BY p.created_at DESC""",
             org_id,
@@ -393,7 +400,9 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                       o.slug as org_slug,
                       d.id AS latest_deployment_id,
                       d.status AS latest_deployment_status,
-                      d.completed_at AS latest_deployment_completed_at
+                      d.completed_at AS latest_deployment_completed_at,
+                      pd.id AS latest_post_deploy_id,
+                      pd.status AS latest_post_deploy_status
                FROM previews p
                JOIN projects proj ON p.project_id = proj.id
                JOIN organizations o ON proj.organization_id = o.id
@@ -402,6 +411,11 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                    FROM deployments d2 WHERE d2.preview_id = p.id AND d2.type = 'deploy'
                    ORDER BY d2.id DESC LIMIT 1
                ) d ON true
+               LEFT JOIN LATERAL (
+                   SELECT d3.id, d3.status
+                   FROM deployments d3 WHERE d3.preview_id = p.id AND d3.type = 'post_deploy'
+                   ORDER BY d3.id DESC LIMIT 1
+               ) pd ON true
                ORDER BY p.created_at DESC"""
         )
     return [_row_to_dict(r) for r in rows]
