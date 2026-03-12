@@ -232,7 +232,7 @@ async def get_me(user: UserWithContext = Depends(get_current_user)):
         "avatar_url": user.avatar_url,
         "is_superadmin": user.is_superadmin,
         "organizations": [
-            {"org_id": o["id"], "org_slug": o["slug"], "org_name": o["name"], "role": o["role"], "color": o.get("color", "#6366f1")}
+            {"org_id": o["id"], "org_slug": o["slug"], "org_name": o["name"], "role": o["role"], "color": o.get("color", "#6366f1"), "gitlab_url": o.get("gitlab_url")}
             for o in orgs
         ],
     }
