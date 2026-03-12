@@ -388,6 +388,7 @@ async def get_preview_list_base(
             "commit_sha": row["commit_sha"],
             "last_deployed_at": row.get("last_deployed_at"),
             "last_deployment": last_deployment,
+            "post_deploy_status": row.get("post_deploy_status"),
             "auto_update": bool(row.get("auto_update", 1)),
             "pinned": bool(row.get("pinned", 0)),
         })

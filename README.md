@@ -35,6 +35,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- preview push files me obliga a iniciar sesion y a seleccionar una organizacion. necesito que el tema de las orgnaizaciones sea mas transparente para no tener que seleccionar la orgnizacion. 
 - Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
 - 2fa necesario sobre todo para mi que soy superadmin y en realidad para cualquiera porque las DB son tema sensible.
 - NEcesito tener tier free y paid one. el free permite crear una sola preview por poryecto sin limites en nada mas. (ampliar mas la idea)  

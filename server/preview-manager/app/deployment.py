@@ -211,11 +211,27 @@ class PreviewDeployer:
                     log_output="\n".join(self._log_buffer),
                     duration=duration,
                 )
-                await deployment_log_broadcaster.complete(self._deployment_id, True)
+                # Don't complete broadcaster yet — post-deploy logs stream to same channel
 
             logger.info(
                 f"Deploy OK: {self.project_slug}/{self.preview_name} in {duration}s"
             )
+
+            # Post-deploy script — runs after deploy is marked as success.
+            # Non-fatal: the preview is already active and reachable.
+            # Logs stream to the same deployment channel for real-time viewing.
+            phase = "new" if is_new else "update"
+            await self._run_project_post_deploy_script(phase)
+
+            # Now complete the broadcaster and update persisted logs (including post-deploy output)
+            if self._deployment_id:
+                await finish_deployment(
+                    self._deployment_id, "success",
+                    log_output="\n".join(self._log_buffer),
+                    duration=duration,
+                )
+                await deployment_log_broadcaster.complete(self._deployment_id, True)
+
             return True
 
         except Exception as e:
@@ -316,9 +332,6 @@ class PreviewDeployer:
 
         await self._reload_webserver()
 
-        # 13. Post-deploy script (runs after everything is up and healthy)
-        await self._run_project_post_deploy_script("new")
-
         # Done — traffic is proxied via wake_preview middleware
 
     # ------------------------------------------------------------------
@@ -354,9 +367,6 @@ class PreviewDeployer:
         await self._activate_redis_cache()
 
         await self._reload_webserver()
-
-        # Post-deploy script (runs after everything is up and healthy)
-        await self._run_project_post_deploy_script("update")
 
         # Done — traffic is proxied via wake_preview middleware
 
@@ -1014,14 +1024,44 @@ class PreviewDeployer:
         output = stdout + stderr
 
         if proc.returncode != 0:
-            await self._log_step_end(step, elapsed, False, "")
+            # For signal-killed processes, try to diagnose the cause
+            extra_info = ""
+            if proc.returncode in (137, 139):
+                extra_info = await self._diagnose_kill(proc.returncode)
+            await self._log_step_end(step, elapsed, False, f"{RED}{extra_info}{RESET}" if extra_info else "")
             raise RuntimeError(
-                f"[{step}] Failed (exit {proc.returncode}):\n{output[-2000:]}"
+                f"[{step}] Failed (exit {proc.returncode}){extra_info}:\n{output[-2000:]}"
             )
 
         await self._log_step_end(step, elapsed, True, "")
         logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
         return output
+
+    async def _diagnose_kill(self, exit_code: int) -> str:
+        """Try to determine why a process was killed (OOM, etc.)."""
+        try:
+            if not self._executor:
+                return ""
+            # Check dmesg for recent OOM kills (last 30 seconds)
+            proc = await self._executor.run_shell(
+                "dmesg -T 2>/dev/null | tail -50 | grep -i 'oom\\|killed process\\|out of memory'",
+                cwd="/tmp",
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            oom_output = stdout.decode(errors="replace").strip()
+            if oom_output:
+                # Also get memory info
+                mem_proc = await self._executor.run_shell("free -h | head -2", cwd="/tmp")
+                mem_stdout, _ = await asyncio.wait_for(mem_proc.communicate(), timeout=5)
+                mem_info = mem_stdout.decode(errors="replace").strip()
+                return f" — OOM killed (out of memory)\n{oom_output}\n{mem_info}"
+            if exit_code == 137:
+                return " — killed by SIGKILL (likely OOM)"
+            if exit_code == 139:
+                return " — killed by SIGSEGV (segmentation fault)"
+        except Exception:
+            pass
+        return ""
 
     async def _verify_base_files(self):
         """Verify base DB exists in S3."""
