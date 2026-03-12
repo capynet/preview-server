@@ -380,7 +380,7 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                JOIN organizations o ON proj.organization_id = o.id
                LEFT JOIN LATERAL (
                    SELECT d2.id, d2.status, d2.completed_at
-                   FROM deployments d2 WHERE d2.preview_id = p.id
+                   FROM deployments d2 WHERE d2.preview_id = p.id AND d2.type = 'deploy'
                    ORDER BY d2.id DESC LIMIT 1
                ) d ON true
                WHERE proj.organization_id = $1
@@ -399,7 +399,7 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                JOIN organizations o ON proj.organization_id = o.id
                LEFT JOIN LATERAL (
                    SELECT d2.id, d2.status, d2.completed_at
-                   FROM deployments d2 WHERE d2.preview_id = p.id
+                   FROM deployments d2 WHERE d2.preview_id = p.id AND d2.type = 'deploy'
                    ORDER BY d2.id DESC LIMIT 1
                ) d ON true
                ORDER BY p.created_at DESC"""
@@ -528,13 +528,13 @@ async def get_running_deployment(preview_id: int):
     )
 
 
-async def create_deployment(preview_id: int, triggered_by: str | None = None) -> int:
+async def create_deployment(preview_id: int, triggered_by: str | None = None, deploy_type: str = "deploy") -> int:
     pool = await get_pool()
     row = await pool.fetchrow(
-        """INSERT INTO deployments (preview_id, status, triggered_by, started_at)
-           VALUES ($1, 'running', $2, $3)
+        """INSERT INTO deployments (preview_id, status, triggered_by, started_at, type)
+           VALUES ($1, 'running', $2, $3, $4)
            RETURNING id""",
-        preview_id, triggered_by, _now(),
+        preview_id, triggered_by, _now(), deploy_type,
     )
     return row["id"]
 
@@ -563,7 +563,7 @@ async def list_deployments(preview_id: int, limit: int = 50) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(
         """SELECT id, preview_id, status, error, triggered_by,
-                  started_at, completed_at, duration
+                  started_at, completed_at, duration, type
            FROM deployments
            WHERE preview_id = $1
            ORDER BY started_at DESC

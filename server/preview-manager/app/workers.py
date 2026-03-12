@@ -57,6 +57,69 @@ async def task_deploy_preview(
     )
 
 
+async def task_run_post_deploy(
+    ctx,
+    org_slug: str,
+    project_id: int,
+    project_slug: str,
+    preview_name: str,
+    triggered_by: str = "manual",
+):
+    """Run post-deploy script for an existing preview. Runs in arq worker."""
+    from app.deployment import PreviewDeployer
+    from app.database import get_preview
+    from app.docker_compose import parse_preview_yml
+    from app.state import PreviewStateManager
+    from pathlib import Path
+
+    preview = await get_preview(project_id, preview_name)
+    if not preview:
+        logger.error(f"Post-deploy: preview {project_slug}/{preview_name} not found")
+        return
+
+    vm_ip = preview.get("vm_ip")
+    if not vm_ip:
+        logger.error(f"Post-deploy: no VM for {project_slug}/{preview_name}")
+        return
+
+    # Parse preview.yml to get post_deploy config
+    preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
+    config = parse_preview_yml(preview_path)
+
+    # Determine phase based on deployment count
+    from app.database import list_deployments
+    deploys = await list_deployments(preview["id"], limit=100)
+    deploy_count = sum(1 for d in deploys if d.get("type", "deploy") == "deploy")
+    phase = "new" if deploy_count <= 1 else "update"
+
+    deploy_path = config["post_deploy"].get(phase)
+    if not deploy_path:
+        logger.info(f"Post-deploy: no script for phase '{phase}' in {project_slug}/{preview_name}")
+        return
+
+    # Create a deployer instance just for post-deploy
+    deployer = PreviewDeployer(
+        org_id=0,
+        org_slug=org_slug,
+        project_id=project_id,
+        project_slug=project_slug,
+        project_path="",
+        preview_name=preview_name,
+        source_branch=preview.get("branch", ""),
+        commit_sha=preview.get("commit_sha", ""),
+        triggered_by=triggered_by,
+        mr_iid=preview.get("mr_id"),
+    )
+    deployer._vm_ip = vm_ip
+    deployer._vm_id = preview.get("vm_id")
+    deployer._preview_config = config
+
+    from app.deployment import RemoteExecutor
+    deployer._executor = RemoteExecutor(vm_ip)
+
+    await deployer._run_post_deploy_with_record(phase, deploy_path)
+
+
 async def task_delete_preview(
     ctx,
     org_slug: str,
@@ -95,7 +158,7 @@ async def task_cleanup_orphan_vms(ctx):
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms]
+    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)

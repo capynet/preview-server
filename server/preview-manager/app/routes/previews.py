@@ -702,6 +702,36 @@ async def rebuild_preview(
     }
 
 
+@router.post("/previews/{preview_name}/rerun-post-deploy")
+async def rerun_post_deploy(
+    request: Request,
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
+    """Re-run the post-deploy script for this preview."""
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+    project_slug = proj["slug"]
+
+    state = await PreviewStateManager.load_state(project_id, preview_name)
+    if not state:
+        raise HTTPException(status_code=404, detail="Preview not found")
+    if not state.get("vm_ip"):
+        raise HTTPException(status_code=400, detail="No VM found for this preview")
+
+    await request.app.state.arq.enqueue_job(
+        "task_run_post_deploy",
+        user.org.slug,
+        project_id,
+        project_slug,
+        preview_name,
+        user.email,
+    )
+
+    return {"success": True, "message": f"Post-deploy started for {project_slug}/{preview_name}"}
+
+
 @router.get("/previews/{preview_name}/deployments")
 async def list_preview_deployments(
     project: str,

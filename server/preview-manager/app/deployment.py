@@ -211,26 +211,16 @@ class PreviewDeployer:
                     log_output="\n".join(self._log_buffer),
                     duration=duration,
                 )
-                # Don't complete broadcaster yet — post-deploy logs stream to same channel
+                await deployment_log_broadcaster.complete(self._deployment_id, True)
 
             logger.info(
                 f"Deploy OK: {self.project_slug}/{self.preview_name} in {duration}s"
             )
 
-            # Post-deploy script — runs after deploy is marked as success.
+            # Post-deploy script — runs as a separate deployment record.
             # Non-fatal: the preview is already active and reachable.
-            # Logs stream to the same deployment channel for real-time viewing.
             phase = "new" if is_new else "update"
             await self._run_project_post_deploy_script(phase)
-
-            # Now complete the broadcaster and update persisted logs (including post-deploy output)
-            if self._deployment_id:
-                await finish_deployment(
-                    self._deployment_id, "success",
-                    log_output="\n".join(self._log_buffer),
-                    duration=duration,
-                )
-                await deployment_log_broadcaster.complete(self._deployment_id, True)
 
             return True
 
@@ -880,6 +870,7 @@ class PreviewDeployer:
     async def _run_project_post_deploy_script(self, phase: str):
         """Run the project post-deploy script for a phase (new/update).
         Called after the deploy is fully complete and the preview is active.
+        Creates its own deployment record with separate logs.
         Non-fatal: a failure here is logged but does not fail the deploy."""
         config = getattr(self, "_preview_config", None)
         deploy_path = config["post_deploy"][phase] if config else None
@@ -887,19 +878,69 @@ class PreviewDeployer:
         if not deploy_path:
             return
 
+        await self._run_post_deploy_with_record(phase, deploy_path)
+
+    async def _run_post_deploy_with_record(self, phase: str, deploy_path: str):
+        """Execute post-deploy script with its own deployment record and log streaming."""
+        from app.websockets import deployment_log_broadcaster, preview_list_manager
+
         logger.info(f"Running post-deploy script ({phase}): {deploy_path}")
+
+        # Create a separate deployment record for post-deploy
+        preview = await get_preview(self.project_id, self.preview_name)
+        if not preview:
+            return
+        post_deploy_id = await create_deployment(
+            preview["id"], self.triggered_by, deploy_type="post_deploy"
+        )
+        deployment_log_broadcaster.register(post_deploy_id)
+        await preview_list_manager.force_broadcast()
+
+        # Use a separate log buffer for post-deploy
+        post_log_buffer: list[str] = []
+        original_log_buffer = self._log_buffer
+        self._log_buffer = post_log_buffer
+        original_deployment_id = self._deployment_id
+        self._deployment_id = post_deploy_id
+
         await self._update_post_deploy_status("running")
+        start = datetime.now(timezone.utc)
+
         try:
+            await self._log_raw(
+                f"\n{BOLD}{CYAN}POST-DEPLOY ({phase}): {self.project_slug}/{self.preview_name}{RESET}\n"
+                f"{DIM}Script: {deploy_path}{RESET}\n"
+            )
             await self._docker_exec(
                 "bash", f"/var/www/html/{deploy_path}",
-                step=f"project-post-deploy-{phase}",
+                step=f"post-deploy-{phase}",
                 timeout=TIMEOUT_POST_DEPLOY,
             )
+            duration = int((datetime.now(timezone.utc) - start).total_seconds())
             await self._update_post_deploy_status("success")
+            await finish_deployment(
+                post_deploy_id, "success",
+                log_output="\n".join(post_log_buffer),
+                duration=duration,
+            )
+            await deployment_log_broadcaster.complete(post_deploy_id, True)
+            logger.info(f"Post-deploy OK: {self.project_slug}/{self.preview_name} in {duration}s")
         except Exception as e:
+            duration = int((datetime.now(timezone.utc) - start).total_seconds())
             logger.warning(f"Post-deploy script ({phase}) failed (non-fatal): {e}")
-            await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed (non-fatal): {e}{RESET}\n")
+            await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed: {e}{RESET}\n")
             await self._update_post_deploy_status("failed")
+            await finish_deployment(
+                post_deploy_id, "failed",
+                log_output="\n".join(post_log_buffer),
+                error=str(e),
+                duration=duration,
+            )
+            await deployment_log_broadcaster.complete(post_deploy_id, False)
+        finally:
+            # Restore original log buffer and deployment ID
+            self._log_buffer = original_log_buffer
+            self._deployment_id = original_deployment_id
 
     async def _update_post_deploy_status(self, status: str):
         """Update the post_deploy_status field on the preview."""
