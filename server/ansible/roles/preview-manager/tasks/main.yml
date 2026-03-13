@@ -241,6 +241,15 @@
     mode: '0644'
   tags: [cli]
 
+- name: Allow preview-manager to run du with sudo (for disk usage monitoring)
+  copy:
+    content: "preview-manager ALL=(root) NOPASSWD: /usr/bin/du\n"
+    dest: /etc/sudoers.d/preview-manager-du
+    owner: root
+    group: root
+    mode: '0440'
+    validate: 'visudo -cf %s'
+
 - name: Enable and start preview-manager service
   systemd:
     name: preview-manager

@@ -418,7 +418,7 @@ _DISK_USAGE_DIRS = [
     ("/var/lib/registry", "Docker registry"),
 ]
 
-_disk_usage_cache: dict = {"directories": [], "updated_at": None}
+_disk_usage_cache: dict = {"directories": [], "disk_total_bytes": 0, "updated_at": None}
 
 
 def get_disk_usage_cache() -> dict:
@@ -434,7 +434,7 @@ async def disk_usage_loop():
             for path, label in _DISK_USAGE_DIRS:
                 try:
                     proc = await asyncio.create_subprocess_exec(
-                        "du", "-sb", path,
+                        "sudo", "du", "-sb", path,
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                     )
@@ -448,7 +448,9 @@ async def disk_usage_loop():
                 dirs.append({"path": path, "label": label, "size_bytes": size_bytes})
 
             dirs.sort(key=lambda d: d["size_bytes"], reverse=True)
+            disk = psutil.disk_usage("/")
             _disk_usage_cache["directories"] = dirs
+            _disk_usage_cache["disk_total_bytes"] = disk.total
             _disk_usage_cache["updated_at"] = datetime.utcnow().isoformat()
 
             logger.debug(f"Disk usage updated: {len(dirs)} directories")
