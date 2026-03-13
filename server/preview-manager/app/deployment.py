@@ -408,7 +408,8 @@ class PreviewDeployer:
 
         setup_cmd = (
             f"mkdir -p {VM_PREVIEW_DIR}/code && "
-            f"(which aws >/dev/null 2>&1 || pip3 install -q awscli --break-system-packages)"
+            f"(which aws >/dev/null 2>&1 || pip3 install -q awscli --break-system-packages) && "
+            f"(which pv >/dev/null 2>&1 || apt-get install -yqq pv >/dev/null 2>&1)"
         )
         proc = await self._executor.run_shell(setup_cmd)
         _, stderr = await proc.communicate()
@@ -521,12 +522,16 @@ class PreviewDeployer:
 
         db_container = f"{self.container_prefix}-db"
         for attempt in range(30):
+            attempt_num = attempt + 1
             # Root ping
             proc = await self._executor.run_shell(
                 f"docker exec {db_container} mysqladmin ping -h localhost -u root -proot 2>/dev/null"
             )
-            await proc.communicate()
+            stdout, _ = await proc.communicate()
             if proc.returncode != 0:
+                await self._log_raw(
+                    f"{DIM}  [{attempt_num}/30] Waiting for MySQL to accept connections...{RESET}\n"
+                )
                 await asyncio.sleep(2)
                 continue
 
@@ -539,10 +544,13 @@ class PreviewDeployer:
                 elapsed = time.monotonic() - t0
                 await self._log_step_end(
                     step, elapsed, True,
-                    f"{DIM}MySQL ready after {attempt + 1} attempt(s){RESET}",
+                    f"{DIM}MySQL ready after {attempt_num} attempt(s){RESET}",
                 )
                 return
 
+            await self._log_raw(
+                f"{DIM}  [{attempt_num}/30] MySQL up, waiting for user 'drupal' to be ready...{RESET}\n"
+            )
             await asyncio.sleep(2)
 
         elapsed = time.monotonic() - t0
@@ -570,7 +578,7 @@ class PreviewDeployer:
         )
 
     async def _import_db(self):
-        """Download base DB from S3 to VM and import into MySQL."""
+        """Download base DB from S3 and stream directly into MySQL."""
         step = "import-db"
         await self._log_step_start(step)
         t0 = time.monotonic()
@@ -579,26 +587,31 @@ class PreviewDeployer:
         s3_key = f"base-files/{self.project_slug}/db.sql.gz"
 
         # Log file size info
+        size_bytes = 0
         status = await storage_manager.get_base_files_status(self.project_slug)
         if status.get("db"):
-            size_mb = status["db"].get("size_bytes", 0) / (1024 * 1024)
+            size_bytes = status["db"].get("size_bytes", 0)
+            size_mb = size_bytes / (1024 * 1024)
             await self._log_raw(f"{DIM}Dump size: {size_mb:.1f} MB (compressed){RESET}\n")
 
         await self._log_raw(f"{DIM}Downloading and importing database...{RESET}\n")
 
-        # Download from S3 to VM, then pipe to mysql
-        import_cmd = (
-            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
-            f"--endpoint-url {settings.hetzner_s3_endpoint} "
-            f"| gunzip | docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
-        )
-
-        # Set AWS credentials on the VM for the S3 download
+        # Stream: S3 → pv (progress) → gunzip → mysql  (no temp file)
         env_cmd = (
             f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
             f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
         )
-        proc = await self._executor.run_shell(env_cmd + import_cmd)
+        size_flag = f"-s {size_bytes}" if size_bytes else ""
+        import_cmd = (
+            f"{env_cmd}"
+            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
+            f"--endpoint-url {settings.hetzner_s3_endpoint} "
+            f"| pv {size_flag} "
+            f"| gunzip "
+            f"| docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
+        )
+
+        proc = await self._executor.run_shell(import_cmd, pty=True)
         stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_DB)
         elapsed = time.monotonic() - t0
 
@@ -639,31 +652,39 @@ class PreviewDeployer:
         files_dir = f"{VM_PREVIEW_DIR}/code/{docroot}/{public_path}"
 
         # Log file size info
+        size_bytes = 0
         status = await storage_manager.get_base_files_status(self.project_slug)
         if status.get("files"):
-            size_mb = status["files"].get("size_bytes", 0) / (1024 * 1024)
+            size_bytes = status["files"].get("size_bytes", 0)
+            size_mb = size_bytes / (1024 * 1024)
             await self._log_raw(f"{DIM}Archive size: {size_mb:.1f} MB{RESET}\n")
 
-        # Stream directly from S3 into tar (no temp file needed)
         await self._log_raw(f"{DIM}Downloading and extracting files...{RESET}\n")
-        import_cmd = (
+
+        # Stream: S3 → pv (progress) → tar extract  (no temp file)
+        env_cmd = (
             f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
             f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+        )
+        size_flag = f"-s {size_bytes}" if size_bytes else ""
+        import_cmd = (
+            f"{env_cmd}"
             f"mkdir -p {files_dir} && "
             f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
-            f"--endpoint-url {settings.hetzner_s3_endpoint} | "
-            f"tar xzf - -C {files_dir} && "
+            f"--endpoint-url {settings.hetzner_s3_endpoint} "
+            f"| pv {size_flag} "
+            f"| tar xzf - -C {files_dir} && "
             f"chown -R 33:33 {files_dir} && "
             f"chmod -R a+rX {files_dir} && "
             f"echo \"Extracted $(find {files_dir} -type f | wc -l) files\""
         )
-        proc = await self._executor.run_shell(import_cmd)
+        proc = await self._executor.run_shell(import_cmd, pty=True)
         stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_FILES)
         elapsed = time.monotonic() - t0
 
         if proc.returncode != 0:
             # Clean up partial extraction to free disk space
-            cleanup_cmd = f"rm -rf {files_dir} && mkdir -p {files_dir}"
+            cleanup_cmd = f"rm -rf {files_dir}"
             cleanup_proc = await self._executor.run_shell(cleanup_cmd)
             await cleanup_proc.communicate()
             await self._log_raw(f"{DIM}Cleaned up partial files to free disk space{RESET}\n")
@@ -810,8 +831,7 @@ class PreviewDeployer:
 
         logger.info(f"Running deploy script ({phase}): {deploy_path}")
         await self._docker_exec(
-            "bash", "-c",
-            f"git config --global --add safe.directory /var/www/html 2>/dev/null; bash /var/www/html/{deploy_path}",
+            "bash", f"/var/www/html/{deploy_path}",
             step=f"project-deploy-script-{phase}",
             timeout=TIMEOUT_DEPLOY_SCRIPT,
             pty=True,
@@ -862,8 +882,7 @@ class PreviewDeployer:
                 f"{DIM}Script: {deploy_path}{RESET}\n"
             )
             await self._docker_exec(
-                "bash", "-c",
-                f"git config --global --add safe.directory /var/www/html 2>/dev/null; bash /var/www/html/{deploy_path}",
+                "bash", f"/var/www/html/{deploy_path}",
                 step=f"post-deploy-{phase}",
                 timeout=TIMEOUT_POST_DEPLOY,
                 pty=True,
@@ -965,11 +984,11 @@ class PreviewDeployer:
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120, env: dict[str, str] | None = None, pty: bool = False) -> str:
+    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120, env: dict[str, str] | None = None, pty: bool = True) -> str:
         """Run a command inside the PHP container on the VM.
 
-        When pty=True, allocates a PTY in both docker exec (-t) and SSH (-tt)
-        so the command sees a real terminal (colors, progress, line buffering).
+        PTY is enabled by default so commands see a real terminal
+        (colors, progress bars, line-buffered output).
         """
         php_container = f"{self.container_prefix}-php"
         docker_flags = "-t -e COLUMNS=200" if pty else "-e COLUMNS=200"
