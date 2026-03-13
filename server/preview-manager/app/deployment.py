@@ -813,6 +813,7 @@ class PreviewDeployer:
             "bash", f"/var/www/html/{deploy_path}",
             step=f"project-deploy-script-{phase}",
             timeout=TIMEOUT_DEPLOY_SCRIPT,
+            pty=True,
         )
 
     async def _run_project_post_deploy_script(self, phase: str):
@@ -863,6 +864,7 @@ class PreviewDeployer:
                 "bash", f"/var/www/html/{deploy_path}",
                 step=f"post-deploy-{phase}",
                 timeout=TIMEOUT_POST_DEPLOY,
+                pty=True,
             )
             duration = int((datetime.now(timezone.utc) - start).total_seconds())
             await self._update_post_deploy_status("success")
@@ -930,6 +932,7 @@ class PreviewDeployer:
             proc = await self._executor.run_shell(
                 f"export {env_export} && bash {remote_script}",
                 cwd=f"{VM_PREVIEW_DIR}/code",
+                pty=True,
             )
             stdout, stderr = await self._stream_progress(
                 proc, f"deploy-step-{phase}/{script.name}",
@@ -960,15 +963,19 @@ class PreviewDeployer:
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120, env: dict[str, str] | None = None) -> str:
-        """Run a command inside the PHP container on the VM."""
+    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120, env: dict[str, str] | None = None, pty: bool = False) -> str:
+        """Run a command inside the PHP container on the VM.
+
+        When pty=True, allocates a PTY in both docker exec (-t) and SSH (-tt)
+        so the command sees a real terminal (colors, progress, line buffering).
+        """
         php_container = f"{self.container_prefix}-php"
-        env_flags = "-e COLUMNS=200"
+        docker_flags = "-t -e COLUMNS=200" if pty else "-e COLUMNS=200"
         if env:
             for k, v in env.items():
-                env_flags += f" -e {k}={v}"
-        shell_cmd = f"docker exec {env_flags} {php_container} {' '.join(cmd)}"
-        return await self._run_remote_shell(shell_cmd, step=step, timeout=timeout)
+                docker_flags += f" -e {k}={v}"
+        shell_cmd = f"docker exec {docker_flags} {php_container} {' '.join(cmd)}"
+        return await self._run_remote_shell(shell_cmd, step=step, timeout=timeout, pty=pty)
 
     async def _run_remote(self, *cmd: str, step: str, timeout: int = 120, cwd: str | None = None) -> str:
         """Run a command on the VM via SSH. Raises on failure."""
@@ -998,13 +1005,17 @@ class PreviewDeployer:
         logger.info(f"[{step}] OK ({_fmt_duration(elapsed)})")
         return output
 
-    async def _run_remote_shell(self, cmd: str, step: str, timeout: int = 120) -> str:
-        """Run a shell command on the VM via SSH. Raises on failure."""
+    async def _run_remote_shell(self, cmd: str, step: str, timeout: int = 120, pty: bool = False) -> str:
+        """Run a shell command on the VM via SSH. Raises on failure.
+
+        When pty=True, allocates a pseudo-terminal so the remote command
+        sees an interactive terminal (colors, progress bars, line buffering).
+        """
         logger.info(f"[{step}] Running on VM: {cmd}")
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        proc = await self._executor.run_shell(cmd, cwd=f"{VM_PREVIEW_DIR}/code")
+        proc = await self._executor.run_shell(cmd, cwd=f"{VM_PREVIEW_DIR}/code", pty=pty)
 
         try:
             stdout, stderr = await self._stream_progress(proc, step, t0, timeout)
@@ -1328,6 +1339,8 @@ if (getenv('PREV_IS_PREVIEW')) {
                         raise asyncio.TimeoutError()
                 if pending_chunks:
                     text = b"".join(pending_chunks).decode(errors="replace")
+                    # PTY mode produces \r\n line endings — normalize to \n
+                    text = text.replace("\r\n", "\n")
                     pending_chunks.clear()
                     await self._log_raw(text)
         except asyncio.TimeoutError:
@@ -1335,6 +1348,7 @@ if (getenv('PREV_IS_PREVIEW')) {
 
         if pending_chunks:
             text = b"".join(pending_chunks).decode(errors="replace")
+            text = text.replace("\r\n", "\n")
             pending_chunks.clear()
             await self._log_raw(text)
 

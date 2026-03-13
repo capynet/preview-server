@@ -24,21 +24,29 @@ class RemoteExecutor:
         self.user = user
         self._key_path = settings.hetzner_ssh_private_key_path
 
-    def _ssh_base(self) -> list[str]:
-        return ["ssh", "-i", self._key_path, *SSH_OPTS, f"{self.user}@{self.ip}"]
+    def _ssh_base(self, pty: bool = False) -> list[str]:
+        cmd = ["ssh", "-i", self._key_path, *SSH_OPTS]
+        if pty:
+            cmd.append("-tt")
+        cmd.append(f"{self.user}@{self.ip}")
+        return cmd
 
-    async def run(self, *cmd: str, cwd: str | None = None) -> asyncio.subprocess.Process:
+    async def run(self, *cmd: str, cwd: str | None = None, pty: bool = False) -> asyncio.subprocess.Process:
         """Execute a command remotely. Returns Process with stdout/stderr pipes.
 
         The caller is responsible for reading stdout/stderr and waiting.
         This allows reuse of _stream_progress() in deployment.py.
+
+        When pty=True, SSH allocates a pseudo-terminal so remote programs
+        behave as if running in an interactive terminal (colors, progress
+        bars, line-buffered output). stderr merges into stdout in this mode.
         """
         remote_cmd = list(cmd)
         if cwd:
             remote_cmd = ["cd", cwd, "&&"] + remote_cmd
 
-        full_cmd = self._ssh_base() + ["--"] + remote_cmd
-        logger.debug("SSH exec: %s", " ".join(remote_cmd))
+        full_cmd = self._ssh_base(pty=pty) + ["--"] + remote_cmd
+        logger.debug("SSH exec (pty=%s): %s", pty, " ".join(remote_cmd))
 
         proc = await asyncio.create_subprocess_exec(
             *full_cmd,
@@ -47,13 +55,18 @@ class RemoteExecutor:
         )
         return proc
 
-    async def run_shell(self, cmd: str, cwd: str | None = None) -> asyncio.subprocess.Process:
-        """Execute a shell command remotely (for pipes etc). Returns Process."""
+    async def run_shell(self, cmd: str, cwd: str | None = None, pty: bool = False) -> asyncio.subprocess.Process:
+        """Execute a shell command remotely (for pipes etc). Returns Process.
+
+        When pty=True, SSH allocates a pseudo-terminal so remote programs
+        behave as if running in an interactive terminal (colors, progress
+        bars, line-buffered output). stderr merges into stdout in this mode.
+        """
         if cwd:
             cmd = f"cd {cwd} && {cmd}"
 
-        full_cmd = self._ssh_base() + ["--", cmd]
-        logger.debug("SSH shell: %s", cmd)
+        full_cmd = self._ssh_base(pty=pty) + ["--", cmd]
+        logger.debug("SSH shell (pty=%s): %s", pty, cmd)
 
         proc = await asyncio.create_subprocess_exec(
             *full_cmd,

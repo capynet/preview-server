@@ -40,6 +40,7 @@ services:
       AUTH_PASSWORD: "{{ tinyproxy_password }}"
       ALLOWED_NETWORKS: "0.0.0.0/0"
       DISABLE_VIA_HEADER: "yes"
+      MAX_CLIENTS: "1000"
 
 volumes:
   pgdata:
