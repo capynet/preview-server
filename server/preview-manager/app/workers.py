@@ -179,7 +179,7 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
-    max_jobs = 10
+    max_jobs = 50
     job_timeout = 36000  # 10 hours — match TIMEOUT_DEPLOY_SCRIPT
     health_check_interval = 30
     cron_jobs = [
