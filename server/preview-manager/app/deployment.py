@@ -1229,7 +1229,7 @@ if (getenv('PREV_IS_PREVIEW')) {
 
     async def _generate_compose(self):
         """Parse preview.yml and generate docker-compose.yml locally."""
-        step = "generate-compose"
+        step = "configuring-env"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
