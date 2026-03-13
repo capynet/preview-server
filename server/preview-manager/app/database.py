@@ -567,6 +567,32 @@ async def finish_deployment(
     )
 
 
+async def get_all_running_deployments(min_age_seconds: int = 30) -> list[dict]:
+    """Get deployments stuck in 'running' status, joined with preview/project/org data.
+
+    Only returns deployments that have been running for at least min_age_seconds,
+    to avoid interfering with arq's own retry mechanism for recently cancelled tasks.
+    """
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=min_age_seconds)).isoformat()
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT d.id AS deployment_id, d.preview_id, d.triggered_by, d.type,
+                  pr.preview_name, pr.branch, pr.commit_sha, pr.mr_id, pr.mr_title,
+                  pr.project_id,
+                  p.slug AS project_slug, p.gitlab_project_path,
+                  o.id AS org_id, o.slug AS org_slug
+           FROM deployments d
+           JOIN previews pr ON d.preview_id = pr.id
+           JOIN projects p ON pr.project_id = p.id
+           JOIN organizations o ON p.organization_id = o.id
+           WHERE d.status = 'running'
+             AND d.started_at < $1""",
+        cutoff,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 async def get_deployment(deployment_id: int) -> Optional[dict]:
     pool = await get_pool()
     row = await pool.fetchrow("SELECT * FROM deployments WHERE id = $1", deployment_id)

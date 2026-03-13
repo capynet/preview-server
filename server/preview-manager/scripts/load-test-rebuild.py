@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """
-Load test: enqueue rebuild (update) jobs for all active previews via arq.
+Load test: enqueue update or rebuild jobs for all active previews via arq.
 
 Usage (run on the server):
     cd /home/preview-manager/www/previews/server/preview-manager
     source venv/bin/activate
-    python3 scripts/load-test-rebuild.py
+    python3 scripts/load-test-rebuild.py              # update (default)
+    python3 scripts/load-test-rebuild.py --rebuild     # full rebuild (re-import DB/files)
 
 Or from local via SSH:
     cat preview-server/server/preview-manager/scripts/load-test-rebuild.py | \
-        ssh root@91.99.157.66 "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3"
+        ssh root@91.99.157.66 "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3 - --rebuild"
 """
 
 import asyncio
+import sys
 import asyncpg
 from arq import create_pool
 from arq.connections import RedisSettings
@@ -24,6 +26,9 @@ VALKEY_PORT = 6379
 
 
 async def main():
+    rebuild = "--rebuild" in sys.argv
+    mode = "rebuild" if rebuild else "update"
+
     # Fetch all active previews from DB
     conn = await asyncpg.connect(POSTGRES_DSN)
     rows = await conn.fetch("""
@@ -41,7 +46,7 @@ async def main():
         print("No active previews found.")
         return
 
-    print(f"Found {len(rows)} previews. Enqueuing rebuild jobs...")
+    print(f"Found {len(rows)} previews. Enqueuing {mode} jobs...")
 
     pool = await create_pool(RedisSettings(host=VALKEY_HOST, port=VALKEY_PORT))
     for r in rows:
@@ -55,14 +60,14 @@ async def main():
             r["preview_name"],
             r["branch"],
             r["commit_sha"],
-            "update",      # triggered_by
+            mode,          # triggered_by: "update" or "rebuild"
             r["mr_id"],    # mr_iid
-            False,         # force_new
+            rebuild,       # force_new: True for rebuild, False for update
         )
-        print(f"  Enqueued: {r['project_slug']}/{r['preview_name']} -> {job.job_id}")
+        print(f"  Enqueued ({mode}): {r['project_slug']}/{r['preview_name']} -> {job.job_id}")
 
     await pool.aclose()
-    print(f"\nDone. {len(rows)} jobs enqueued.")
+    print(f"\nDone. {len(rows)} {mode} jobs enqueued.")
 
 
 if __name__ == "__main__":

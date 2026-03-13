@@ -2,8 +2,14 @@
 
 Handles deploys, deletes, and cron jobs (auto-erase, VM health checks).
 All tasks use Valkey-backed log broadcasting for cross-process streaming.
+
+Recovery features:
+- Startup recovery: detects deployments left 'running' from a previous worker and re-enqueues them.
+- Graceful shutdown: on SIGTERM, catches CancelledError in deploy tasks and re-enqueues them
+  so the new worker picks them up immediately.
 """
 
+import asyncio
 import logging
 from arq import cron
 from arq.connections import RedisSettings
@@ -13,12 +19,129 @@ from config.settings import settings
 logger = logging.getLogger(__name__)
 
 
+# ---- Recovery helpers ----
+
+async def _handle_interrupted_deploy(
+    org_id: int, org_slug: str,
+    project_id: int, project_slug: str, project_path: str,
+    preview_name: str, source_branch: str, commit_sha: str,
+    mr_iid: int | None, force_new: bool, mr_title: str | None,
+    reason: str = "Interrupted by worker shutdown",
+):
+    """Mark current deployment as failed, release lock, and re-enqueue for recovery."""
+    from app.database import get_preview, get_running_deployment, finish_deployment
+    from app.state import PreviewStateManager
+    from app.valkey import release_deploy_lock
+
+    deploy_key = f"{project_slug}/{preview_name}"
+
+    # Mark running deployment as failed and reset preview status
+    try:
+        preview = await get_preview(project_id, preview_name)
+        if preview:
+            running = await get_running_deployment(preview["id"])
+            if running:
+                await finish_deployment(
+                    running["id"], "failed",
+                    error=f"{reason} — will retry",
+                )
+                logger.info(f"Marked deployment #{running['id']} as failed for {deploy_key}")
+
+        await PreviewStateManager.save_state(
+            project_id, preview_name,
+            status="failed",
+            last_deployment_status="failed",
+            last_deployment_error=f"{reason} — re-deploying",
+        )
+    except Exception as e:
+        logger.error(f"Error marking deployment failed for {deploy_key}: {e}")
+
+    # Release deploy lock so the re-enqueued job can acquire it
+    try:
+        await release_deploy_lock(deploy_key)
+    except Exception:
+        pass
+
+    # Note: arq automatically retries cancelled tasks, so no need to re-enqueue here.
+    # The startup recovery (recover_interrupted_deployments) handles the case where
+    # arq's retry doesn't happen (e.g., kill -9, OOM).
+
+
+async def recover_interrupted_deployments():
+    """Startup recovery: find deployments left 'running' from a previous worker and re-enqueue them."""
+    from app.database import get_all_running_deployments, finish_deployment
+    from app.state import PreviewStateManager
+    from app.valkey import release_deploy_lock
+    from arq import create_pool as create_arq_pool
+
+    running = await get_all_running_deployments()
+    if not running:
+        logger.info("No interrupted deployments to recover")
+        return
+
+    logger.info(f"Found {len(running)} interrupted deployment(s) — recovering")
+    arq_pool = await create_arq_pool(RedisSettings.from_dsn(settings.valkey_url))
+
+    for dep in running:
+        dep_id = dep["deployment_id"]
+        preview_name = dep["preview_name"]
+        project_slug = dep["project_slug"]
+        deploy_key = f"{project_slug}/{preview_name}"
+        dep_type = dep.get("type", "deploy")
+
+        # Mark deployment as failed
+        await finish_deployment(dep_id, "failed", error="Interrupted by worker restart")
+        logger.info(f"Marked deployment #{dep_id} as failed ({deploy_key})")
+
+        # Reset preview status so it's not stuck in 'creating'
+        await PreviewStateManager.save_state(
+            dep["project_id"], preview_name,
+            status="failed",
+            last_deployment_status="failed",
+            last_deployment_error="Interrupted by worker restart — re-deploying",
+        )
+
+        # Only re-enqueue deploy-type tasks; others just mark as failed
+        if dep_type != "deploy":
+            continue
+
+        if not dep.get("gitlab_project_path"):
+            logger.warning(f"Cannot re-enqueue {deploy_key}: no gitlab_project_path")
+            continue
+
+        # Release stale deploy lock
+        try:
+            await release_deploy_lock(deploy_key)
+        except Exception:
+            pass
+
+        # Re-enqueue
+        await arq_pool.enqueue_job(
+            "task_deploy_preview",
+            dep["org_id"], dep["org_slug"],
+            dep["project_id"], dep["project_slug"],
+            dep["gitlab_project_path"],
+            preview_name, dep["branch"], dep["commit_sha"],
+            "recovery",
+            dep["mr_id"],
+            False,  # force_new
+            dep.get("mr_title"),
+        )
+        logger.info(f"Re-enqueued {deploy_key} for recovery")
+
+    await arq_pool.aclose()
+    logger.info(f"Recovery complete: {len(running)} deployment(s) processed")
+
+
+# ---- Worker lifecycle ----
+
 async def startup(ctx):
     """Called when the worker starts."""
     from app.database import init_pool
     from app.valkey import init_valkey
     await init_pool()
     await init_valkey()
+    await recover_interrupted_deployments()
     logger.info("arq worker started")
 
 
@@ -50,11 +173,23 @@ async def task_deploy_preview(
 ):
     """Deploy a preview. Runs in arq worker with Valkey-backed log streaming."""
     from app.routes.webhooks import _clone_and_deploy
-    await _clone_and_deploy(
-        org_id, org_slug, project_id, project_slug, project_path,
-        preview_name, source_branch, commit_sha, triggered_by,
-        mr_iid, force_new, mr_title,
-    )
+    try:
+        await _clone_and_deploy(
+            org_id, org_slug, project_id, project_slug, project_path,
+            preview_name, source_branch, commit_sha, triggered_by,
+            mr_iid, force_new, mr_title,
+        )
+    except asyncio.CancelledError:
+        logger.warning(f"Deploy {project_slug}/{preview_name} cancelled (worker shutdown) — re-enqueueing")
+        try:
+            await asyncio.shield(_handle_interrupted_deploy(
+                org_id, org_slug, project_id, project_slug, project_path,
+                preview_name, source_branch, commit_sha,
+                mr_iid, force_new, mr_title,
+            ))
+        except asyncio.CancelledError:
+            pass  # shield was cancelled but inner task continues
+        raise
 
 
 async def task_run_post_deploy(

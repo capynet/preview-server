@@ -372,12 +372,16 @@ async def system_resources_loop():
             except Exception as e:
                 logger.debug(f"Error getting docker stats: {e}")
 
+            load1, load5, load15 = os.getloadavg()
             snapshot = {
                 "memory_percent": mem.percent,
                 "memory_available_gb": round(mem.available / (1024**3), 2),
                 "memory_total_gb": round(mem.total / (1024**3), 2),
                 "cpu_percent": cpu,
                 "cpu_count": psutil.cpu_count(),
+                "load_avg_1": round(load1, 2),
+                "load_avg_5": round(load5, 2),
+                "load_avg_15": round(load15, 2),
                 "disk_percent": disk.percent,
                 "disk_used_gb": round(disk.used / (1024**3), 2),
                 "disk_total_gb": round(disk.total / (1024**3), 2),
