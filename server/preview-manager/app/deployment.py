@@ -810,7 +810,8 @@ class PreviewDeployer:
 
         logger.info(f"Running deploy script ({phase}): {deploy_path}")
         await self._docker_exec(
-            "bash", f"/var/www/html/{deploy_path}",
+            "bash", "-c",
+            f"git config --global --add safe.directory /var/www/html 2>/dev/null; bash /var/www/html/{deploy_path}",
             step=f"project-deploy-script-{phase}",
             timeout=TIMEOUT_DEPLOY_SCRIPT,
             pty=True,
@@ -861,7 +862,8 @@ class PreviewDeployer:
                 f"{DIM}Script: {deploy_path}{RESET}\n"
             )
             await self._docker_exec(
-                "bash", f"/var/www/html/{deploy_path}",
+                "bash", "-c",
+                f"git config --global --add safe.directory /var/www/html 2>/dev/null; bash /var/www/html/{deploy_path}",
                 step=f"post-deploy-{phase}",
                 timeout=TIMEOUT_POST_DEPLOY,
                 pty=True,
