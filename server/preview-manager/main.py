@@ -32,7 +32,7 @@ async def lifespan(app: FastAPI):
     from app.database import init_pool, close_pool
     from app.valkey import init_valkey, close_valkey
     from app.config_store import load_config_to_settings
-    from app.websockets import system_resources_loop
+    from app.websockets import system_resources_loop, disk_usage_loop
 
     logger.info("Starting Preview Manager Service")
 
@@ -71,14 +71,20 @@ async def lifespan(app: FastAPI):
 
     # System resources monitor still runs in-process (lightweight, 2s interval)
     system_resources_task = asyncio.create_task(system_resources_loop())
+    disk_usage_task = asyncio.create_task(disk_usage_loop())
     logger.info("Preview Manager Service started successfully")
 
     yield
 
     # Shutdown
     system_resources_task.cancel()
+    disk_usage_task.cancel()
     try:
         await system_resources_task
+    except asyncio.CancelledError:
+        pass
+    try:
+        await disk_usage_task
     except asyncio.CancelledError:
         pass
 

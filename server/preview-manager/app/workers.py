@@ -154,18 +154,37 @@ async def task_cleanup_orphan_vms(ctx):
     await cleanup_orphan_vms()
 
 
+async def task_docker_prune(ctx):
+    """Remove unused Docker images and build cache. Runs as cron job."""
+    import asyncio
+
+    logger.info("Running docker system prune...")
+    proc = await asyncio.create_subprocess_exec(
+        "docker", "system", "prune", "-f", "--filter", "until=24h",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode == 0:
+        output = stdout.decode().strip()
+        logger.info(f"Docker prune completed: {output}")
+    else:
+        logger.warning(f"Docker prune failed: {stderr.decode().strip()}")
+
+
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms]
+    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_docker_prune]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
-    max_jobs = 5
+    max_jobs = 10
     job_timeout = 36000  # 10 hours — match TIMEOUT_DEPLOY_SCRIPT
     health_check_interval = 30
     cron_jobs = [
         cron(task_auto_erase, hour=None, minute=0),  # Every hour
         cron(task_check_vms, hour=None, minute={0, 15, 30, 45}),  # Every 15 min
         cron(task_cleanup_orphan_vms, hour=None, minute={10, 40}),  # Every 30 min
+        cron(task_docker_prune, hour={3}, minute=0),  # Daily at 3 AM
     ]

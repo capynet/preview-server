@@ -406,6 +406,62 @@ async def system_resources_loop():
             await asyncio.sleep(5)
 
 
+# ---------------------------------------------------------------------------
+# Disk usage monitoring (updated every 10 minutes)
+# ---------------------------------------------------------------------------
+
+_DISK_USAGE_DIRS = [
+    ("/var/www/previews", "Preview code"),
+    ("/var/lib/docker", "Docker (coordinator)"),
+    ("/var/log", "System logs"),
+    ("/var/lib/containerd", "Container images (runtime)"),
+    ("/var/lib/registry", "Docker registry"),
+]
+
+_disk_usage_cache: dict = {"directories": [], "updated_at": None}
+
+
+def get_disk_usage_cache() -> dict:
+    return _disk_usage_cache
+
+
+async def disk_usage_loop():
+    """Background loop that calculates disk usage of key directories every 10 minutes."""
+    logger.info("Starting disk usage monitoring loop")
+    while True:
+        try:
+            dirs = []
+            for path, label in _DISK_USAGE_DIRS:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        "du", "-sb", path,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+                    if proc.returncode == 0:
+                        size_bytes = int(stdout.decode().split()[0])
+                    else:
+                        size_bytes = 0
+                except Exception:
+                    size_bytes = 0
+                dirs.append({"path": path, "label": label, "size_bytes": size_bytes})
+
+            dirs.sort(key=lambda d: d["size_bytes"], reverse=True)
+            _disk_usage_cache["directories"] = dirs
+            _disk_usage_cache["updated_at"] = datetime.utcnow().isoformat()
+
+            logger.debug(f"Disk usage updated: {len(dirs)} directories")
+            await asyncio.sleep(600)  # 10 minutes
+
+        except asyncio.CancelledError:
+            logger.info("Disk usage loop cancelled")
+            break
+        except Exception as e:
+            logger.error(f"Error in disk usage loop: {e}", exc_info=True)
+            await asyncio.sleep(60)
+
+
 async def stream_subprocess_output(
     command: list[str],
     cwd: str,

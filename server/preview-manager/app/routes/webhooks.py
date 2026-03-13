@@ -111,7 +111,7 @@ async def _clone_and_deploy(
             return
 
         # Clone locally (shallow, for preview.yml parsing only)
-        ok = await _local_shallow_clone(
+        ok = await _local_sync_repo(
             gitlab_url, gitlab_token, project_path,
             org_slug, project_slug, preview_name,
             source_branch, commit_sha, preview_path,
@@ -155,7 +155,7 @@ async def _clone_and_deploy(
         await release_deploy_lock(deploy_key)
 
 
-async def _local_shallow_clone(
+async def _local_sync_repo(
     gitlab_url: str,
     gitlab_token: str,
     project_path: str,  # gitlab path_with_namespace
@@ -166,26 +166,83 @@ async def _local_shallow_clone(
     commit_sha: str,
     dest: Path,
 ) -> bool:
-    """Shallow clone locally for preview.yml parsing. Returns True on success."""
-    import shutil
-    import tempfile
+    """Clone or update repo locally. Keeps .git for incremental fetches."""
     from urllib.parse import urlparse
 
     try:
         parsed = urlparse(gitlab_url)
         clone_url = f"https://oauth2:{gitlab_token}@{parsed.hostname}/{project_path}.git"
+        dest.mkdir(parents=True, exist_ok=True)
+        git_dir = dest / ".git"
 
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        tmpdir = tempfile.mkdtemp(dir=str(dest.parent), prefix=f".{preview_name}-tmp-")
-
-        try:
+        if git_dir.is_dir():
+            # Incremental update: fetch + reset
             proc = await asyncio.create_subprocess_exec(
-                "git", "clone", "--depth", "1", "--branch", source_branch,
-                clone_url, tmpdir,
+                "git", "-C", str(dest),
+                "remote", "set-url", "origin", clone_url,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await proc.communicate()
+            await proc.communicate()
+
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", str(dest),
+                "fetch", "--depth", "1", "origin", source_branch,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                logger.warning(
+                    f"git fetch failed for {project_path} {preview_name}: "
+                    f"{stderr.decode().strip()} — falling back to fresh clone"
+                )
+                import shutil
+                shutil.rmtree(dest, ignore_errors=True)
+                return await _local_sync_repo(
+                    gitlab_url, gitlab_token, project_path,
+                    org_slug, project_slug, preview_name,
+                    source_branch, commit_sha, dest,
+                )
+
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", str(dest),
+                "reset", "--hard", "FETCH_HEAD",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
+            if proc.returncode != 0:
+                logger.error(
+                    f"git reset failed for {project_path} {preview_name}: "
+                    f"{stderr.decode().strip()}"
+                )
+                return False
+
+            # Clean untracked files
+            proc = await asyncio.create_subprocess_exec(
+                "git", "-C", str(dest), "clean", "-fdx",
+                "--exclude", "preview.yml",
+                "--exclude", "docker-compose.yml",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+
+            logger.info(f"Local fetch: {project_path} {preview_name} -> {dest}")
+        else:
+            # First time (or legacy dir without .git): clean and clone
+            import shutil
+            shutil.rmtree(dest, ignore_errors=True)
+            dest.mkdir(parents=True, exist_ok=True)
+
+            proc = await asyncio.create_subprocess_exec(
+                "git", "clone", "--depth", "1", "--branch", source_branch,
+                clone_url, str(dest),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await proc.communicate()
 
             if proc.returncode != 0:
                 logger.error(
@@ -194,28 +251,11 @@ async def _local_shallow_clone(
                 )
                 return False
 
-            # Remove .git directory
-            git_dir = Path(tmpdir) / ".git"
-            if git_dir.exists():
-                shutil.rmtree(git_dir)
-
-            # Sync to destination
-            dest.mkdir(parents=True, exist_ok=True)
-            rsync_cmd = ["rsync", "-a", "--delete", f"{tmpdir}/", f"{dest}/"]
-            proc_sync = await asyncio.create_subprocess_exec(
-                *rsync_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await proc_sync.communicate()
-
-            dest.chmod(0o755)
             logger.info(f"Local clone: {project_path} {preview_name} -> {dest}")
-            return True
-        finally:
-            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        return True
     except Exception as e:
-        logger.error(f"Failed to clone: {e}")
+        logger.error(f"Failed to sync repo: {e}")
         return False
 
 

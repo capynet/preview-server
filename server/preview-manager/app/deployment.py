@@ -291,8 +291,8 @@ class PreviewDeployer:
         # 4. Setup workspace directory
         await self._step_setup_vm()
 
-        # 5. Clone repo via SSH
-        await self._step_clone_repo()
+        # 5. Sync code from coordinator to VM
+        await self._step_sync_code()
 
         # 6. Generate and upload docker-compose.yml
         await self._generate_compose()
@@ -340,8 +340,8 @@ class PreviewDeployer:
 
         self._executor = RemoteExecutor(self._vm_ip)
 
-        # Git pull
-        await self._step_git_pull()
+        # Sync updated code from coordinator to VM
+        await self._step_sync_code()
 
         # Generate and upload compose + settings
         await self._generate_compose()
@@ -447,92 +447,27 @@ class PreviewDeployer:
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, f"{DIM}{registry_host}{RESET}")
 
-    async def _step_clone_repo(self):
-        """Clone the repository on the VM."""
-        step = "clone-repo"
+    async def _step_sync_code(self):
+        """Sync code from coordinator to VM via rsync (no git clone on VM needed)."""
+        step = "sync-code"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        # Get org-specific GitLab token
-        gitlab_url, token = await self._get_gitlab_credentials()
-        from urllib.parse import urlparse
-        parsed = urlparse(gitlab_url)
-
-        # Get project path from DB
-        proj = await get_project(self.project_id)
-        if not proj or not proj.get("gitlab_project_path"):
-            raise RuntimeError(f"Project path not found for project_id={self.project_id}")
-        project_path = proj["gitlab_project_path"]
-
-        clone_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
         code_dir = f"{VM_PREVIEW_DIR}/code"
 
-        clone_cmd = (
-            f"rm -rf {code_dir}/* {code_dir}/.* 2>/dev/null; "
-            f"git clone --depth 1 --branch {self.branch} '{clone_url}' {code_dir}"
+        await self._log_raw(
+            f"{DIM}  rsync {self.preview_path} → {self._vm_ip}:{code_dir}{RESET}\n"
         )
-        proc = await self._executor.run_shell(clone_cmd)
-        stdout, stderr = await self._stream_progress(proc, step, t0, 300)
+
+        # Ensure target directory exists
+        proc = await self._executor.run_shell(f"mkdir -p {code_dir}")
+        await proc.communicate()
+
+        await self._executor.rsync_to(str(self.preview_path), code_dir)
+
         elapsed = time.monotonic() - t0
-
-        if proc.returncode != 0:
-            await self._log_step_end(step, elapsed, False, "")
-            raise RuntimeError(f"[{step}] Clone failed (exit {proc.returncode})")
-
         await self._log_step_end(step, elapsed, True, "")
 
-    async def _step_git_pull(self):
-        """Update code on the VM via git pull."""
-        step = "git-pull"
-        await self._log_step_start(step)
-        t0 = time.monotonic()
-
-        # Get org-specific GitLab token
-        gitlab_url, token = await self._get_gitlab_credentials()
-        from urllib.parse import urlparse
-        parsed = urlparse(gitlab_url)
-
-        # Get project path from DB
-        proj = await get_project(self.project_id)
-        if not proj or not proj.get("gitlab_project_path"):
-            raise RuntimeError(f"Project path not found for project_id={self.project_id}")
-        project_path = proj["gitlab_project_path"]
-
-        remote_url = f"https://oauth2:{token}@{parsed.hostname}/{project_path}.git"
-        code_dir = f"{VM_PREVIEW_DIR}/code"
-
-        pull_cmd = (
-            f"cd {code_dir} && "
-            f"git remote set-url origin '{remote_url}' && "
-            f"git fetch origin {self.branch} && "
-            f"git reset --hard FETCH_HEAD"
-        )
-        proc = await self._executor.run_shell(pull_cmd)
-        stdout, stderr = await self._stream_progress(proc, step, t0, 120)
-        elapsed = time.monotonic() - t0
-
-        if proc.returncode != 0:
-            await self._log_step_end(step, elapsed, False, "")
-            raise RuntimeError(f"[{step}] Git pull failed (exit {proc.returncode})")
-
-        await self._log_step_end(step, elapsed, True, "")
-
-    async def _get_gitlab_credentials(self) -> tuple[str, str]:
-        """Get GitLab URL and access token for the organization."""
-        if self.org_id:
-            from app.routes.gitlab import _get_org_gitlab_token
-            return await _get_org_gitlab_token(self.org_id)
-
-        # Fallback: look up org_id from org_slug
-        if self.org_slug:
-            from app.database import get_organization_by_slug
-            org = await get_organization_by_slug(self.org_slug)
-            if org:
-                self.org_id = org["id"]
-                from app.routes.gitlab import _get_org_gitlab_token
-                return await _get_org_gitlab_token(self.org_id)
-
-        raise RuntimeError("No org_id or org_slug available to get GitLab credentials")
 
     async def _upload_compose_and_settings(self):
         """Upload docker-compose.yml and settings files to the VM."""
@@ -1420,6 +1355,13 @@ if (getenv('PREV_IS_PREVIEW')) {
             fields["mr_title"] = self.mr_title
 
         if not existing:
+            # Preview was deleted while deploy was running — don't recreate it
+            if status in ("failed", "active"):
+                logger.warning(
+                    f"Preview {self.project_slug}/{self.preview_name} was deleted during deploy, "
+                    f"skipping state save (status={status})"
+                )
+                return
             fields["created_at"] = now
 
         if status == "active":

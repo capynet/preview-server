@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.auth.dependencies import require_org_role, get_org_context
+from app.auth.dependencies import require_org_role, get_org_context, require_superadmin
 from app.auth.models import OrgRole, UserWithContext, CreateTokenRequest
 from app.database import (
     update_organization,
@@ -146,6 +146,20 @@ async def delete_token(
     if not deleted:
         raise HTTPException(status_code=404, detail="Token not found")
     return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Disk usage (superadmin only)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/system/disk-usage")
+async def get_disk_usage(
+    user=Depends(require_superadmin()),
+):
+    """Get cached disk usage of key server directories."""
+    from app.websockets import get_disk_usage_cache
+    return get_disk_usage_cache()
 
 
 # ---------------------------------------------------------------------------

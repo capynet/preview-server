@@ -62,6 +62,27 @@ class RemoteExecutor:
         )
         return proc
 
+    async def rsync_to(self, local_dir: str, remote_dir: str) -> None:
+        """Rsync a local directory to the remote VM."""
+        # Ensure trailing slashes for rsync directory sync semantics
+        src = local_dir.rstrip("/") + "/"
+        dst = f"{self.user}@{self.ip}:{remote_dir.rstrip('/')}/"
+        cmd = [
+            "rsync", "-az", "--delete",
+            "-e", f"ssh -i {self._key_path} {' '.join(SSH_OPTS)}",
+            "--exclude", ".git",
+            "--exclude", "docker-compose.yml",
+            src, dst,
+        ]
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"rsync failed: {stderr.decode().strip()}")
+
     async def upload_file(self, local: str, remote: str) -> None:
         """Upload a file via SCP."""
         cmd = [

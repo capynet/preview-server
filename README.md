@@ -35,6 +35,8 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- Necesito que los mr aborten el build actual cuando llega un nuevo hook. 
+- Necesito un boton para abortar el build actual. Es util por ejemplo si necesito añadir una env var. en lugar de esperar a que acabe puedo abortarlo y lanzarlo.
 - preview push files me obliga a iniciar sesion y a seleccionar una organizacion. necesito que el tema de las orgnaizaciones sea mas transparente para no tener que seleccionar la orgnizacion. 
 - Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
 - 2fa necesario sobre todo para mi que soy superadmin y en realidad para cualquiera porque las DB son tema sensible.
@@ -157,3 +159,6 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Necesito en los scrip de deploy un step mas que se ejecute despues de los script de deploy normales. cuando un deploy acaba (yq ueda en verde y accesible) recien ahi se lanza el script post deploy que se puede usar para indexar contenidos o tareas que son muy pesadas ocmo cron run o cosas asi.
 - necesito integrar ia en lugares donde tenga sentido: "activa los proyectos que mas actividad tienen", "Si vas viendo previews que ninca se visitan despues de ser creadas en un proyeco en particular mejor no crees previews e informa al usuario que no se estan creando previews por falta de uso". Permite dejar un proment de lo que se espera a la hrtoa de hacer un erase automatico como por ejenmplo "en este proyecto por lo general revisamos las preview en un dia concreto aSI QUE NO TIENE SENTIDO QUE LAS CREES AUTOMATICAMENTE. MEJOR CREALAS CUANDO CREE UN mr A MASTER QUE SE LLAME "rELEASE XXX""""
 - en el detalle de un preview el widget de uso de recursos de la vm aparece y desaparece cuando esta transiocnando de estaods o reiniciando. MNo hay drama con eso pero en lugar de ocultarlo a lo mejor podemos simplemente dejarlo grisado.
+- Quiero poder marcar como favoritos algunso preview de rama o mr. Cuando se borre el preview esta desaparece silencionamente.
+- Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos.
+- estaria bien ver en el listado de preview o en su detalle cual es el destino de un MR (a master u otra rama). Includo esto me da la idea de agrupar por destinations onda arbol. 

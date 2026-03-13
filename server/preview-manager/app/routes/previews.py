@@ -412,6 +412,10 @@ async def delete_preview_internal(
 
     preview = await get_preview(project_id, preview_name)
 
+    # Delete from DB first — this is the most important step and must always happen
+    await PreviewStateManager.delete_state(project_id, preview_name)
+    logger.info(f"DB record deleted for {org_slug}/{project_slug}/{preview_name}")
+
     # Destroy VM if exists
     if preview and preview.get("vm_id"):
         try:
@@ -421,13 +425,13 @@ async def delete_preview_internal(
             logger.warning(f"Error destroying VM for {org_slug}/{project_slug}/{preview_name}: {e}")
 
     # Remove Caddy direct route
-    from app.caddy_api import caddy_manager
-    url_hash = preview.get("url_hash", "") if preview else compute_url_hash(org_slug, project_slug, preview_name)
-    domain = f"{url_hash}.mr.preview-mr.com"
-    await caddy_manager.remove_preview_route(domain)
-
-    # Delete from DB
-    await PreviewStateManager.delete_state(project_id, preview_name)
+    try:
+        from app.caddy_api import caddy_manager
+        url_hash = preview.get("url_hash", "") if preview else compute_url_hash(org_slug, project_slug, preview_name)
+        domain = f"{url_hash}.mr.preview-mr.com"
+        await caddy_manager.remove_preview_route(domain)
+    except Exception as e:
+        logger.warning(f"Error removing Caddy route for {org_slug}/{project_slug}/{preview_name}: {e}")
 
     # Clean up local preview directory (compose files etc.)
     preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
