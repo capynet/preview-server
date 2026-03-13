@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     # Uvicorn
     uvicorn_workers: int = 2
 
+    # Composer proxy (internal tinyproxy for private registries)
+    composer_proxy_url: str = ""
+
     # Hetzner Object Storage (S3)
     hetzner_s3_endpoint: str = ""
     hetzner_s3_access_key: str = ""

@@ -64,7 +64,7 @@ async def get_org_composer_proxy(
 ):
     """Get org-level composer proxy configuration."""
     return {
-        "url": user.org.composer_proxy_url,
+        "enabled": user.org.composer_proxy_enabled,
     }
 
 
@@ -75,8 +75,8 @@ async def save_org_composer_proxy(
 ):
     """Save org-level composer proxy configuration."""
     body = await request.json()
-    url = body.get("url", "").strip()
-    await update_organization(user.org.id, composer_proxy_url=url)
+    enabled = 1 if body.get("enabled") else 0
+    await update_organization(user.org.id, composer_proxy_enabled=enabled)
     return {"success": True}
 
 

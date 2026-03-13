@@ -553,12 +553,15 @@ class PreviewDeployer:
         env = {}
         if self.org_id:
             from app.database import get_organization_by_id
+            from config.settings import settings as app_settings
             org = await get_organization_by_id(self.org_id)
-            proxy_url = org.get("composer_proxy_url", "") if org else ""
-            if proxy_url:
+            proxy_enabled = org.get("composer_proxy_enabled", 0) if org else 0
+            proxy_url = app_settings.composer_proxy_url
+            if proxy_enabled and proxy_url:
                 env["HTTPS_PROXY"] = proxy_url
                 env["HTTP_PROXY"] = proxy_url
-                await self._log_raw(f"{DIM}Using composer proxy: {proxy_url.split('@')[-1]}{RESET}\n")
+                display_url = proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url
+                await self._log_raw(f"{DIM}Using composer proxy: {display_url}{RESET}\n")
         await self._docker_exec(
             "composer", "install", "--no-interaction", "--no-progress",
             step="composer-install",
