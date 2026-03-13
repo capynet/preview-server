@@ -553,6 +553,15 @@ async def create_deployment(preview_id: int, triggered_by: str | None = None, de
     return row["id"]
 
 
+async def update_deployment_status(deployment_id: int, status: str):
+    """Update only the status of a deployment (without closing it)."""
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE deployments SET status = $1 WHERE id = $2",
+        status, deployment_id,
+    )
+
+
 async def finish_deployment(
     deployment_id: int, status: str,
     log_output: str = "", error: str | None = None,

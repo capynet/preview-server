@@ -17,7 +17,7 @@ from app.docker_compose import (
 from app.state import PreviewStateManager
 from app.database import (
     get_preview, get_project, create_deployment, finish_deployment,
-    update_preview_vm, compute_url_hash,
+    update_deployment_status, update_preview_vm, compute_url_hash,
 )
 from app.caddy_api import caddy_manager
 from app.cloud import cloud_manager
@@ -192,8 +192,8 @@ class PreviewDeployer:
                 logger.info(f"UPDATE deploy: {self.project_slug}/{self.preview_name}")
                 await self._deploy_update()
 
-            duration = int((datetime.now(timezone.utc) - start).total_seconds())
-            await self._save_state("active", duration=duration)
+            deploy_duration = int((datetime.now(timezone.utc) - start).total_seconds())
+            await self._save_state("active", duration=deploy_duration)
 
             # Register Caddy route so static assets bypass the Python proxy
             if self._vm_ip:
@@ -203,15 +203,24 @@ class PreviewDeployer:
                     logger.warning(f"Failed to add Caddy route for {self.domain}: {e}")
 
             logger.info(
-                f"Deploy OK: {self.project_slug}/{self.preview_name} in {duration}s"
+                f"Deploy OK: {self.project_slug}/{self.preview_name} in {deploy_duration}s"
             )
 
-            # Post-deploy runs in the same deployment record.
-            # Non-fatal: the preview is already active and reachable.
+            # Mark deployment as success immediately (post-deploy won't change this)
+            if self._deployment_id:
+                await update_deployment_status(self._deployment_id, "success")
+                from app.valkey import publish_event
+                await publish_event(
+                    f"deploy_logs:{self._deployment_id}",
+                    {"type": "deploy_status", "status": "success", "duration": deploy_duration},
+                )
+                await preview_list_manager.force_broadcast()
+
+            # Post-deploy runs in the same log stream but cannot change deploy status.
             phase = "new" if is_new else "update"
             await self._run_project_post_deploy_inline(phase)
 
-            # Final summary (includes post-deploy timing if it ran)
+            # Final summary
             total_duration = int((datetime.now(timezone.utc) - start).total_seconds())
             await self._log_summary(True, total_duration)
 

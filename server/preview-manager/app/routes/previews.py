@@ -766,6 +766,15 @@ async def get_preview_deployment(
     preview = await get_preview(proj["id"], preview_name)
     if not preview or deployment["preview_id"] != preview["id"]:
         raise HTTPException(status_code=404, detail="Deployment not found for this preview")
+
+    # Check if log stream is still active in Valkey (e.g. post-deploy running)
+    try:
+        from app.valkey import get_deploy_complete
+        complete = await get_deploy_complete(deployment_id)
+        deployment["stream_active"] = complete is None
+    except Exception:
+        deployment["stream_active"] = False
+
     return deployment
 
 
