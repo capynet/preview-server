@@ -46,6 +46,7 @@ class Organization(BaseModel):
     gitlab_url: Optional[str] = None
     auto_erase_enabled: bool = False
     auto_erase_days: int = 10
+    composer_proxy_url: str = ""
     created_at: str
     updated_at: str
 

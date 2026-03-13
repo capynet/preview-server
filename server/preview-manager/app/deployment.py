@@ -550,10 +550,20 @@ class PreviewDeployer:
         raise RuntimeError("[wait-for-db] MySQL not ready after 60s")
 
     async def _composer_install(self):
+        env = {}
+        if self.org_id:
+            from app.database import get_organization_by_id
+            org = await get_organization_by_id(self.org_id)
+            proxy_url = org.get("composer_proxy_url", "") if org else ""
+            if proxy_url:
+                env["HTTPS_PROXY"] = proxy_url
+                env["HTTP_PROXY"] = proxy_url
+                await self._log_raw(f"{DIM}Using composer proxy: {proxy_url.split('@')[-1]}{RESET}\n")
         await self._docker_exec(
             "composer", "install", "--no-interaction", "--no-progress",
             step="composer-install",
             timeout=TIMEOUT_COMPOSER,
+            env=env,
         )
 
     async def _import_db(self):
@@ -947,10 +957,14 @@ class PreviewDeployer:
     # Helpers
     # ------------------------------------------------------------------
 
-    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120) -> str:
+    async def _docker_exec(self, *cmd: str, step: str, timeout: int = 120, env: dict[str, str] | None = None) -> str:
         """Run a command inside the PHP container on the VM."""
         php_container = f"{self.container_prefix}-php"
-        shell_cmd = f"docker exec -e COLUMNS=200 {php_container} {' '.join(cmd)}"
+        env_flags = "-e COLUMNS=200"
+        if env:
+            for k, v in env.items():
+                env_flags += f" -e {k}={v}"
+        shell_cmd = f"docker exec {env_flags} {php_container} {' '.join(cmd)}"
         return await self._run_remote_shell(shell_cmd, step=step, timeout=timeout)
 
     async def _run_remote(self, *cmd: str, step: str, timeout: int = 120, cwd: str | None = None) -> str:

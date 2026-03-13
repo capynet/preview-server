@@ -54,6 +54,33 @@ async def save_org_auto_erase(
 
 
 # ---------------------------------------------------------------------------
+# Org-level composer proxy
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/settings/composer-proxy")
+async def get_org_composer_proxy(
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Get org-level composer proxy configuration."""
+    return {
+        "url": user.org.composer_proxy_url,
+    }
+
+
+@router.put("/api/orgs/{org}/settings/composer-proxy")
+async def save_org_composer_proxy(
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Save org-level composer proxy configuration."""
+    body = await request.json()
+    url = body.get("url", "").strip()
+    await update_organization(user.org.id, composer_proxy_url=url)
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
 # Project environment variables
 # ---------------------------------------------------------------------------
 

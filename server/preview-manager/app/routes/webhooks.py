@@ -133,6 +133,7 @@ async def _clone_and_deploy(
             return
 
         deployer = PreviewDeployer(
+            org_id=org_id,
             org_slug=org_slug,
             project_slug=project_slug,
             project_id=project_id,
