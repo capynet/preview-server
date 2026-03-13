@@ -202,25 +202,26 @@ class PreviewDeployer:
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route for {self.domain}: {e}")
 
-            # Success summary
-            await self._log_summary(True, duration)
+            logger.info(
+                f"Deploy OK: {self.project_slug}/{self.preview_name} in {duration}s"
+            )
+
+            # Post-deploy runs in the same deployment record.
+            # Non-fatal: the preview is already active and reachable.
+            phase = "new" if is_new else "update"
+            await self._run_project_post_deploy_inline(phase)
+
+            # Final summary (includes post-deploy timing if it ran)
+            total_duration = int((datetime.now(timezone.utc) - start).total_seconds())
+            await self._log_summary(True, total_duration)
 
             if self._deployment_id:
                 await finish_deployment(
                     self._deployment_id, "success",
                     log_output="\n".join(self._log_buffer),
-                    duration=duration,
+                    duration=total_duration,
                 )
                 await deployment_log_broadcaster.complete(self._deployment_id, True)
-
-            logger.info(
-                f"Deploy OK: {self.project_slug}/{self.preview_name} in {duration}s"
-            )
-
-            # Post-deploy script — runs as a separate deployment record.
-            # Non-fatal: the preview is already active and reachable.
-            phase = "new" if is_new else "update"
-            await self._run_project_post_deploy_script(phase)
 
             return True
 
@@ -425,7 +426,6 @@ class PreviewDeployer:
             return
 
         step = "pull-images"
-        await self._log_step_start(step)
         t0 = time.monotonic()
 
         # Configure Docker on VM to allow insecure registry (HTTP) — only if not already configured
@@ -444,9 +444,6 @@ class PreviewDeployer:
         # Pull all images via docker compose
         pull_cmd = f"cd {VM_PREVIEW_DIR}/code && docker compose pull --quiet"
         await self._run_remote_shell(pull_cmd, step, timeout=TIMEOUT_DOCKER_UP)
-
-        elapsed = time.monotonic() - t0
-        await self._log_step_end(step, elapsed, True, f"{DIM}{registry_host}{RESET}")
 
     async def _step_sync_code(self):
         """Sync code from coordinator to VM via rsync (no git clone on VM needed)."""
@@ -837,9 +834,41 @@ class PreviewDeployer:
             pty=True,
         )
 
+    async def _run_project_post_deploy_inline(self, phase: str):
+        """Run post-deploy script inline (same deployment record).
+
+        Non-fatal: a failure is logged but does not fail the deploy.
+        """
+        config = getattr(self, "_preview_config", None)
+        deploy_path = config["post_deploy"][phase] if config else None
+
+        if not deploy_path:
+            return
+
+        logger.info(f"Running post-deploy script ({phase}): {deploy_path}")
+        await self._update_post_deploy_status("running")
+
+        try:
+            await self._log_raw(
+                f"\n{BOLD}{CYAN}POST-DEPLOY ({phase}){RESET}\n"
+                f"{DIM}Script: {deploy_path}{RESET}\n"
+            )
+            await self._docker_exec(
+                "bash", f"/var/www/html/{deploy_path}",
+                step=f"post-deploy-{phase}",
+                timeout=TIMEOUT_POST_DEPLOY,
+                pty=True,
+            )
+            await self._update_post_deploy_status("success")
+            logger.info(f"Post-deploy OK: {self.project_slug}/{self.preview_name}")
+        except Exception as e:
+            logger.warning(f"Post-deploy script ({phase}) failed (non-fatal): {e}")
+            await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed (non-fatal): {e}{RESET}\n")
+            await self._update_post_deploy_status("failed")
+
     async def _run_project_post_deploy_script(self, phase: str):
         """Run the project post-deploy script for a phase (new/update).
-        Called after the deploy is fully complete and the preview is active.
+        Called standalone (e.g. manual re-run from UI).
         Creates its own deployment record with separate logs.
         Non-fatal: a failure here is logged but does not fail the deploy."""
         config = getattr(self, "_preview_config", None)
@@ -991,7 +1020,15 @@ class PreviewDeployer:
         (colors, progress bars, line-buffered output).
         """
         php_container = f"{self.container_prefix}-php"
-        docker_flags = "-t -e COLUMNS=200" if pty else "-e COLUMNS=200"
+        # GIT_CONFIG vars tell git to trust /var/www/html (avoids "dubious ownership" with PTY)
+        docker_flags = (
+            "-t -e COLUMNS=200"
+            " -e GIT_CONFIG_COUNT=1"
+            " -e GIT_CONFIG_KEY_0=safe.directory"
+            " -e GIT_CONFIG_VALUE_0=/var/www/html"
+            if pty else
+            "-e COLUMNS=200"
+        )
         if env:
             for k, v in env.items():
                 docker_flags += f" -e {k}={v}"
@@ -1288,16 +1325,42 @@ if (getenv('PREV_IS_PREVIEW')) {
         if self._deployment_id:
             await deployment_log_broadcaster.add_log(self._deployment_id, text)
 
+    _STEP_LABELS: dict[str, str] = {
+        "create-vm": "Creating virtual machine",
+        "wait-ssh": "Waiting for SSH",
+        "setup-vm": "Setting up VM",
+        "pull-images": "Pulling Docker images",
+        "sync-code": "Syncing code to VM",
+        "upload-config": "Uploading configuration",
+        "configuring-env": "Configuring environment",
+        "docker-up": "Starting containers",
+        "wait-for-db": "Waiting for database",
+        "composer-install": "Installing dependencies",
+        "import-db": "Importing database",
+        "import-files": "Importing files",
+        "restore-db-cache": "Restoring DB from cache",
+        "create-db-cache": "Caching database",
+        "activate-redis": "Activating Redis",
+        "project-deploy-script-new": "Running deploy script",
+        "project-deploy-script-update": "Running deploy script",
+        "post-deploy-new": "Running post-deploy script",
+        "post-deploy-update": "Running post-deploy script",
+    }
+
+    def _step_label(self, step: str) -> str:
+        return self._STEP_LABELS.get(step, step)
+
     async def _log_step_start(self, step: str):
-        await self._log_raw(f"\n{CYAN}⚙️ {step}{RESET}\n")
+        await self._log_raw(f"\n{CYAN}⚙️ {self._step_label(step)}{RESET}\n")
 
     async def _log_step_end(self, step: str, duration: float, success: bool, output: str):
+        label = self._step_label(step)
         dur_str = _fmt_duration(duration)
         if success:
-            status_line = f"{GREEN}✓ {step}{RESET} {DIM}completed in {dur_str}{RESET}\n"
+            status_line = f"{GREEN}✓ {label}{RESET} {DIM}completed in {dur_str}{RESET}\n"
             self._step_timings.append((step, duration, "ok"))
         else:
-            status_line = f"{RED}✗ {step}{RESET} {DIM}failed after {dur_str}{RESET}\n"
+            status_line = f"{RED}✗ {label}{RESET} {DIM}failed after {dur_str}{RESET}\n"
             self._step_timings.append((step, duration, "fail"))
 
         if output.strip():
@@ -1325,7 +1388,7 @@ if (getenv('PREV_IS_PREVIEW')) {
             lines.append(f"\n{DIM}Step timings:{RESET}\n")
             for step_name, step_dur, step_status in self._step_timings:
                 icon = f"{GREEN}✓{RESET}" if step_status == "ok" else f"{RED}✗{RESET}"
-                lines.append(f"  {icon} {step_name} {DIM}{_fmt_duration(step_dur)}{RESET}\n")
+                lines.append(f"  {icon} {self._step_label(step_name)} {DIM}{_fmt_duration(step_dur)}{RESET}\n")
 
         lines.append(f"{BOLD}{'─' * 50}{RESET}\n")
         await self._log_raw("".join(lines))
