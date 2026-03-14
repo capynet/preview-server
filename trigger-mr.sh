@@ -25,9 +25,10 @@ MR_JSON=$(ssh "$SERVER" "curl -sf --header 'PRIVATE-TOKEN: $GITLAB_TOKEN' '$GITL
 SHA=$(echo "$MR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['sha'])")
 TITLE=$(echo "$MR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['title'])")
 SOURCE_BRANCH="${2:-$(echo "$MR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['source_branch'])")}"
+TARGET_BRANCH=$(echo "$MR_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin)['target_branch'])")
 
 echo "MR: !$MR_IID — $TITLE"
-echo "Branch: $SOURCE_BRANCH"
+echo "Branch: $SOURCE_BRANCH → $TARGET_BRANCH"
 echo "Commit: $SHA"
 echo ""
 
@@ -44,6 +45,7 @@ RESULT=$(ssh "$SERVER" "curl -sf -X POST http://localhost:8000/api/webhooks/$ORG
       \"action\": \"open\",
       \"state\": \"opened\",
       \"source_branch\": \"$SOURCE_BRANCH\",
+      \"target_branch\": \"$TARGET_BRANCH\",
       \"title\": \"$TITLE\",
       \"last_commit\": {\"id\": \"$SHA\"}
     }

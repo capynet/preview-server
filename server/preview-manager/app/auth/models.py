@@ -62,6 +62,8 @@ class UserWithContext(User):
     """User with optional org context (resolved per-request)."""
     org: Optional[Organization] = None
     org_role: Optional[OrgRole] = None
+    project_role: Optional[OrgRole] = None
+    effective_role: Optional[OrgRole] = None
 
 
 class OAuthAccount(BaseModel):
@@ -101,17 +103,6 @@ class CLIAuthRequest(BaseModel):
 
 # ---- Request/Response bodies ----
 
-class SetupBody(BaseModel):
-    email: str
-    name: str = ""
-    password: str
-
-
-class LoginBody(BaseModel):
-    email: str
-    password: str
-
-
 class CreateOrgBody(BaseModel):
     name: str
     slug: str
@@ -134,8 +125,7 @@ class InviteBody(BaseModel):
 
 class AcceptInviteBody(BaseModel):
     token: str
-    name: str
-    password: str
+    name: str = ""
 
 
 class AddOrgMemberBody(BaseModel):
@@ -176,6 +166,15 @@ class EnableProjectRequest(BaseModel):
     name: str = ""
     web_url: str = ""
     default_branch: str = "main"
+
+
+class AddProjectMemberBody(BaseModel):
+    email: str
+    role: OrgRole = OrgRole.viewer
+
+
+class UpdateProjectMemberRoleBody(BaseModel):
+    role: OrgRole
 
 
 class CreateBranchPreviewRequest(BaseModel):

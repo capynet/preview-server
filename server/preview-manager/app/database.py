@@ -700,13 +700,43 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
     return _row_to_dict(row)
 
 
-async def add_project_member(user_id: int, project_id: int, added_by: int):
+async def add_project_member(user_id: int, project_id: int, added_by: int, role: str = "viewer"):
     pool = await get_pool()
     await pool.execute(
-        """INSERT INTO project_members (user_id, project_id, added_by, created_at)
-           VALUES ($1, $2, $3, $4)
-           ON CONFLICT(user_id, project_id) DO NOTHING""",
-        user_id, project_id, added_by, _now(),
+        """INSERT INTO project_members (user_id, project_id, added_by, role, created_at)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT(user_id, project_id) DO UPDATE SET role = EXCLUDED.role""",
+        user_id, project_id, added_by, role, _now(),
+    )
+
+
+async def get_project_member(user_id: int, project_id: int) -> Optional[dict]:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "SELECT * FROM project_members WHERE user_id = $1 AND project_id = $2",
+        user_id, project_id,
+    )
+    return _row_to_dict(row) if row else None
+
+
+async def list_project_members(project_id: int) -> list[dict]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT u.id, u.email, u.name, u.avatar_url, pm.role, pm.created_at
+           FROM project_members pm
+           JOIN users u ON pm.user_id = u.id
+           WHERE pm.project_id = $1
+           ORDER BY u.name""",
+        project_id,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def update_project_member_role(user_id: int, project_id: int, role: str):
+    pool = await get_pool()
+    await pool.execute(
+        "UPDATE project_members SET role = $1 WHERE user_id = $2 AND project_id = $3",
+        role, user_id, project_id,
     )
 
 

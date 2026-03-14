@@ -5,32 +5,40 @@ import re
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth.dependencies import get_current_user, get_org_context, require_org_role, require_superadmin
+from app.auth.dependencies import get_current_user, get_org_context, require_org_role, require_project_role, require_superadmin
 from app.auth.models import (
     AddEmailDomainBody,
     AddOrgMemberBody,
+    AddProjectMemberBody,
     CreateOrgBody,
     InviteBody,
     OrgRole,
     UpdateOrgBody,
     UpdateOrgMemberRoleBody,
+    UpdateProjectMemberRoleBody,
     UserWithContext,
 )
 from app.database import (
     add_email_domain,
     add_org_member,
+    add_project_member,
     create_organization,
     delete_organization,
     get_organization_by_slug,
+    get_project_by_slug,
+    get_project_member,
     list_email_domains,
     list_org_members,
     list_organizations,
+    list_project_members,
     list_user_organizations,
     match_email_domain,
     remove_email_domain,
     remove_org_member,
+    remove_project_member,
     update_org_member_role,
     update_organization,
+    update_project_member_role,
 )
 from app.database import (
     create_org_invitation,
@@ -220,22 +228,28 @@ async def list_invitations(user: UserWithContext = Depends(require_org_role(OrgR
 @router.post("/{org}/invitations")
 async def create_invitation(body: InviteBody, user: UserWithContext = Depends(require_org_role(OrgRole.admin))):
     from app.auth import database as auth_db
-    existing_user = await auth_db.get_user_by_email(body.email)
-    if existing_user:
-        raise HTTPException(status_code=400, detail="A user with this email already exists")
-
-    existing_inv = await get_invitation_by_email(body.email, user.org.id)
-    if existing_inv:
-        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
 
     # Resolve project_id if project_slug provided
     project_id = None
     if body.project_slug:
-        from app.database import get_project_by_slug
         project = await get_project_by_slug(user.org.id, body.project_slug)
         if not project:
             raise HTTPException(status_code=404, detail=f"Project '{body.project_slug}' not found")
         project_id = project["id"]
+
+    # If user already exists, add directly instead of sending invitation
+    existing_user = await auth_db.get_user_by_email(body.email)
+    if existing_user:
+        if project_id:
+            await add_project_member(existing_user["id"], project_id, user.id, body.role.value)
+            return {"success": True, "added_directly": True, "message": f"User {body.email} added to project"}
+        else:
+            await add_org_member(existing_user["id"], user.org.id, body.role.value)
+            return {"success": True, "added_directly": True, "message": f"User {body.email} added to organization"}
+
+    existing_inv = await get_invitation_by_email(body.email, user.org.id)
+    if existing_inv:
+        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
 
     invitation = await create_org_invitation(
         user.org.id, body.email, body.role.value, user.id, project_id
@@ -252,4 +266,86 @@ async def create_invitation(body: InviteBody, user: UserWithContext = Depends(re
 @router.delete("/{org}/invitations/{invitation_id}")
 async def cancel_invitation(invitation_id: int, user: UserWithContext = Depends(require_org_role(OrgRole.admin))):
     await delete_invitation(invitation_id)
+    return {"success": True}
+
+
+# ---- Project Members ----
+
+@router.get("/{org}/projects/{slug}/members")
+async def list_proj_members(slug: str, user: UserWithContext = Depends(require_org_role(OrgRole.viewer))):
+    """List project members. Returns org_members (access via org) and project_members (direct)."""
+    project = await get_project_by_slug(user.org.id, slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    org_members = await list_org_members(user.org.id)
+    proj_members = await list_project_members(project["id"])
+
+    # Exclude org members from project list (they already have access)
+    org_user_ids = {m["id"] for m in org_members}
+    proj_only = [m for m in proj_members if m["id"] not in org_user_ids]
+
+    return {"org_members": org_members, "project_members": proj_only}
+
+
+@router.post("/{org}/projects/{slug}/members")
+async def add_proj_member(
+    slug: str, body: AddProjectMemberBody,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
+    """Add a member to a project. If user exists, add directly. Otherwise send invitation."""
+    project = await get_project_by_slug(user.org.id, slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    from app.auth import database as auth_db
+    existing_user = await auth_db.get_user_by_email(body.email)
+
+    if existing_user:
+        await add_project_member(existing_user["id"], project["id"], user.id, body.role.value)
+        return {"success": True, "added_directly": True, "message": f"User {body.email} added to project"}
+
+    # User doesn't exist — send invitation
+    existing_inv = await get_invitation_by_email(body.email, user.org.id)
+    if existing_inv:
+        raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
+
+    invitation = await create_org_invitation(
+        user.org.id, body.email, body.role.value, user.id, project["id"]
+    )
+    try:
+        send_invitation_email(body.email, invitation["token"], body.role.value, user.name)
+    except Exception:
+        pass
+
+    return {"success": True, "added_directly": False, "message": f"Invitation sent to {body.email}"}
+
+
+@router.patch("/{org}/projects/{slug}/members/{member_id}")
+async def update_proj_member_role(
+    slug: str, member_id: int, body: UpdateProjectMemberRoleBody,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
+    project = await get_project_by_slug(user.org.id, slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    pm = await get_project_member(member_id, project["id"])
+    if not pm:
+        raise HTTPException(status_code=404, detail="Project member not found")
+    await update_project_member_role(member_id, project["id"], body.role.value)
+    return {"success": True}
+
+
+@router.delete("/{org}/projects/{slug}/members/{member_id}")
+async def remove_proj_member(
+    slug: str, member_id: int,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
+    project = await get_project_by_slug(user.org.id, slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+    pm = await get_project_member(member_id, project["id"])
+    if not pm:
+        raise HTTPException(status_code=404, detail="Project member not found")
+    await remove_project_member(member_id, project["id"])
     return {"success": True}

@@ -24,8 +24,8 @@ from app.database import (
     update_last_accessed,
     list_user_organizations,
 )
-from app.auth.dependencies import require_org_role, get_current_user
-from app.auth.models import OrgRole, UserWithContext, has_min_role
+from app.auth.dependencies import require_project_role, get_current_user
+from app.auth.models import OrgRole, UserWithContext
 from app.auth import database as auth_db
 from app.cloud import cloud_manager
 from app.remote import RemoteExecutor
@@ -210,7 +210,7 @@ async def create_mr_preview(
     request: Request,
     project: str,
     body: CreateMrPreviewRequest,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Create a preview from a merge request."""
     import httpx
@@ -298,7 +298,7 @@ async def create_branch_preview(
     request: Request,
     project: str,
     body: CreateBranchPreviewRequest,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Create a preview from a branch (not tied to a MR)."""
     import httpx
@@ -386,7 +386,7 @@ async def create_branch_preview(
 async def get_preview_endpoint(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     proj = await _resolve_project(user, project)
     state = await PreviewStateManager.load_state(proj["id"], preview_name)
@@ -409,7 +409,7 @@ async def update_preview_endpoint(
     project: str,
     preview_name: str,
     body: UpdatePreviewRequest,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     proj = await _resolve_project(user, project)
     project_id = proj["id"]
@@ -575,7 +575,7 @@ async def delete_preview_internal(
 async def delete_preview(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     proj = await _resolve_project(user, project)
     project_id = proj["id"]
@@ -632,7 +632,7 @@ async def list_previews(
 async def list_org_previews(
     project: str,
     status: bool = True,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     """List previews for a specific project in the org."""
     proj = await _resolve_project(user, project)
@@ -664,7 +664,7 @@ async def _get_executor(project_id: int, preview_name: str, project_slug: str) -
 async def stop_preview(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Stop a preview (shutdown VM, keep disk intact)."""
     proj = await _resolve_project(user, project)
@@ -686,7 +686,7 @@ async def stop_preview(
 async def start_preview(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Start a preview (power on shutdown VM)."""
     proj = await _resolve_project(user, project)
@@ -718,7 +718,7 @@ async def start_preview(
 async def restart_preview(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Restart containers on the VM."""
     proj = await _resolve_project(user, project)
@@ -742,7 +742,7 @@ async def restart_preview(
 async def drush_uli(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     """Get a one-time login link (drush uli) via SSH."""
     proj = await _resolve_project(user, project)
@@ -771,7 +771,7 @@ async def drush_command(
     project: str,
     preview_name: str,
     request: Request,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Run an arbitrary drush command via SSH."""
     body = await request.json()
@@ -801,7 +801,7 @@ async def rebuild_preview(
     project: str,
     preview_name: str,
     force_new: bool = False,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Re-clone the preview from GitLab (internal rebuild)."""
     proj = await _resolve_project(user, project)
@@ -839,7 +839,7 @@ async def rerun_post_deploy(
     request: Request,
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Re-run the post-deploy script for this preview."""
     proj = await _resolve_project(user, project)
@@ -869,7 +869,7 @@ async def list_preview_deployments(
     project: str,
     preview_name: str,
     limit: int = 50,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     proj = await _resolve_project(user, project)
     preview = await get_preview(proj["id"], preview_name)
@@ -884,7 +884,7 @@ async def get_preview_deployment(
     project: str,
     preview_name: str,
     deployment_id: int,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     deployment = await db_get_deployment(deployment_id)
     if not deployment:
@@ -913,7 +913,7 @@ async def get_deployment_live_logs(
     preview_name: str,
     deployment_id: int,
     offset: int = 0,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     from app.valkey import get_deploy_log_buffer, get_deploy_complete
 
@@ -960,7 +960,7 @@ async def get_deployment_live_logs(
 async def download_db(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Stream a gzipped SQL dump from the preview VM."""
     proj = await _resolve_project(user, project)
@@ -990,7 +990,7 @@ async def download_db(
 async def download_files(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Stream a tar.gz of the preview's files directory from the VM."""
     proj = await _resolve_project(user, project)
@@ -1022,7 +1022,7 @@ async def download_files(
 async def preview_vm_stats(
     project: str,
     preview_name: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     """Get CPU, RAM and disk stats from the preview's VM."""
     proj = await _resolve_project(user, project)

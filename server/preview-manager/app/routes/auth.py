@@ -18,9 +18,7 @@ from app.auth.models import (
     AcceptInviteBody,
     CLIApproveBody,
     CLIRequestBody,
-    LoginBody,
     OrgRole,
-    SetupBody,
     UserWithContext,
 )
 from app.auth.oauth import get_provider
@@ -44,54 +42,6 @@ def _set_session_cookie(response: Response, session_id: str):
 
 def _delete_session_cookie(response: Response):
     response.delete_cookie(SESSION_COOKIE, domain=".preview-mr.com")
-
-
-# ---- Setup & Password Login ----
-
-@router.get("/setup/status")
-async def setup_status():
-    done = await db.is_setup_complete()
-    return {"setup_complete": done}
-
-
-@router.post("/setup")
-async def initial_setup(body: SetupBody):
-    """Create the first superadmin user. Only works when no users exist."""
-    if await db.is_setup_complete():
-        raise HTTPException(status_code=400, detail="Setup already completed")
-
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
-    user = await db.create_user_with_password(
-        body.email, body.name or "Admin", body.password, is_superadmin=True
-    )
-    logger.info(f"Initial setup: superadmin {body.email} created")
-
-    session_id = await db.create_session(user["id"])
-
-    response = Response(
-        content='{"success": true}',
-        media_type="application/json",
-    )
-    _set_session_cookie(response, session_id)
-    return response
-
-
-@router.post("/login")
-async def password_login(body: LoginBody):
-    user = await db.get_user_by_email_and_password(body.email, body.password)
-    if not user:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    session_id = await db.create_session(user["id"])
-
-    response = Response(
-        content='{"success": true}',
-        media_type="application/json",
-    )
-    _set_session_cookie(response, session_id)
-    return response
 
 
 # ---- OAuth ----
@@ -194,6 +144,9 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
     elif invitation:
         await mark_invitation_accepted(invitation["id"])
         await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
+        if invitation.get("project_id"):
+            from app.database import add_project_member
+            await add_project_member(user["id"], invitation["project_id"], invitation["invited_by"], invitation["role"])
         logger.info(f"User {info.email} accepted invitation for org {invitation['organization_id']} with role {invitation['role']}")
     elif domain_match:
         await add_org_member(user["id"], domain_match["organization_id"], domain_match["default_role"])
@@ -324,21 +277,21 @@ async def accept_invitation(body: AcceptInviteBody):
     if not invitation:
         raise HTTPException(status_code=404, detail="Invalid or expired invitation")
 
-    if len(body.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
-
     existing = await db.get_user_by_email(invitation["email"])
     if existing:
-        raise HTTPException(status_code=400, detail="A user with this email already exists")
+        # User already exists (via OAuth) — add to org/project directly
+        user = existing
+    else:
+        # New user — create without password (OAuth only)
+        user = await db.create_user(invitation["email"], body.name or invitation["email"].split("@")[0])
 
-    user = await db.create_user_with_password(invitation["email"], body.name, body.password)
     await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
     await mark_invitation_accepted(invitation["id"])
 
     # Auto-add to project if invitation was for a specific project
     if invitation.get("project_id"):
         from app.database import add_project_member
-        await add_project_member(user["id"], invitation["project_id"], invitation["invited_by"])
+        await add_project_member(user["id"], invitation["project_id"], invitation["invited_by"], invitation["role"])
 
     session_id = await db.create_session(user["id"])
     response = Response(content='{"success": true}', media_type="application/json")

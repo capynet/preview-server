@@ -11,8 +11,6 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-import bcrypt
-
 from config.settings import settings
 from app.database import get_pool, _now
 
@@ -63,39 +61,6 @@ async def list_users() -> list[dict]:
 async def delete_user(user_id: int):
     pool = await get_pool()
     await pool.execute("DELETE FROM users WHERE id = $1", user_id)
-
-
-# ---- Setup / Password ----
-
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-
-
-def verify_password(password: str, password_hash: str) -> bool:
-    return bcrypt.checkpw(password.encode(), password_hash.encode())
-
-
-async def create_user_with_password(
-    email: str, name: str, password: str, is_superadmin: bool = False
-) -> dict:
-    now = _now()
-    pw_hash = hash_password(password)
-    pool = await get_pool()
-    row = await pool.fetchrow(
-        """INSERT INTO users (email, name, password_hash, is_superadmin, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
-        email, name, pw_hash, int(is_superadmin), now, now,
-    )
-    return _row_to_dict(row)
-
-
-async def get_user_by_email_and_password(email: str, password: str) -> Optional[dict]:
-    user = await get_user_by_email(email)
-    if not user or not user.get("password_hash"):
-        return None
-    if not verify_password(password, user["password_hash"]):
-        return None
-    return user
 
 
 async def is_setup_complete() -> bool:
