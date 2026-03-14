@@ -175,6 +175,9 @@ class PreviewDeployer:
                 await deployment_log_broadcaster.register(self._deployment_id)
                 await preview_list_manager.force_broadcast()
 
+        # Reset post_deploy_status from previous deploy
+        await self._update_post_deploy_status(None)
+
         is_new = await self.is_new()
         deploy_type = "NEW" if is_new else "UPDATE"
 
@@ -195,10 +198,23 @@ class PreviewDeployer:
             deploy_duration = int((datetime.now(timezone.utc) - start).total_seconds())
             await self._save_state("active", duration=deploy_duration)
 
-            # Register Caddy route so static assets bypass the Python proxy
+            # Register Caddy routes (main + aliases + exposed services)
             if self._vm_ip:
                 try:
-                    await caddy_manager.add_preview_route(self.domain, self._vm_ip)
+                    url_hash = compute_url_hash(self.org_slug, self.project_slug, self.preview_name)
+                    alias_domains = None
+                    expose_services = None
+                    if self._preview_config:
+                        aliases = self._preview_config.get("domain_aliases", [])
+                        main_domain = f"{url_hash}.mr.preview-mr.com"
+                        if aliases:
+                            alias_domains = [f"{a}--{main_domain}" for a in aliases]
+                        expose_services = self._preview_config.get("expose") or None
+                    await caddy_manager.add_preview_routes(
+                        url_hash, self._vm_ip,
+                        alias_domains=alias_domains,
+                        expose_services=expose_services,
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route for {self.domain}: {e}")
 
@@ -951,7 +967,7 @@ class PreviewDeployer:
             self._log_buffer = original_log_buffer
             self._deployment_id = original_deployment_id
 
-    async def _update_post_deploy_status(self, status: str):
+    async def _update_post_deploy_status(self, status: str | None):
         """Update the post_deploy_status field on the preview."""
         try:
             await PreviewStateManager.save_state(
@@ -1490,6 +1506,11 @@ if (getenv('PREV_IS_PREVIEW')) {
 
         if status == "active":
             fields["last_deployed_at"] = now
+            # Save expose config so the middleware can route exposed services
+            if self._preview_config:
+                import json
+                expose = self._preview_config.get("expose") or {}
+                fields["expose_config"] = json.dumps(expose)
         if status in ("active", "failed"):
             fields["last_deployment_status"] = status
             fields["last_deployment_completed_at"] = now

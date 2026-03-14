@@ -224,7 +224,24 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
         # If VM is running, reverse proxy to it
         if preview.get("vm_id") and preview.get("vm_ip"):
-            return await self._proxy_to_vm(request, preview["vm_ip"], host)
+            # Detect exposed service domain (e.g. solr--hash.mr.preview-mr.com)
+            import re
+            port = 80
+            match = re.match(r"^(.+?)\.mr\.preview-mr\.com$", host)
+            if match:
+                subdomain = match.group(1)
+                if "--" in subdomain:
+                    svc_prefix = subdomain.split("--")[0]
+                    # Look up exposed service port from DB
+                    import json
+                    expose_raw = preview.get("expose_config", "{}")
+                    try:
+                        expose = json.loads(expose_raw) if expose_raw else {}
+                    except (json.JSONDecodeError, TypeError):
+                        expose = {}
+                    if svc_prefix in expose:
+                        port = int(expose[svc_prefix])
+            return await self._proxy_to_vm(request, preview["vm_ip"], host, port=port)
 
         # No VM means preview was deleted or never created
         if not preview.get("vm_id"):
@@ -240,9 +257,11 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         )
 
     @staticmethod
-    async def _proxy_to_vm(request: Request, vm_ip: str, host: str) -> Response:
+    async def _proxy_to_vm(
+        request: Request, vm_ip: str, host: str, *, port: int = 80,
+    ) -> Response:
         """Reverse proxy the request to the preview VM."""
-        url = f"http://{vm_ip}{request.url.path}"
+        url = f"http://{vm_ip}:{port}{request.url.path}"
         if request.url.query:
             url += f"?{request.url.query}"
 
@@ -339,12 +358,17 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
                 )
                 await touch_proc.communicate()
 
-                # Re-register Caddy direct route
+                # Re-register Caddy routes (main + expose services)
                 from app.caddy_api import caddy_manager
                 url_hash = compute_url_hash(org_slug, project_slug, preview_name)
-                domain = f"{url_hash}.mr.preview-mr.com"
                 try:
-                    await caddy_manager.add_preview_route(domain, vm_ip)
+                    import json
+                    expose_raw = preview.get("expose_config", "{}")
+                    expose = json.loads(expose_raw) if expose_raw else {}
+                    await caddy_manager.add_preview_routes(
+                        url_hash, vm_ip,
+                        expose_services=expose or None,
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route after wake: {e}")
                 logger.info(f"Woke up {org_slug}/{project_slug}/{preview_name} (VM {vm_id}, IP {vm_ip})")

@@ -51,6 +51,13 @@ class CaddyRouteManager:
                     return i
         return None
 
+    def _build_upstream_proxy(self, dial: str, port: int) -> dict:
+        """Build a reverse_proxy handler for the upstream VM."""
+        return {
+            "handler": "reverse_proxy",
+            "upstreams": [{"dial": dial}],
+        }
+
     def _build_preview_subroute(self, domain: str, upstream_ip: str, port: int) -> dict:
         """Build a subroute for a specific preview domain.
 
@@ -58,6 +65,7 @@ class CaddyRouteManager:
         HTML documents -> forward_auth check -> direct to VM.
         """
         dial = f"{upstream_ip}:{port}"
+        proxy_handler = self._build_upstream_proxy(dial, port)
         return {
             "match": [{"host": [domain]}],
             "handle": [{
@@ -66,10 +74,7 @@ class CaddyRouteManager:
                     # Static assets: bypass auth, proxy directly to VM
                     {
                         "match": [{"path": _STATIC_PATTERNS}],
-                        "handle": [{
-                            "handler": "reverse_proxy",
-                            "upstreams": [{"dial": dial}],
-                        }],
+                        "handle": [proxy_handler],
                     },
                     # HTML/other: forward_auth then proxy to VM.
                     # We save the original URI in a header, rewrite to the
@@ -107,10 +112,7 @@ class CaddyRouteManager:
                                                     "uri": "{http.request.header.X-Forwarded-Uri}",
                                                 },
                                                 # Proxy to VM
-                                                {
-                                                    "handler": "reverse_proxy",
-                                                    "upstreams": [{"dial": dial}],
-                                                },
+                                                proxy_handler,
                                             ],
                                         }],
                                     },

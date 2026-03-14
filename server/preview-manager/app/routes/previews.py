@@ -769,9 +769,11 @@ async def get_preview_deployment(
 
     # Check if log stream is still active in Valkey (e.g. post-deploy running)
     try:
-        from app.valkey import get_deploy_complete
+        from app.valkey import get_deploy_complete, deploy_log_exists
         complete = await get_deploy_complete(deployment_id)
-        deployment["stream_active"] = complete is None
+        has_buffer = await deploy_log_exists(deployment_id)
+        # Stream is active only if there's a buffer AND no complete flag yet
+        deployment["stream_active"] = has_buffer and complete is None
     except Exception:
         deployment["stream_active"] = False
 
