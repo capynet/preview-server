@@ -201,6 +201,98 @@ class CreateBranchPreviewRequest(BaseModel):
     branch: str
 
 
+class CreateMrPreviewRequest(BaseModel):
+    mr_iid: int
+
+
+@router.post("/previews/mr")
+async def create_mr_preview(
+    request: Request,
+    project: str,
+    body: CreateMrPreviewRequest,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
+    """Create a preview from a merge request."""
+    import httpx
+    from app.routes.gitlab import _get_org_gitlab_token
+
+    proj = await _resolve_project(user, project)
+    project_id = proj["id"]
+    project_slug = proj["slug"]
+    org_slug = user.org.slug
+
+    preview_name = f"mr-{body.mr_iid}"
+
+    existing = await get_preview(project_id, preview_name)
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Preview {preview_name} already exists for project {project_slug}"
+        )
+
+    gitlab_url, token = await _get_org_gitlab_token(user.org.id)
+    project_path = proj.get("gitlab_project_path")
+    if not project_path:
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' has no GitLab project path configured")
+    encoded_path = project_path.replace("/", "%2F")
+
+    # Fetch MR details from GitLab
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{gitlab_url}/api/v4/projects/{encoded_path}/merge_requests/{body.mr_iid}",
+                headers={"PRIVATE-TOKEN": token},
+                timeout=15,
+            )
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail=f"MR !{body.mr_iid} not found")
+            resp.raise_for_status()
+            mr_data = resp.json()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching MR info: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"GitLab API error: {e}")
+
+    source_branch = mr_data["source_branch"]
+    target_branch = mr_data["target_branch"]
+    commit_sha = mr_data.get("sha", "")
+    mr_title = mr_data.get("title", "")
+
+    url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+    preview_url = f"https://{url_hash}.mr.preview-mr.com"
+    preview_path_str = str(PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name))
+
+    await PreviewStateManager.save_state(
+        project_id, preview_name,
+        branch=source_branch,
+        commit_sha=commit_sha,
+        status="pending",
+        url=preview_url,
+        url_hash=url_hash,
+        path=preview_path_str,
+        mr_id=body.mr_iid,
+        mr_title=mr_title,
+        target_branch=target_branch,
+    )
+
+    await request.app.state.arq.enqueue_job(
+        "task_deploy_preview",
+        user.org.id, org_slug, project_id, project_slug, project_path,
+        preview_name, source_branch, commit_sha, user.email,
+        body.mr_iid, False, mr_title, target_branch,
+    )
+
+    return {
+        "success": True,
+        "preview_name": preview_name,
+        "mr_iid": body.mr_iid,
+        "branch": source_branch,
+        "commit_sha": commit_sha,
+        "message": f"Creating preview {preview_name} from MR !{body.mr_iid}",
+    }
+
+
 @router.post("/previews/branch")
 async def create_branch_preview(
     request: Request,

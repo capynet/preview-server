@@ -516,3 +516,53 @@ async def list_project_branches_by_slug(project_slug: str, user: UserWithContext
         if e.response.status_code == 404:
             raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found in GitLab")
         raise HTTPException(status_code=502, detail=f"GitLab API error: {e.response.status_code}")
+
+
+@router.get("/orgs/{org}/gitlab/projects/by-slug/{project_slug}/merge-requests")
+async def list_project_merge_requests(project_slug: str, user: UserWithContext = Depends(require_org_role(OrgRole.viewer))):
+    """List open merge requests for a project from GitLab."""
+    gitlab_url, token = await _get_org_gitlab_token(user.org.id)
+    from app.database import get_project_by_slug
+    project = await get_project_by_slug(user.org.id, project_slug)
+    if not project or not project.get("gitlab_project_path"):
+        raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found")
+    encoded_path = project["gitlab_project_path"].replace("/", "%2F")
+
+    try:
+        all_mrs = []
+        page = 1
+        async with httpx.AsyncClient() as client:
+            while True:
+                resp = await client.get(
+                    f"{gitlab_url}/api/v4/projects/{encoded_path}/merge_requests",
+                    headers={"PRIVATE-TOKEN": token},
+                    params={"state": "opened", "per_page": 100, "page": page},
+                    timeout=15,
+                )
+                resp.raise_for_status()
+                mrs_page = resp.json()
+                if not mrs_page:
+                    break
+                all_mrs.extend(mrs_page)
+                if len(mrs_page) < 100:
+                    break
+                page += 1
+
+        return {
+            "merge_requests": [
+                {
+                    "iid": mr["iid"],
+                    "title": mr["title"],
+                    "source_branch": mr["source_branch"],
+                    "target_branch": mr["target_branch"],
+                    "author": mr.get("author", {}).get("name", ""),
+                }
+                for mr in all_mrs
+            ]
+        }
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 401:
+            raise HTTPException(status_code=401, detail="GitLab token expired or revoked")
+        if e.response.status_code == 404:
+            raise HTTPException(status_code=404, detail=f"Project '{project_slug}' not found in GitLab")
+        raise HTTPException(status_code=502, detail=f"GitLab API error: {e.response.status_code}")

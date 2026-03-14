@@ -35,7 +35,8 @@ async def main():
         SELECT
             o.id AS org_id, o.slug AS org_slug,
             p.id AS project_id, p.slug AS project_slug, p.gitlab_project_path,
-            pr.preview_name, pr.branch, pr.commit_sha, pr.mr_id
+            pr.preview_name, pr.branch, pr.commit_sha, pr.mr_id,
+            pr.mr_title, pr.target_branch
         FROM previews pr
         JOIN projects p ON p.id = pr.project_id
         JOIN organizations o ON o.id = p.organization_id
@@ -63,6 +64,8 @@ async def main():
             mode,          # triggered_by: "update" or "rebuild"
             r["mr_id"],    # mr_iid
             rebuild,       # force_new: True for rebuild, False for update
+            r["mr_title"],       # mr_title
+            r["target_branch"],  # target_branch
         )
         print(f"  Enqueued ({mode}): {r['project_slug']}/{r['preview_name']} -> {job.job_id}")
 
