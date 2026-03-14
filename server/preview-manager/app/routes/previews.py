@@ -174,6 +174,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         url_hash=url_hash,
         mr_id=state.get("mr_id"),
         mr_title=state.get("mr_title"),
+        target_branch=state.get("target_branch"),
         status=state["status"],
         url=state["url"],
         path=state["path"],
@@ -330,6 +331,10 @@ async def update_preview_endpoint(
         updates["auto_update"] = int(body.auto_update)
     if body.pinned is not None:
         updates["pinned"] = int(body.pinned)
+        # When unpinning, reset last_accessed_at so the preview gets a fresh grace period
+        if not body.pinned:
+            from datetime import datetime, timezone
+            updates["last_accessed_at"] = datetime.now(timezone.utc).isoformat()
     if body.env_vars is not None:
         updates["env_vars"] = json.dumps(body.env_vars)
 

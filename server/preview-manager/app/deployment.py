@@ -87,6 +87,7 @@ class PreviewDeployer:
         triggered_by: str | None = None,
         mr_iid: int | None = None,
         mr_title: str | None = None,
+        target_branch: str | None = None,
         deployment_id: int | None = None,
         *,
         org_slug: str = "",
@@ -108,6 +109,7 @@ class PreviewDeployer:
         self.triggered_by = triggered_by
         self.mr_iid = mr_iid
         self.mr_title = mr_title
+        self.target_branch = target_branch
 
         self.force_new = False
         self.preview_path = PreviewStateManager.get_preview_path(
@@ -1499,6 +1501,8 @@ if (getenv('PREV_IS_PREVIEW')) {
             fields["mr_id"] = self.mr_iid
         if self.mr_title is not None:
             fields["mr_title"] = self.mr_title
+        if self.target_branch is not None:
+            fields["target_branch"] = self.target_branch
 
         if not existing:
             # Preview was deleted while deploy was running — don't recreate it

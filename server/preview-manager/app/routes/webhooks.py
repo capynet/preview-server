@@ -45,6 +45,7 @@ async def _clone_and_deploy(
     mr_iid: int | None = None,
     force_new: bool = False,
     mr_title: str | None = None,
+    target_branch: str | None = None,
 ):
     """Clone repo on VM and run deployment.
 
@@ -144,6 +145,7 @@ async def _clone_and_deploy(
             triggered_by=triggered_by,
             mr_iid=mr_iid,
             mr_title=mr_title,
+            target_branch=target_branch,
             deployment_id=early_deployment_id,
         )
         deployer.force_new = force_new
@@ -370,6 +372,7 @@ async def _handle_mr_event(
     mr_iid = attrs.get("iid")
     action = attrs.get("action")
     source_branch = attrs.get("source_branch")
+    target_branch = attrs.get("target_branch")
     commit_sha = attrs.get("last_commit", {}).get("id")
     mr_title = attrs.get("title")
 
@@ -391,7 +394,7 @@ async def _handle_mr_event(
             "task_deploy_preview",
             org_id, org_slug, project_id, project_slug, project_path,
             preview_name, source_branch, commit_sha, "webhook", mr_iid,
-            False, mr_title,
+            False, mr_title, target_branch,
         )
     else:
         return {"status": "ignored", "reason": f"unhandled action: {action}"}

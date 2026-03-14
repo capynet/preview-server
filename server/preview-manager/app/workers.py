@@ -170,6 +170,7 @@ async def task_deploy_preview(
     mr_iid: int | None = None,
     force_new: bool = False,
     mr_title: str | None = None,
+    target_branch: str | None = None,
 ):
     """Deploy a preview. Runs in arq worker with Valkey-backed log streaming."""
     from app.routes.webhooks import _clone_and_deploy
@@ -177,7 +178,7 @@ async def task_deploy_preview(
         await _clone_and_deploy(
             org_id, org_slug, project_id, project_slug, project_path,
             preview_name, source_branch, commit_sha, triggered_by,
-            mr_iid, force_new, mr_title,
+            mr_iid, force_new, mr_title, target_branch,
         )
     except asyncio.CancelledError:
         logger.warning(f"Deploy {project_slug}/{preview_name} cancelled (worker shutdown) — re-enqueueing")
