@@ -121,10 +121,20 @@ def parse_preview_yml(preview_path: Path) -> dict:
     if "solr_configset" in raw and raw["solr_configset"]:
         config["solr_configset"] = str(raw["solr_configset"])
 
-    # Expose — map service names to ports for subdomain routing via Caddy.
-    # e.g. expose: { solr: 8983 } → solr--{preview-domain} routes to container:8983
-    if "expose" in raw and isinstance(raw["expose"], dict):
-        config["expose"] = {str(k): int(v) for k, v in raw["expose"].items() if v}
+    # Auto-expose services with web UIs via subdomain routing.
+    # Services with known dashboards are exposed automatically when enabled.
+    _AUTO_EXPOSE_PORTS = {"solr": 8983}
+    expose = {}
+    for svc, port in _AUTO_EXPOSE_PORTS.items():
+        if config["services"].get(svc):
+            expose[svc] = port
+    config["expose"] = expose
+
+    # Drush URI — custom --uri for drush commands (e.g. drush uli).
+    # Can be a domain alias name (e.g. "admin") or a full URL.
+    # false or omitted = use default preview URL.
+    if "drush_uri" in raw and raw["drush_uri"] not in (False, None, ""):
+        config["drush_uri"] = str(raw["drush_uri"])
 
     # LiteSpeed Cache — enable OLS built-in cache module
     if "litespeed_cache" in raw:

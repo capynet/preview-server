@@ -1204,6 +1204,12 @@ if (getenv('PREV_DOMAIN_ALIASES')) {
   }
 }
 
+// Reverse proxy — Drupal is behind Caddy + Python middleware.
+// Without this, Drupal ignores X-Forwarded-Proto and sees HTTP,
+// causing session/CSRF issues with form tokens.
+$settings['reverse_proxy'] = TRUE;
+$settings['reverse_proxy_addresses'] = ['172.16.0.0/12', '10.0.0.0/8', '127.0.0.1'];
+
 // File system paths.
 $settings['file_public_path'] = getenv('PREV_FILE_PUBLIC_PATH');
 $settings['file_private_path'] = getenv('PREV_FILE_PRIVATE_PATH');

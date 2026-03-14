@@ -1035,9 +1035,10 @@ async def websocket_preview_action(
                 ssh_cmd = "cd /var/www/preview/code && docker compose restart"
                 timeout = 120
             else:  # drush-uli
+                from app.routes.previews import _resolve_drush_uri
                 url_hash = compute_url_hash(org_slug, project_slug, preview_name)
-                preview_url = f"https://{url_hash}.mr.preview-mr.com"
-                ssh_cmd = f"docker exec {php_container} vendor/bin/drush uli --uri={preview_url}"
+                drush_uri = _resolve_drush_uri(org_slug, project_slug, preview_name, url_hash)
+                ssh_cmd = f"docker exec {php_container} vendor/bin/drush uli --uri={drush_uri}"
                 timeout = 30
 
             running_action = action_manager.start(action_key, action, ssh_cmd)

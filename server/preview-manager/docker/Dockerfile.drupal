@@ -277,7 +277,7 @@ module cache {\
   maxCacheObjSize         10000000\
   maxStaleAge             200\
   qsCache                 1\
-  reqCookieCache          1\
+  reqCookieCache          0\
   respCookieCache         1\
   ignoreReqCacheCtrl      1\
   ignoreRespCacheCtrl     0\

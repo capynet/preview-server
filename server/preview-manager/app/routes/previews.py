@@ -48,6 +48,34 @@ def _sanitize_branch_name(branch: str) -> str:
     return sanitized
 
 
+def _resolve_drush_uri(org_slug: str, project_slug: str, preview_name: str, url_hash: str) -> str:
+    """Resolve drush --uri from preview.yml config.
+
+    If drush_uri is a simple name (e.g. "admin"), it's treated as a domain alias
+    and expanded to https://{alias}--{url_hash}.mr.preview-mr.com.
+    If not set or false, returns the default preview URL.
+    """
+    from app.docker_compose import parse_preview_yml
+    from app.state import PreviewStateManager
+
+    preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
+    try:
+        config = parse_preview_yml(preview_path)
+        raw = config.get("drush_uri")
+    except Exception:
+        raw = None
+
+    if not raw:
+        return f"https://{url_hash}.mr.preview-mr.com"
+
+    # If it looks like a full URL, use as-is
+    if raw.startswith("http://") or raw.startswith("https://"):
+        return raw
+
+    # Otherwise treat as a domain alias prefix
+    return f"https://{raw}--{url_hash}.mr.preview-mr.com"
+
+
 async def _resolve_project(user: UserWithContext, project_slug: str) -> dict:
     """Resolve a project from org context. Raises 404 if not found."""
     project = await get_project_by_slug(user.org.id, project_slug)
@@ -623,12 +651,14 @@ async def drush_uli(
     proj = await _resolve_project(user, project)
     executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
 
+    # Resolve drush URI: alias name from preview.yml → full domain, or default preview URL
     url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
-    preview_url = f"https://{url_hash}.mr.preview-mr.com"
+    drush_uri = _resolve_drush_uri(user.org.slug, proj["slug"], preview_name, url_hash)
+
     php_container = f"{preview_name}-{proj['slug']}-php"
 
     proc = await executor.run_shell(
-        f"docker exec {php_container} vendor/bin/drush uli --uri={preview_url}"
+        f"docker exec {php_container} vendor/bin/drush uli --uri={drush_uri}"
     )
     stdout, stderr = await proc.communicate()
     success = proc.returncode == 0

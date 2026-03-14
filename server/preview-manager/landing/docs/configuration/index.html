@@ -430,12 +430,6 @@
 <span class="hl-comment">#   APP_ENV: preview</span>
 <span class="hl-comment">#   MY_CUSTOM_VAR: some-value</span>
 
-<span class="hl-comment"># Expose service ports via authenticated subdomain routing.</span>
-<span class="hl-comment"># Each entry maps a service name to its port.</span>
-<span class="hl-comment"># Accessible at {service}--{preview-domain}.mr.preview-mr.com</span>
-<span class="hl-comment"># expose:</span>
-<span class="hl-comment">#   solr: 8983</span>
-
 <span class="hl-comment"># Domain aliases &mdash; additional subdomains that route to this preview.</span>
 <span class="hl-comment"># Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com</span>
 <span class="hl-comment"># Useful for multi-site setups. Available as PREV_DOMAIN_ALIASES env var.</span>
@@ -468,7 +462,6 @@
           <tr><td>Redis / Valkey</td><td>disabled</td></tr>
           <tr><td>Solr</td><td>disabled</td></tr>
           <tr><td>LiteSpeed Cache</td><td>disabled</td></tr>
-          <tr><td>Expose</td><td>none</td></tr>
           <tr><td>Domain aliases</td><td>none</td></tr>
           <tr><td>Deploy scripts</td><td>none</td></tr>
         </tbody>

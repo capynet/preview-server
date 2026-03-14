@@ -244,13 +244,6 @@ solr: false           # e.g. "9", "8"
 #   APP_ENV: preview
 #   MY_CUSTOM_VAR: some-value
 
-# Expose service ports via authenticated subdomain routing.
-# Each entry maps a service name (as defined above) to its port.
-# The service becomes accessible at {service}--{preview-domain}.mr.preview-mr.com
-# Protected by the same authentication as the preview itself.
-# expose:
-#   solr: 8983
-
 # Domain aliases — additional subdomains that route to this preview.
 # Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com
 # Useful for multi-site setups where the app expects different hostnames.
@@ -264,6 +257,13 @@ solr: false           # e.g. "9", "8"
 # Works like Varnish but integrated into the webserver. Requires the
 # Drupal "lite_speed_cache" module to be installed in your project.
 # litespeed_cache: true
+
+# Drush URI — custom URI passed to drush via --uri flag.
+# Used for drush uli (admin login link) and other drush commands.
+# Can be a domain alias name (e.g. "admin") which expands to
+# https://{alias}--{preview-domain}.mr.preview-mr.com, or a full URL.
+# If not set or false, the default preview URL is used.
+# drush_uri: admin
 
 # Deploy scripts — executed inside the PHP container after setup.
 # Paths are relative to the project root.
