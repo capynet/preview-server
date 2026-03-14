@@ -317,8 +317,8 @@ class PreviewDeployer:
         # 4. Setup workspace directory
         await self._step_setup_vm()
 
-        # 5. Sync code from coordinator to VM
-        await self._step_sync_code()
+        # 5. Sync code from coordinator to VM (delete=True for clean state)
+        await self._step_sync_code(delete=True)
 
         # 6. Generate and upload docker-compose.yml
         await self._generate_compose()
@@ -470,7 +470,7 @@ class PreviewDeployer:
         pull_cmd = f"cd {VM_PREVIEW_DIR}/code && docker compose pull --quiet"
         await self._run_remote_shell(pull_cmd, step, timeout=TIMEOUT_DOCKER_UP)
 
-    async def _step_sync_code(self):
+    async def _step_sync_code(self, *, delete: bool = False):
         """Sync code from coordinator to VM via rsync (no git clone on VM needed)."""
         step = "sync-code"
         await self._log_step_start(step)
@@ -486,7 +486,7 @@ class PreviewDeployer:
         proc = await self._executor.run_shell(f"mkdir -p {code_dir}")
         await proc.communicate()
 
-        await self._executor.rsync_to(str(self.preview_path), code_dir)
+        await self._executor.rsync_to(str(self.preview_path), code_dir, delete=delete)
 
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, "")

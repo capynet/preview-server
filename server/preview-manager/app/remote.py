@@ -75,18 +75,26 @@ class RemoteExecutor:
         )
         return proc
 
-    async def rsync_to(self, local_dir: str, remote_dir: str) -> None:
-        """Rsync a local directory to the remote VM."""
+    async def rsync_to(self, local_dir: str, remote_dir: str, *, delete: bool = False) -> None:
+        """Rsync a local directory to the remote VM.
+
+        Args:
+            delete: If True, delete files on the remote that don't exist locally.
+                    Use for new/rebuild deploys. Skip for updates to preserve
+                    generated files (node_modules, build caches, etc.).
+        """
         # Ensure trailing slashes for rsync directory sync semantics
         src = local_dir.rstrip("/") + "/"
         dst = f"{self.user}@{self.ip}:{remote_dir.rstrip('/')}/"
         cmd = [
-            "rsync", "-az", "--delete",
+            "rsync", "-az",
             "-e", f"ssh -i {self._key_path} {' '.join(SSH_OPTS)}",
             "--exclude", ".git",
             "--exclude", "docker-compose.yml",
-            src, dst,
         ]
+        if delete:
+            cmd.append("--delete")
+        cmd += [src, dst]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
