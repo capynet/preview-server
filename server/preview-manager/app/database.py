@@ -748,6 +748,11 @@ async def remove_project_member(user_id: int, project_id: int):
     )
 
 
+async def delete_project(project_id: int):
+    pool = await get_pool()
+    await pool.execute("DELETE FROM projects WHERE id = $1", project_id)
+
+
 # ---- Cloud Resources ----
 
 async def log_cloud_resource(

@@ -24,6 +24,8 @@ from app.database import (
     add_project_member,
     create_organization,
     delete_organization,
+    delete_project,
+    get_all_previews,
     get_organization_by_slug,
     get_project_by_slug,
     get_project_member,
@@ -31,6 +33,7 @@ from app.database import (
     list_org_members,
     list_organizations,
     list_project_members,
+    list_projects,
     list_user_organizations,
     match_email_domain,
     remove_email_domain,
@@ -111,15 +114,22 @@ async def update_org(body: UpdateOrgBody, user: UserWithContext = Depends(requir
 async def delete_org(user: UserWithContext = Depends(require_org_role(OrgRole.owner))):
     """Delete organization and all associated resources (owner only).
 
-    Cascade order: destroy VMs → remove Caddy routes → delete previews → delete org.
-    Database CASCADE handles org_members, projects, invitations, tokens, etc.
+    Cascade order: clean webhooks → destroy VMs → remove Caddy routes → delete org.
+    Database CASCADE handles org_members, projects, project_members,
+    previews, deployments, api_tokens, invitations, email_domains.
     """
-    from app.database import get_all_previews, list_projects
     from app.routes.previews import delete_preview_internal
+    from app.routes.gitlab import delete_project_webhook
     from app.websockets import preview_list_manager
 
     org_id = user.org.id
     org_slug = user.org.slug
+
+    # Clean up GitLab webhooks for all projects
+    projects = await list_projects(org_id)
+    for proj in projects:
+        if proj.get("gitlab_project_id"):
+            await delete_project_webhook(org_id, org_slug, proj["gitlab_project_id"])
 
     # Get all previews for this org and clean up non-DB resources (VMs, Caddy, files)
     all_previews = await get_all_previews(org_id=org_id)
@@ -134,8 +144,7 @@ async def delete_org(user: UserWithContext = Depends(require_org_role(OrgRole.ow
         except Exception as e:
             logger.warning(f"Error cleaning up preview {preview['preview_name']} during org delete: {e}")
 
-    # Database CASCADE deletes: org_members, projects, project_members,
-    # previews, deployments, api_tokens, invitations, email_domains
+    # Database CASCADE deletes everything
     await delete_organization(org_id)
 
     await preview_list_manager.force_broadcast()
@@ -266,6 +275,45 @@ async def create_invitation(body: InviteBody, user: UserWithContext = Depends(re
 @router.delete("/{org}/invitations/{invitation_id}")
 async def cancel_invitation(invitation_id: int, user: UserWithContext = Depends(require_org_role(OrgRole.admin))):
     await delete_invitation(invitation_id)
+    return {"success": True}
+
+
+# ---- Project Delete ----
+
+@router.delete("/{org}/projects/{slug}")
+async def delete_proj(slug: str, user: UserWithContext = Depends(require_org_role(OrgRole.owner))):
+    """Delete a project and all its previews, members, and webhooks."""
+    from app.routes.previews import delete_preview_internal
+    from app.routes.gitlab import delete_project_webhook
+    from app.websockets import preview_list_manager
+
+    project = await get_project_by_slug(user.org.id, slug)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
+
+    org_slug = user.org.slug
+
+    # Clean up GitLab webhook
+    if project.get("gitlab_project_id"):
+        await delete_project_webhook(user.org.id, org_slug, project["gitlab_project_id"])
+
+    # Delete all previews (VMs, Caddy routes, local files)
+    all_previews = await get_all_previews(org_id=user.org.id)
+    project_previews = [p for p in all_previews if p.get("project_slug") == slug]
+    for preview in project_previews:
+        try:
+            await delete_preview_internal(
+                org_slug, slug, project["id"], preview["preview_name"],
+            )
+        except Exception as e:
+            logger.warning(f"Error cleaning up preview {preview['preview_name']} during project delete: {e}")
+
+    # Delete project from DB (CASCADE handles project_members, previews, deployments)
+    await delete_project(project["id"])
+
+    await preview_list_manager.force_broadcast()
+
+    logger.info(f"Project '{slug}' deleted from org '{org_slug}' by {user.email}")
     return {"success": True}
 
 

@@ -92,6 +92,35 @@ def _get_org_gitlab(user: UserWithContext) -> tuple[str, str]:
     return user.org.gitlab_url, ""
 
 
+async def delete_project_webhook(org_id: int, org_slug: str, gitlab_project_id: int):
+    """Remove the webhook for a project from GitLab. Best-effort, does not raise."""
+    try:
+        gitlab_url, token = await _get_org_gitlab_token(org_id)
+    except Exception:
+        return  # No GitLab connection, nothing to clean
+
+    webhook_url = f"{settings.oauth_redirect_uri_base.rsplit('/api/', 1)[0]}/api/webhooks/{org_slug}/gitlab"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{gitlab_url}/api/v4/projects/{gitlab_project_id}/hooks",
+                headers={"PRIVATE-TOKEN": token},
+                timeout=15,
+            )
+            if resp.status_code == 200:
+                for hook in resp.json():
+                    if hook.get("url") == webhook_url:
+                        await client.delete(
+                            f"{gitlab_url}/api/v4/projects/{gitlab_project_id}/hooks/{hook['id']}",
+                            headers={"PRIVATE-TOKEN": token},
+                            timeout=15,
+                        )
+                        logger.info(f"Deleted webhook {hook['id']} for GitLab project {gitlab_project_id}")
+                        break
+    except Exception as e:
+        logger.warning(f"Failed to delete webhook for GitLab project {gitlab_project_id}: {e}")
+
+
 async def _get_org_gitlab_token(org_id: int) -> tuple[str, str]:
     """Get gitlab_url and gitlab_access_token from the org."""
     from app.database import get_organization_by_id
