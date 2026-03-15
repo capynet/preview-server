@@ -467,6 +467,38 @@ func formatBytes(b int64) string {
 	}
 }
 
+// ProjectMatch represents a resolved project from the server.
+type ProjectMatch struct {
+	OrgSlug     string `json:"org_slug"`
+	OrgName     string `json:"org_name"`
+	ProjectSlug string `json:"project_slug"`
+	ProjectID   int    `json:"project_id"`
+}
+
+// ResolveProject finds a project by slug across all user's organizations.
+func (c *Client) ResolveProject(slug string) ([]ProjectMatch, error) {
+	url := fmt.Sprintf("%s/api/auth/projects/resolve?slug=%s", c.BaseURL, slug)
+
+	resp, err := c.doRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Matches []ProjectMatch `json:"matches"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode error: %w", err)
+	}
+	return result.Matches, nil
+}
+
 func (c *Client) DownloadStream(project string, previewName string, kind string, w io.Writer) error {
 	url := fmt.Sprintf("%s/previews/%s/%s/download", c.orgProjectPrefix(project), previewName, kind)
 

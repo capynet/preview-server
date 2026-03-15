@@ -1,11 +1,14 @@
-"""Base files endpoints — upload/download base DB and files via S3.
+"""Base files endpoints — upload/download base DB and files.
 
-Uploads use presigned URLs for direct CLI-to-S3 transfer.
+Uploads use presigned URLs for S3 backends, or proxy upload for others.
 """
 
 import logging
+import os
+import tempfile
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.auth.dependencies import require_org_role
@@ -122,7 +125,11 @@ async def presign_upload(
     body: dict,
     user: UserWithContext = Depends(require_org_role(OrgRole.member)),
 ):
-    """Generate presigned URL(s) for direct upload to S3."""
+    """Generate presigned URL(s) for direct upload to S3.
+
+    For backends that don't support presigned URLs (e.g. Storage Box),
+    returns mode="proxy" so the client uploads via the proxy endpoint.
+    """
     if kind not in ("db", "files"):
         raise HTTPException(status_code=400, detail="kind must be 'db' or 'files'")
 
@@ -132,6 +139,10 @@ async def presign_upload(
     total_size = int(body.get("total_size", 0))
     if total_size <= 0:
         raise HTTPException(status_code=400, detail="total_size required and must be > 0")
+
+    # Backend doesn't support presigned URLs — use proxy upload
+    if not storage_manager.supports_presigned_urls:
+        return {"mode": "proxy"}
 
     max_single = 5 * 1024 * 1024 * 1024  # 5 GB
 
@@ -176,11 +187,11 @@ async def complete_upload(
     if upload_id and parts:
         await storage_manager.complete_multipart_upload(project_slug, kind, upload_id, parts)
 
-    # Verify the object exists in S3
+    # Verify the object exists in storage
     status = await storage_manager.get_base_files_status(project_slug)
     obj = status.get(kind)
     if not obj:
-        raise HTTPException(status_code=404, detail=f"Object not found in S3 for {project_slug}/{kind}")
+        raise HTTPException(status_code=404, detail=f"Object not found in storage for {project_slug}/{kind}")
 
     # Set metadata (uncompressed size)
     if uncompressed_size:
@@ -193,3 +204,48 @@ async def complete_upload(
     size = obj["size_bytes"]
     logger.info("Confirmed upload for %s/%s (%d bytes, uncompressed=%d)", project_slug, kind, size, uncompressed_size)
     return {"success": True, "size_bytes": size}
+
+
+# ---------------------------------------------------------------------------
+# Proxy upload (for backends without presigned URL support)
+# ---------------------------------------------------------------------------
+
+
+@router.put("/{kind}/upload/proxy")
+async def proxy_upload(
+    request: Request,
+    slug: str,
+    kind: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
+    """Accept file upload and forward to storage backend.
+
+    Used when the backend doesn't support presigned URLs (e.g. Storage Box).
+    The request body is the raw file content (application/octet-stream).
+    """
+    if kind not in ("db", "files"):
+        raise HTTPException(status_code=400, detail="kind must be 'db' or 'files'")
+
+    project = await _resolve_project(user, slug)
+    project_slug = project["slug"]
+
+    # Stream request body to temp file
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=".gz")
+    try:
+        with os.fdopen(tmp_fd, "wb") as tmp_file:
+            async for chunk in request.stream():
+                tmp_file.write(chunk)
+
+        # Upload to storage
+        file_path = Path(tmp_path)
+        if kind == "db":
+            await storage_manager.upload_base_db(project_slug, file_path)
+        else:
+            await storage_manager.upload_base_files(project_slug, file_path)
+
+        # Get size for response
+        size = file_path.stat().st_size
+        logger.info("Proxy uploaded %s/%s (%d bytes)", project_slug, kind, size)
+        return {"success": True, "size_bytes": size}
+    finally:
+        os.unlink(tmp_path)

@@ -16,6 +16,9 @@ var rebuildCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := resolveOrgForProject(project); err != nil {
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "Triggering rebuild for %s/mr-%d...\n", project, mrID)
 		result, err := apiClient.PostAction(project, mrID, "rebuild")
 		if err != nil {

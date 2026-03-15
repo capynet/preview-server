@@ -37,6 +37,10 @@ The project is detected automatically from the git remote in the current directo
 			return err
 		}
 
+		if err := resolveOrgForProject(slug); err != nil {
+			return err
+		}
+
 		// Check current status on the server
 		status, err := apiClient.GetBaseFilesStatus(slug)
 		if err != nil {
@@ -80,6 +84,10 @@ The project is detected automatically from the git remote in the current directo
 	RunE: func(cmd *cobra.Command, args []string) error {
 		slug, err := detectProjectSlug()
 		if err != nil {
+			return err
+		}
+
+		if err := resolveOrgForProject(slug); err != nil {
 			return err
 		}
 

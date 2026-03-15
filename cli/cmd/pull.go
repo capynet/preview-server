@@ -22,12 +22,23 @@ finds a preview matching the current git branch.`,
 // resolvePullTarget resolves the project and preview name from args or auto-detection.
 func resolvePullTarget(args []string) (project, previewName string, err error) {
 	if len(args) == 1 {
-		return parsePreviewName(args[0])
+		project, previewName, err = parsePreviewName(args[0])
+		if err != nil {
+			return "", "", err
+		}
+		if err := resolveOrgForProject(project); err != nil {
+			return "", "", err
+		}
+		return project, previewName, nil
 	}
 
 	// Auto-detect project from git remote
 	project, err = detectProjectSlug()
 	if err != nil {
+		return "", "", err
+	}
+
+	if err := resolveOrgForProject(project); err != nil {
 		return "", "", err
 	}
 

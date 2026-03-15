@@ -120,13 +120,13 @@ async def delete_session(session_id: str):
     await pool.execute("DELETE FROM sessions WHERE id = $1", session_id)
 
 
-# ---- API Tokens (org-scoped) ----
+# ---- API Tokens ----
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-async def create_api_token(user_id: int, org_id: int, name: str) -> tuple[int, str]:
+async def create_api_token(user_id: int, org_id: Optional[int], name: str) -> tuple[int, str]:
     """Returns (token_id, raw_token). The raw token is only returned once."""
     raw_token = secrets.token_urlsafe(48)
     token_hash = _hash_token(raw_token)

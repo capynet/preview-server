@@ -602,13 +602,13 @@ class PreviewDeployer:
         )
 
     async def _import_db(self):
-        """Download base DB from S3 and stream directly into MySQL."""
+        """Download base DB from storage and stream directly into MySQL."""
         step = "import-db"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
         db_container = f"{self.container_prefix}-db"
-        s3_key = f"base-files/{self.project_slug}/db.sql.gz"
+        storage_key = f"base-files/{self.project_slug}/db.sql.gz"
 
         # Log file size info
         size_bytes = 0
@@ -620,16 +620,10 @@ class PreviewDeployer:
 
         await self._log_raw(f"{DIM}Downloading and importing database...{RESET}\n")
 
-        # Stream: S3 → pv (progress) → gunzip → mysql  (no temp file)
-        env_cmd = (
-            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
-            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
-        )
+        download_cmd = storage_manager.vm_download_to_stdout(storage_key)
         size_flag = f"-s {size_bytes}" if size_bytes else ""
         import_cmd = (
-            f"{env_cmd}"
-            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
-            f"--endpoint-url {settings.hetzner_s3_endpoint} "
+            f"{download_cmd} "
             f"| pv {size_flag} "
             f"| gunzip "
             f"| docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
@@ -667,7 +661,7 @@ class PreviewDeployer:
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        s3_key = f"base-files/{self.project_slug}/files.tar.gz"
+        storage_key = f"base-files/{self.project_slug}/files.tar.gz"
         docroot = self._preview_config.get("docroot", "web") if self._preview_config else "web"
         public_path = "sites/default/files"
         if self._preview_config:
@@ -685,17 +679,11 @@ class PreviewDeployer:
 
         await self._log_raw(f"{DIM}Downloading and extracting files...{RESET}\n")
 
-        # Stream: S3 → pv (progress) → tar extract  (no temp file)
-        env_cmd = (
-            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
-            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
-        )
+        download_cmd = storage_manager.vm_download_to_stdout(storage_key)
         size_flag = f"-s {size_bytes}" if size_bytes else ""
         import_cmd = (
-            f"{env_cmd}"
             f"mkdir -p {files_dir} && "
-            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} - "
-            f"--endpoint-url {settings.hetzner_s3_endpoint} "
+            f"{download_cmd} "
             f"| pv {size_flag} "
             f"| tar xzf - -C {files_dir} && "
             f"chown -R 33:33 {files_dir} && "
@@ -720,20 +708,18 @@ class PreviewDeployer:
         await self._log_step_end(step, elapsed, True, "")
 
     async def _restore_db_cache(self, cache_key: str):
-        """Download DB cache from S3 to VM and restore the Docker volume."""
+        """Download DB cache from storage to VM and restore the Docker volume."""
         step = "restore-db-cache"
         await self._log_step_start(step)
         t0 = time.monotonic()
 
-        s3_key = f"db-cache/{self.project_slug}/{cache_key}.tar.gz"
+        storage_key = f"db-cache/{self.project_slug}/{cache_key}.tar.gz"
         volume_name = f"{self.container_prefix}_db_data"
 
+        download_cmd = storage_manager.vm_download_to_file(storage_key, "/tmp/db-cache.tar.gz")
         restore_cmd = (
-            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
-            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
             f"docker volume create {volume_name} && "
-            f"aws s3 cp s3://{storage_manager.bucket}/{s3_key} /tmp/db-cache.tar.gz "
-            f"--endpoint-url {settings.hetzner_s3_endpoint} && "
+            f"{download_cmd} && "
             f"docker run --rm -v {volume_name}:/data -v /tmp:/cache alpine "
             f"tar xzf /cache/db-cache.tar.gz -C /data && "
             f"rm -f /tmp/db-cache.tar.gz"
@@ -763,14 +749,12 @@ class PreviewDeployer:
         await proc.communicate()
 
         try:
+            storage_key = f"db-cache/{self.project_slug}/{cache_key}.tar.gz"
+            upload_cmd = storage_manager.vm_upload_from_file("/tmp/db-cache.tar.gz", storage_key)
             export_cmd = (
                 f"docker run --rm -v {volume_name}:/data:ro -v /tmp:/cache alpine "
                 f"tar czf /cache/db-cache.tar.gz -C /data . && "
-                f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
-                f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
-                f"aws s3 cp /tmp/db-cache.tar.gz "
-                f"s3://{storage_manager.bucket}/db-cache/{self.project_slug}/{cache_key}.tar.gz "
-                f"--endpoint-url {settings.hetzner_s3_endpoint} && "
+                f"{upload_cmd} && "
                 f"rm -f /tmp/db-cache.tar.gz"
             )
             proc = await self._executor.run_shell(export_cmd)

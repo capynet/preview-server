@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 
@@ -51,18 +49,7 @@ var authLoginCmd = &cobra.Command{
 		if cfg.Token != "" {
 			user, err := fetchCurrentUser(cfg)
 			if err == nil {
-				// If org is not set but user has orgs, resolve it now
-				if cfg.Org == "" && len(user.Organizations) > 0 {
-					if err := resolveOrg(&cfg, user); err != nil {
-						return err
-					}
-					saveConfig(cfg)
-					fmt.Printf("Organization set to: %s\n", cfg.Org)
-				}
 				fmt.Printf("Already logged in as %s (%s)\n", user.Name, user.Email)
-				if cfg.Org != "" {
-					fmt.Printf("Organization: %s\n", cfg.Org)
-				}
 				fmt.Fprintln(os.Stderr, "Run 'preview logout' first to switch accounts.")
 				return nil
 			}
@@ -117,29 +104,19 @@ var authLoginCmd = &cobra.Command{
 				if token != "" {
 					cfg.Token = token
 
-					// Fetch user info to resolve organization
-					user, err := fetchCurrentUser(cfg)
-					if err != nil {
-						// Save token anyway, org can be set later
-						saveConfig(cfg)
-						fmt.Println("Logged in successfully!")
-						fmt.Fprintln(os.Stderr, "Warning: could not fetch user info to auto-detect organization.")
-						fmt.Fprintln(os.Stderr, "Use --org <slug> or run 'preview login' again.")
-						return nil
-					}
-
-					if err := resolveOrg(&cfg, user); err != nil {
-						saveConfig(cfg)
-						return err
-					}
-
 					if err := saveConfig(cfg); err != nil {
 						return fmt.Errorf("failed to save config: %w", err)
 					}
-					fmt.Printf("Logged in as %s (%s)\n", user.Name, user.Email)
-					if cfg.Org != "" {
-						fmt.Printf("Organization: %s\n", cfg.Org)
+
+					// Fetch user info to show name
+					user, err := fetchCurrentUser(cfg)
+					if err != nil {
+						fmt.Println("Logged in successfully!")
+						return nil
 					}
+
+					fmt.Printf("Logged in as %s (%s)\n", user.Name, user.Email)
+					fmt.Println("Organization will be detected automatically from your project.")
 					return nil
 				}
 			}
@@ -216,20 +193,13 @@ var whoamiCmd = &cobra.Command{
 		}
 
 		fmt.Printf("Logged in as %s (%s)\n", user.Name, user.Email)
-		if cfg.Org != "" {
-			fmt.Printf("Organization: %s\n", cfg.Org)
-		}
 		if len(user.Organizations) > 0 {
 			fmt.Printf("Organizations: ")
 			for i, org := range user.Organizations {
 				if i > 0 {
 					fmt.Print(", ")
 				}
-				marker := ""
-				if org.OrgSlug == cfg.Org {
-					marker = " *"
-				}
-				fmt.Printf("%s [%s]%s", org.OrgName, org.Role, marker)
+				fmt.Printf("%s [%s]", org.OrgName, org.Role)
 			}
 			fmt.Println()
 		}
@@ -276,43 +246,6 @@ func fetchCurrentUser(cfg config) (*userInfo, error) {
 	return &user, nil
 }
 
-// resolveOrg selects the organization for the CLI based on user's memberships.
-// If the user belongs to exactly one org, it's auto-selected.
-// If multiple, the user is prompted to choose.
-func resolveOrg(cfg *config, user *userInfo) error {
-	orgs := user.Organizations
-	if len(orgs) == 0 {
-		fmt.Fprintln(os.Stderr, "Warning: you don't belong to any organization yet.")
-		return nil
-	}
-
-	if len(orgs) == 1 {
-		cfg.Org = orgs[0].OrgSlug
-		return nil
-	}
-
-	// Multiple orgs — prompt user to choose
-	fmt.Println("\nYou belong to multiple organizations. Select one:")
-	for i, org := range orgs {
-		fmt.Printf("  %d) %s (%s)\n", i+1, org.OrgName, org.OrgSlug)
-	}
-	fmt.Print("\n> ")
-
-	reader := bufio.NewReader(os.Stdin)
-	input, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("failed to read input: %w", err)
-	}
-	input = strings.TrimSpace(input)
-
-	idx, err := strconv.Atoi(input)
-	if err != nil || idx < 1 || idx > len(orgs) {
-		return fmt.Errorf("invalid selection: %q", input)
-	}
-
-	cfg.Org = orgs[idx-1].OrgSlug
-	return nil
-}
 
 func init() {
 	authLoginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false, "Don't open the URL in a browser")

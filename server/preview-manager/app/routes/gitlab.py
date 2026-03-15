@@ -333,9 +333,16 @@ async def gitlab_disconnect(user: UserWithContext = Depends(require_org_role(Org
 
 @router.get("/orgs/{org}/gitlab/projects/enabled")
 async def gitlab_enabled_projects(user: UserWithContext = Depends(require_org_role(OrgRole.viewer))):
-    """Return only projects that have previews enabled (from local DB, no GitLab call)."""
-    from app.database import list_projects
-    enabled_projects = await list_projects(user.org.id)
+    """Return only projects that have previews enabled (from local DB, no GitLab call).
+
+    Org members see all projects. Project-only members see only their projects.
+    """
+    from app.database import list_projects, list_user_projects, get_org_member
+    org_membership = await get_org_member(user.id, user.org.id)
+    if org_membership:
+        enabled_projects = await list_projects(user.org.id)
+    else:
+        enabled_projects = await list_user_projects(user.org.id, user.id)
     return {
         "projects": [
             {

@@ -153,7 +153,7 @@ class CLIRequestBody(BaseModel):
 
 class CLIApproveBody(BaseModel):
     code: str
-    org_slug: str
+    org_slug: Optional[str] = None
 
 
 class GitLabConnectRequest(BaseModel):

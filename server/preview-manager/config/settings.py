@@ -63,11 +63,22 @@ class Settings(BaseSettings):
     # Composer proxy (internal tinyproxy for private registries)
     composer_proxy_url: str = ""
 
+    # Storage backend: "s3" or "storagebox"
+    storage_backend: str = "s3"
+
     # Hetzner Object Storage (S3)
     hetzner_s3_endpoint: str = ""
     hetzner_s3_access_key: str = ""
     hetzner_s3_secret_key: str = ""
     hetzner_s3_bucket: str = "preview-manager"
+
+    # Hetzner Storage Box (SFTP)
+    storagebox_host: str = ""
+    storagebox_port: int = 23
+    storagebox_user: str = ""
+    storagebox_password: str = ""
+    storagebox_ssh_key_path: str = ""
+    storagebox_base_path: str = ""
 
     class Config:
         env_file = ".env"

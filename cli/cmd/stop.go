@@ -16,6 +16,9 @@ var stopCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := resolveOrgForProject(project); err != nil {
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "Stopping %s/mr-%d...\n", project, mrID)
 		result, err := apiClient.PostAction(project, mrID, "stop")
 		if err != nil {

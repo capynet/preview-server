@@ -103,8 +103,23 @@ async def get_org_context(
 
     # Check org membership
     membership = await get_org_member(user.id, org["id"])
-    if not membership:
-        raise HTTPException(status_code=403, detail="Not a member of this organization")
+    if membership:
+        user.org_role = OrgRole(membership["role"])
+    else:
+        # Check if user has access via project membership
+        from app.database import get_pool
+        pool = await get_pool()
+        has_project = await pool.fetchrow(
+            """SELECT 1 FROM project_members pm
+               JOIN projects p ON pm.project_id = p.id
+               WHERE pm.user_id = $1 AND p.organization_id = $2
+               LIMIT 1""",
+            user.id, org["id"],
+        )
+        if not has_project:
+            raise HTTPException(status_code=403, detail="Not a member of this organization")
+        # Project-only member gets implicit viewer at org level
+        user.org_role = OrgRole.viewer
 
     from app.auth.models import Organization
     user.org = Organization(
@@ -116,7 +131,6 @@ async def get_org_context(
         composer_proxy_enabled=bool(org.get("composer_proxy_enabled", 0)),
         created_at=org["created_at"], updated_at=org["updated_at"],
     )
-    user.org_role = OrgRole(membership["role"])
     return user
 
 

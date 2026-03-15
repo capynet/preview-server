@@ -12,7 +12,7 @@ from app.auth.dependencies import SESSION_COOKIE, get_current_user
 from app.database import (
     add_org_member, get_invitation_by_token, get_pool, get_preview_by_domain,
     list_user_organizations, mark_invitation_accepted, match_email_domain,
-    update_last_accessed, _now,
+    resolve_project_by_slug, update_last_accessed, _now,
 )
 from app.auth.models import (
     AcceptInviteBody,
@@ -134,6 +134,11 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
     # Check allowed email domain
     domain_match = await match_email_domain(info.email) if count > 0 else None
 
+    # Reject users without invitation or matching email domain
+    if count > 0 and not invitation and not domain_match:
+        logger.info(f"Rejected OAuth signup for {info.email}: no invitation or domain match")
+        return None, False
+
     # Create user
     is_superadmin = count == 0
     user = await db.create_user(info.email, info.name, info.avatar_url, is_superadmin=is_superadmin)
@@ -151,8 +156,6 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
     elif domain_match:
         await add_org_member(user["id"], domain_match["organization_id"], domain_match["default_role"])
         logger.info(f"User {info.email} auto-joined org {domain_match['organization_id']} via domain match")
-    else:
-        logger.info(f"New user {info.email} registered via OAuth (no org yet)")
 
     return user, True
 
@@ -215,6 +218,26 @@ async def get_me(user: UserWithContext = Depends(get_current_user)):
     }
 
 
+@router.get("/projects/resolve")
+async def resolve_project(slug: str, user: UserWithContext = Depends(get_current_user)):
+    """Resolve a project slug to org+project across all user's organizations.
+
+    Used by the CLI to auto-detect the organization from a git remote.
+    """
+    matches = await resolve_project_by_slug(user.id, slug)
+    return {
+        "matches": [
+            {
+                "org_slug": m["org_slug"],
+                "org_name": m["org_name"],
+                "project_slug": m["slug"],
+                "project_id": m["id"],
+            }
+            for m in matches
+        ],
+    }
+
+
 # ---- CLI Device Flow ----
 
 @router.post("/cli/request")
@@ -232,13 +255,16 @@ async def cli_approve(body: CLIApproveBody, user: UserWithContext = Depends(get_
     if not req or req["status"] != "pending":
         raise HTTPException(status_code=404, detail="Request not found or already processed")
 
-    # Find the org
-    from app.database import get_organization_by_slug
-    org = await get_organization_by_slug(body.org_slug)
-    if not org:
-        raise HTTPException(status_code=404, detail=f"Organization '{body.org_slug}' not found")
+    # Org is optional — CLI tokens can be user-scoped
+    org_id = None
+    if body.org_slug:
+        from app.database import get_organization_by_slug
+        org = await get_organization_by_slug(body.org_slug)
+        if not org:
+            raise HTTPException(status_code=404, detail=f"Organization '{body.org_slug}' not found")
+        org_id = org["id"]
 
-    token_id, raw_token = await db.create_api_token(user.id, org["id"], f"CLI ({body.code[:8]})")
+    token_id, raw_token = await db.create_api_token(user.id, org_id, f"CLI ({body.code[:8]})")
     await db.approve_cli_auth_request(body.code, user.id, raw_token)
     return {"success": True}
 

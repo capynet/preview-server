@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -53,15 +54,10 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Resolve org: flag > config
+		// Resolve org: flag > config (but org is now optional — resolved per-command)
 		org := orgFlag
 		if org == "" {
 			org = cfg.Org
-		}
-		if org == "" {
-			fmt.Fprintln(os.Stderr, "No organization configured. Run 'preview login' to set up your organization,")
-			fmt.Fprintln(os.Stderr, "or use --org <slug> to specify one.")
-			os.Exit(1)
 		}
 
 		apiClient = client.New(cfg.APIURL, cfg.Token, org)
@@ -188,6 +184,53 @@ func findPreviewByBranch(project, branch string) (*client.Preview, error) {
 	}
 
 	return nil, fmt.Errorf("no preview found for project %q with branch %q", project, branch)
+}
+
+// resolveOrgForProject resolves the organization for a given project slug.
+// If the org is already set (via --org flag or config), it's a no-op.
+// Otherwise, it calls the server to find the project across the user's orgs.
+// If exactly one match is found, the client's Org is set automatically.
+// If multiple matches are found, the user is prompted to choose.
+func resolveOrgForProject(slug string) error {
+	if apiClient.Org != "" {
+		return nil
+	}
+
+	matches, err := apiClient.ResolveProject(slug)
+	if err != nil {
+		return fmt.Errorf("failed to resolve project %q: %w", slug, err)
+	}
+
+	if len(matches) == 0 {
+		return fmt.Errorf("project %q not found in any of your organizations", slug)
+	}
+
+	if len(matches) == 1 {
+		apiClient.Org = matches[0].OrgSlug
+		return nil
+	}
+
+	// Multiple matches — prompt user to choose
+	fmt.Fprintf(os.Stderr, "Project %q exists in multiple organizations:\n", slug)
+	for i, m := range matches {
+		fmt.Fprintf(os.Stderr, "  %d) %s (%s)\n", i+1, m.OrgName, m.OrgSlug)
+	}
+	fmt.Fprint(os.Stderr, "\n> ")
+
+	reader := bufio.NewReader(os.Stdin)
+	input, err := reader.ReadString('\n')
+	if err != nil {
+		return fmt.Errorf("failed to read input: %w", err)
+	}
+	input = strings.TrimSpace(input)
+
+	idx, err := strconv.Atoi(input)
+	if err != nil || idx < 1 || idx > len(matches) {
+		return fmt.Errorf("invalid selection: %q", input)
+	}
+
+	apiClient.Org = matches[idx-1].OrgSlug
+	return nil
 }
 
 // parsePreviewName parses "project/preview-name" into (project, previewName).

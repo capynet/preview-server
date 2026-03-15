@@ -16,6 +16,9 @@ var restartCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if err := resolveOrgForProject(project); err != nil {
+			return err
+		}
 		fmt.Fprintf(os.Stderr, "Restarting %s/mr-%d...\n", project, mrID)
 		result, err := apiClient.PostAction(project, mrID, "restart")
 		if err != nil {

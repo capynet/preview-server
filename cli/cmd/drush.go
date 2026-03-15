@@ -34,12 +34,21 @@ Examples:
 			project = p
 			previewName = name
 			args = args[1:]
+
+			if err := resolveOrgForProject(project); err != nil {
+				return err
+			}
 		} else {
 			// Auto-detect: all args are drush args
 			slug, err := detectProjectSlug()
 			if err != nil {
 				return err
 			}
+
+			if err := resolveOrgForProject(slug); err != nil {
+				return err
+			}
+
 			branch, err := detectGitBranch()
 			if err != nil {
 				return err

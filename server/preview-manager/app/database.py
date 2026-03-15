@@ -98,13 +98,15 @@ async def list_organizations() -> list[dict]:
 
 
 async def list_user_organizations(user_id: int) -> list[dict]:
-    """List orgs the user is a member of, with their role."""
+    """List orgs the user has access to (via org membership or project membership)."""
     pool = await get_pool()
     rows = await pool.fetch(
-        """SELECT o.*, om.role
+        """SELECT DISTINCT o.*, COALESCE(om.role, 'viewer') as role
            FROM organizations o
-           JOIN org_members om ON o.id = om.organization_id
-           WHERE om.user_id = $1
+           LEFT JOIN org_members om ON o.id = om.organization_id AND om.user_id = $1
+           LEFT JOIN projects p ON p.organization_id = o.id
+           LEFT JOIN project_members pm ON pm.project_id = p.id AND pm.user_id = $1
+           WHERE om.user_id = $1 OR pm.user_id = $1
            ORDER BY o.name""",
         user_id,
     )
@@ -639,6 +641,27 @@ async def get_project_by_slug(org_id: int, slug: str) -> Optional[dict]:
     return _row_to_dict(row) if row else None
 
 
+async def resolve_project_by_slug(user_id: int, slug: str) -> list[dict]:
+    """Find projects matching a slug across all orgs the user has access to.
+
+    Returns list of dicts with project + org info (org_slug, org_name).
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT p.*, o.slug as org_slug, o.name as org_name
+           FROM projects p
+           JOIN organizations o ON o.id = p.organization_id
+           WHERE p.slug = $2
+             AND (
+               EXISTS (SELECT 1 FROM org_members om WHERE om.organization_id = o.id AND om.user_id = $1)
+               OR EXISTS (SELECT 1 FROM project_members pm WHERE pm.project_id = p.id AND pm.user_id = $1)
+             )
+           ORDER BY o.name""",
+        user_id, slug,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 async def get_project_by_gitlab_id(org_id: int, gitlab_project_id: int) -> Optional[dict]:
     pool = await get_pool()
     row = await pool.fetchrow(
@@ -653,6 +676,19 @@ async def list_projects(org_id: int) -> list[dict]:
     rows = await pool.fetch(
         "SELECT * FROM projects WHERE organization_id = $1 ORDER BY slug",
         org_id,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
+async def list_user_projects(org_id: int, user_id: int) -> list[dict]:
+    """List projects the user has access to via project_members."""
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT p.* FROM projects p
+           JOIN project_members pm ON pm.project_id = p.id
+           WHERE p.organization_id = $1 AND pm.user_id = $2
+           ORDER BY p.slug""",
+        org_id, user_id,
     )
     return [_row_to_dict(r) for r in rows]
 

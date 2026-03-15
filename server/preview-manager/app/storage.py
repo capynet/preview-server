@@ -8,6 +8,7 @@ from pathlib import Path
 import boto3
 from botocore.config import Config as BotoConfig
 
+from app.storage_backend import StorageBackend
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -27,12 +28,16 @@ async def _run(func, *args, **kwargs):
     return await asyncio.to_thread(partial(func, *args, **kwargs))
 
 
-class ObjectStorageManager:
+class ObjectStorageManager(StorageBackend):
     """Manage base files and DB cache in S3-compatible object storage."""
 
     @property
     def bucket(self) -> str:
         return settings.hetzner_s3_bucket
+
+    @property
+    def supports_presigned_urls(self) -> bool:
+        return True
 
     # ------------------------------------------------------------------
     # Base files
@@ -350,6 +355,47 @@ class ObjectStorageManager:
             logger.warning("Error deleting DB caches for %s: %s", project, e)
         return count
 
+    # ------------------------------------------------------------------
+    # VM commands
+    # ------------------------------------------------------------------
 
-# Singleton
-storage_manager = ObjectStorageManager()
+    def vm_download_to_stdout(self, key: str) -> str:
+        return (
+            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+            f"aws s3 cp s3://{self.bucket}/{key} - "
+            f"--endpoint-url {settings.hetzner_s3_endpoint}"
+        )
+
+    def vm_download_to_file(self, key: str, dest: str) -> str:
+        return (
+            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+            f"aws s3 cp s3://{self.bucket}/{key} {dest} "
+            f"--endpoint-url {settings.hetzner_s3_endpoint}"
+        )
+
+    def vm_upload_from_file(self, src: str, key: str) -> str:
+        return (
+            f"export AWS_ACCESS_KEY_ID={settings.hetzner_s3_access_key} && "
+            f"export AWS_SECRET_ACCESS_KEY={settings.hetzner_s3_secret_key} && "
+            f"aws s3 cp {src} s3://{self.bucket}/{key} "
+            f"--endpoint-url {settings.hetzner_s3_endpoint}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Singleton — selected based on STORAGE_BACKEND setting
+# ---------------------------------------------------------------------------
+
+def _create_storage_manager() -> StorageBackend:
+    backend = settings.storage_backend
+    if backend == "storagebox":
+        from app.storage_box import StorageBoxManager
+        logger.info("Using Storage Box backend (%s)", settings.storagebox_host)
+        return StorageBoxManager()
+    logger.info("Using S3 backend (%s)", settings.hetzner_s3_endpoint)
+    return ObjectStorageManager()
+
+
+storage_manager: StorageBackend = _create_storage_manager()
