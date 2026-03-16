@@ -250,9 +250,38 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 	}
 	resp.Body.Close()
 
+	// 3. Upload based on mode
+	if presignResult.Mode == "proxy" {
+		// Storage backend doesn't support presigned URLs — upload via API proxy
+		fmt.Fprintf(os.Stderr, "Uploading %s via proxy...\n", formatBytes(written))
+		if err := c.uploadViaProxy(tmpPath, slug, kind, written); err != nil {
+			return err
+		}
+
+		// Set metadata (uncompressed size) if available
+		if uncompressedSize > 0 {
+			fmt.Fprintf(os.Stderr, "Confirming upload...\n")
+			confirmPayload := map[string]interface{}{
+				"uncompressed_size": uncompressedSize,
+			}
+			confirmBody, _ := json.Marshal(confirmPayload)
+			confirmResp, err := c.doRequest("POST",
+				fmt.Sprintf("%s/base-files/%s/upload/complete", c.orgProjectPrefix(slug), kind),
+				bytes.NewReader(confirmBody))
+			if err != nil {
+				return fmt.Errorf("confirm request failed: %w", err)
+			}
+			defer confirmResp.Body.Close()
+			if confirmResp.StatusCode != 200 {
+				body, _ := io.ReadAll(confirmResp.Body)
+				return fmt.Errorf("confirm HTTP %d: %s", confirmResp.StatusCode, string(body))
+			}
+		}
+		return nil
+	}
+
 	fmt.Fprintf(os.Stderr, "Uploading %s to S3...\n", formatBytes(written))
 
-	// 3. Upload to S3
 	var completeParts []map[string]interface{} // for multipart
 
 	if presignResult.Mode == "single" {
@@ -289,6 +318,29 @@ func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, file
 		return fmt.Errorf("confirm HTTP %d: %s", confirmResp.StatusCode, string(body))
 	}
 
+	return nil
+}
+
+func (c *Client) uploadViaProxy(filePath, slug, kind string, totalSize int64) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	pr := &progressReader{reader: f, total: totalSize, label: "Uploading"}
+	url := fmt.Sprintf("%s/base-files/%s/upload/proxy", c.orgProjectPrefix(slug), kind)
+	resp, err := c.doRequest("PUT", url, pr)
+	if err != nil {
+		return fmt.Errorf("proxy upload failed: %w", err)
+	}
+	defer resp.Body.Close()
+	fmt.Fprintln(os.Stderr)
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("proxy upload HTTP %d: %s", resp.StatusCode, string(body))
+	}
 	return nil
 }
 

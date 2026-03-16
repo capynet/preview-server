@@ -3,11 +3,18 @@
 # Build a lightweight Hetzner Cloud snapshot with Docker (no pre-pulled images).
 # Docker images are pulled on-demand during preview deployment.
 #
+# - Labels snapshots with purpose=preview-base-image for identification
+# - Enables delete protection on the new (active) snapshot
+# - Removes delete protection and deletes old preview-base-image snapshots
+# - If the build fails, old snapshots are preserved
+#
 # Usage: ./build-snapshot.sh [HETZNER_API_TOKEN]
 #
 # Requirements: hcloud CLI installed and authenticated, or pass token as arg.
 #
 set -euo pipefail
+
+SNAPSHOT_LABEL="purpose=preview-base-image"
 
 TOKEN="${1:-${HETZNER_TOKEN:-}}"
 if [ -z "$TOKEN" ]; then
@@ -22,6 +29,14 @@ LOCATION="fsn1"
 SERVER_TYPE="cx23"
 SERVER_NAME="snapshot-builder-$(date +%s)"
 IMAGE="ubuntu-24.04"
+
+# Collect existing preview-base-image snapshot IDs (only ours, not unrelated snapshots)
+OLD_SNAPSHOT_IDS=$(hcloud image list --type snapshot --selector "$SNAPSHOT_LABEL" -o noheader -o columns=id 2>/dev/null | tr '\n' ' ')
+if [ -n "$OLD_SNAPSHOT_IDS" ]; then
+    echo "==> Found existing preview-base-image snapshots: $OLD_SNAPSHOT_IDS"
+else
+    echo "==> No existing preview-base-image snapshots found"
+fi
 
 echo "==> Creating temporary VM: $SERVER_NAME"
 hcloud server create \
@@ -86,12 +101,37 @@ done
 
 echo "==> Creating snapshot..."
 SNAPSHOT_DESC="preview-vm-$(date +%Y%m%d-%H%M)"
-hcloud server create-image --type snapshot --description "$SNAPSHOT_DESC" "$SERVER_NAME"
+CREATE_OUTPUT=$(hcloud server create-image --type snapshot --description "$SNAPSHOT_DESC" --label "$SNAPSHOT_LABEL" "$SERVER_NAME" 2>&1)
+echo "$CREATE_OUTPUT"
 
-echo "==> Snapshot created: $SNAPSHOT_DESC"
+# Extract new snapshot ID
+NEW_SNAPSHOT_ID=$(echo "$CREATE_OUTPUT" | grep -oP 'ID:\s*\K[0-9]+' | head -1)
+
+if [ -z "$NEW_SNAPSHOT_ID" ]; then
+    echo "==> ERROR: Could not determine new snapshot ID. Old snapshots preserved."
+    echo "==> Cleaning up temporary VM..."
+    hcloud server delete "$SERVER_NAME"
+    exit 1
+fi
+
+echo "==> New snapshot created: ID=$NEW_SNAPSHOT_ID ($SNAPSHOT_DESC)"
+
+# Protect the new snapshot against accidental deletion
+echo "==> Enabling delete protection on new snapshot $NEW_SNAPSHOT_ID"
+hcloud image enable-protection "$NEW_SNAPSHOT_ID" delete
+
+# Clean up old preview-base-image snapshots
+if [ -n "$OLD_SNAPSHOT_IDS" ]; then
+    for OLD_ID in $OLD_SNAPSHOT_IDS; do
+        echo "==> Removing protection and deleting old snapshot: $OLD_ID"
+        hcloud image disable-protection "$OLD_ID" delete 2>/dev/null || true
+        hcloud image delete "$OLD_ID" || echo "    Warning: could not delete snapshot $OLD_ID"
+    done
+fi
+
 echo "==> Cleaning up temporary VM..."
 hcloud server delete "$SERVER_NAME"
 
 echo ""
-echo "==> Done! Update HETZNER_SNAPSHOT_ID in your .env with the snapshot ID."
-echo "    List snapshots: hcloud image list --type snapshot"
+echo "==> Done! New snapshot ID: $NEW_SNAPSHOT_ID"
+echo "    Update HETZNER_SNAPSHOT_ID in your .env with this value."

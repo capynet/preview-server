@@ -54,13 +54,9 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		// Resolve org: flag > config (but org is now optional — resolved per-command)
-		org := orgFlag
-		if org == "" {
-			org = cfg.Org
-		}
-
-		apiClient = client.New(cfg.APIURL, cfg.Token, org)
+		// Org is resolved per-command via resolveOrgForProject.
+		// Only use --org flag as explicit override.
+		apiClient = client.New(cfg.APIURL, cfg.Token, orgFlag)
 	},
 }
 

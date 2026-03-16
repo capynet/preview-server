@@ -337,10 +337,15 @@ class StorageBoxManager(StorageBackend):
 
     def _scp_opts(self) -> str:
         """Common SCP/SFTP options for VM commands."""
+        # The key is copied to VMs during _step_setup_vm
+        vm_key_path = "/root/.ssh/storagebox_key"
         opts = (
             f"-P {self._port} "
+            f"-i {vm_key_path} "
+            f"-o IdentitiesOnly=yes "
             f"-o StrictHostKeyChecking=no "
             f"-o UserKnownHostsFile=/dev/null "
+            f"-o BatchMode=yes "
             f"-q"
         )
         return opts

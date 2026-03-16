@@ -829,6 +829,13 @@ async def rebuild_preview(
     if not project_path:
         raise HTTPException(status_code=400, detail=f"Project '{project_slug}' has no GitLab project path configured")
 
+    # If a deploy is currently running, cancel it so the new one can start
+    from app.valkey import is_deploy_locked, request_deploy_cancel
+    deploy_key = f"{project_slug}/{preview_name}"
+    if await is_deploy_locked(deploy_key):
+        await request_deploy_cancel(deploy_key)
+        logger.info(f"Cancelling active deploy for {deploy_key} — rebuild requested")
+
     await request.app.state.arq.enqueue_job(
         "task_deploy_preview",
         user.org.id, user.org.slug, project_id, project_slug, project_path,

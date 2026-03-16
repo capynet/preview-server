@@ -27,6 +27,11 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+
+class DeployCancelled(Exception):
+    """Raised when a deploy is cancelled by a new rebuild request."""
+    pass
+
 # Timeouts per step (seconds)
 TIMEOUT_DOCKER_UP = 300
 TIMEOUT_COMPOSER = 600
@@ -129,6 +134,17 @@ class PreviewDeployer:
         self._executor: RemoteExecutor | None = None
         self._vm_id: int | None = None
         self._vm_ip: str | None = None
+
+    # ------------------------------------------------------------------
+    # Cancellation
+    # ------------------------------------------------------------------
+
+    async def _check_cancelled(self):
+        """Check if this deploy was cancelled by a new rebuild request."""
+        from app.valkey import is_deploy_cancelled
+        deploy_key = f"{self.project_slug}/{self.preview_name}"
+        if await is_deploy_cancelled(deploy_key):
+            raise DeployCancelled(f"Deploy cancelled for {deploy_key}")
 
     # ------------------------------------------------------------------
     # Public
@@ -252,6 +268,26 @@ class PreviewDeployer:
 
             return True
 
+        except DeployCancelled:
+            duration = int((datetime.now(timezone.utc) - start).total_seconds())
+            logger.info(
+                f"Deploy CANCELLED: {self.project_slug}/{self.preview_name} after {duration}s"
+            )
+            await self._log_raw(
+                f"\n{YELLOW}Deploy cancelled — a new rebuild was requested{RESET}\n"
+            )
+
+            if self._deployment_id:
+                await finish_deployment(
+                    self._deployment_id, "cancelled",
+                    log_output="\n".join(self._log_buffer),
+                    error="Cancelled by new rebuild request",
+                    duration=duration,
+                )
+                await deployment_log_broadcaster.complete(self._deployment_id, False)
+
+            return False
+
         except Exception as e:
             duration = int((datetime.now(timezone.utc) - start).total_seconds())
             logger.error(
@@ -281,6 +317,7 @@ class PreviewDeployer:
     async def _deploy_new(self):
         # 1. Verify base files exist in S3
         await self._verify_base_files()
+        await self._check_cancelled()
 
         # 2. Create VM or reuse existing one
         preview = await get_preview(self.project_id, self.preview_name)
@@ -316,11 +353,14 @@ class PreviewDeployer:
             # 3. Wait for SSH
             await self._step_wait_ssh()
 
+        await self._check_cancelled()
+
         # 4. Setup workspace directory
         await self._step_setup_vm()
 
         # 5. Sync code from coordinator to VM (delete=True for clean state)
         await self._step_sync_code(delete=True)
+        await self._check_cancelled()
 
         # 6. Generate and upload docker-compose.yml
         await self._generate_compose()
@@ -329,17 +369,20 @@ class PreviewDeployer:
 
         # 7. Pull images from private registry
         await self._step_pull_images()
+        await self._check_cancelled()
 
         # 8. Start containers and import DB (cache disabled for now)
         await self._docker_up()
         await self._wait_for_db()
         await self._import_db()
+        await self._check_cancelled()
 
         # 9. Composer install
         await self._composer_install()
 
         # 10. Import files from S3
         await self._import_files()
+        await self._check_cancelled()
 
         # 11. Deploy steps and deploy script
         await self._run_deploy_steps("new")
@@ -370,6 +413,7 @@ class PreviewDeployer:
 
         # Sync updated code from coordinator to VM
         await self._step_sync_code()
+        await self._check_cancelled()
 
         # Generate and upload compose + settings
         await self._generate_compose()
@@ -378,6 +422,7 @@ class PreviewDeployer:
 
         # Docker up + deploy (images already present from initial deploy)
         await self._docker_up()
+        await self._check_cancelled()
         await self._run_deploy_steps("update")
         await self._run_project_deploy_script("update")
 
@@ -439,10 +484,23 @@ class PreviewDeployer:
             f"(which aws >/dev/null 2>&1 || pip3 install -q awscli --break-system-packages) && "
             f"(which pv >/dev/null 2>&1 || apt-get install -yqq pv >/dev/null 2>&1)"
         )
+
         proc = await self._executor.run_shell(setup_cmd)
         _, stderr = await proc.communicate()
         if proc.returncode != 0:
             raise RuntimeError(f"VM setup failed: {stderr.decode().strip()}")
+
+        # Storage Box backend: copy SSH key to VM for SCP access
+        if settings.storage_backend == "storagebox" and settings.storagebox_ssh_key_path:
+            import base64
+            key_data = open(settings.storagebox_ssh_key_path, "rb").read()
+            key_b64 = base64.b64encode(key_data).decode()
+            vm_key_path = "/root/.ssh/storagebox_key"
+            cmd = f"echo '{key_b64}' | base64 -d > {vm_key_path} && chmod 600 {vm_key_path} >/dev/null 2>&1"
+            proc = await self._executor.run_shell(cmd)
+            await proc.communicate()
+            if proc.returncode != 0:
+                raise RuntimeError("Failed to deploy storage key to VM")
 
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, "")
@@ -621,15 +679,23 @@ class PreviewDeployer:
         await self._log_raw(f"{DIM}Downloading and importing database...{RESET}\n")
 
         download_cmd = storage_manager.vm_download_to_stdout(storage_key)
-        size_flag = f"-s {size_bytes}" if size_bytes else ""
-        import_cmd = (
-            f"{download_cmd} "
-            f"| pv {size_flag} "
-            f"| gunzip "
-            f"| docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
-        )
+        use_pv = storage_manager.supports_presigned_urls
+        if use_pv:
+            size_flag = f"-s {size_bytes}" if size_bytes else ""
+            import_cmd = (
+                f"{download_cmd} "
+                f"| pv {size_flag} "
+                f"| gunzip "
+                f"| docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
+            )
+        else:
+            import_cmd = (
+                f"{download_cmd} "
+                f"| gunzip "
+                f"| docker exec -e MYSQL_PWD=drupal -i {db_container} mysql -u drupal drupal"
+            )
 
-        proc = await self._executor.run_shell(import_cmd, pty=True)
+        proc = await self._executor.run_shell(import_cmd, pty=use_pv)
         stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_DB)
         elapsed = time.monotonic() - t0
 
@@ -641,7 +707,7 @@ class PreviewDeployer:
         await self._log_step_end(step, elapsed, True, "")
 
     async def _import_files(self):
-        """Download base files from S3 to VM and extract."""
+        """Download base files from storage to VM and extract."""
         has_files = await storage_manager.get_base_files_uncompressed_size(self.project_slug)
         if not has_files:
             # Check if files exist in S3 at all
@@ -680,17 +746,22 @@ class PreviewDeployer:
         await self._log_raw(f"{DIM}Downloading and extracting files...{RESET}\n")
 
         download_cmd = storage_manager.vm_download_to_stdout(storage_key)
-        size_flag = f"-s {size_bytes}" if size_bytes else ""
+        use_pv = storage_manager.supports_presigned_urls
+        if use_pv:
+            size_flag = f"-s {size_bytes}" if size_bytes else ""
+            pv_part = f"| pv {size_flag} "
+        else:
+            pv_part = ""
         import_cmd = (
             f"mkdir -p {files_dir} && "
             f"{download_cmd} "
-            f"| pv {size_flag} "
+            f"{pv_part}"
             f"| tar xzf - -C {files_dir} && "
             f"chown -R 33:33 {files_dir} && "
             f"chmod -R a+rX {files_dir} && "
             f"echo \"Extracted $(find {files_dir} -type f | wc -l) files\""
         )
-        proc = await self._executor.run_shell(import_cmd, pty=True)
+        proc = await self._executor.run_shell(import_cmd, pty=use_pv)
         stdout, stderr = await self._stream_progress(proc, step, t0, TIMEOUT_IMPORT_FILES)
         elapsed = time.monotonic() - t0
 
@@ -733,10 +804,10 @@ class PreviewDeployer:
             await self._log_step_end(step, elapsed, False, "")
             raise RuntimeError(f"[{step}] Failed to restore DB cache")
 
-        await self._log_step_end(step, elapsed, True, f"{DIM}Restored from S3 cache{RESET}")
+        await self._log_step_end(step, elapsed, True, f"{DIM}Restored from cache{RESET}")
 
     async def _create_db_cache(self, cache_key: str):
-        """Export DB volume on VM and upload to S3 cache."""
+        """Export DB volume on VM and upload to storage cache."""
         step = "create-db-cache"
         await self._log_step_start(step)
         t0 = time.monotonic()
@@ -1107,11 +1178,11 @@ class PreviewDeployer:
         return output
 
     async def _verify_base_files(self):
-        """Verify base DB exists in S3."""
+        """Verify base DB exists in storage."""
         exists = await storage_manager.base_db_exists(self.project_slug)
         if not exists:
             raise RuntimeError(
-                f"Base database not found in S3 for project '{self.project_slug}'. "
+                f"Base database not found for project '{self.project_slug}'. "
                 f"Upload with: preview push db"
             )
 

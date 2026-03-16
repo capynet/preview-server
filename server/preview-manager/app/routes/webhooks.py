@@ -55,14 +55,32 @@ async def _clone_and_deploy(
     from app.deployment import PreviewDeployer
     from app.state import PreviewStateManager
     from app.routes.gitlab import _get_org_gitlab_token
-    from app.valkey import acquire_deploy_lock, release_deploy_lock, is_deploy_locked
+    from app.valkey import (
+        acquire_deploy_lock, release_deploy_lock, is_deploy_locked,
+        is_deploy_cancelled, clear_deploy_cancel,
+    )
 
     deploy_key = f"{project_slug}/{preview_name}"
 
     # Distributed lock via Valkey (TTL 30min to prevent stale locks)
     if await is_deploy_locked(deploy_key):
-        logger.info(f"Skipping duplicate deploy for {deploy_key} — already in progress")
-        return
+        # If cancellation was requested, wait for the running deploy to finish
+        if await is_deploy_cancelled(deploy_key):
+            logger.info(f"Waiting for cancelled deploy {deploy_key} to release lock...")
+            for _ in range(30):  # Wait up to 60s
+                await asyncio.sleep(2)
+                if not await is_deploy_locked(deploy_key):
+                    break
+            else:
+                # Force-release stale lock after timeout
+                logger.warning(f"Force-releasing stale lock for {deploy_key}")
+                await release_deploy_lock(deploy_key)
+        else:
+            logger.info(f"Skipping duplicate deploy for {deploy_key} — already in progress")
+            return
+
+    # Clear any cancellation flag before starting
+    await clear_deploy_cancel(deploy_key)
 
     if not await acquire_deploy_lock(deploy_key):
         logger.info(f"Could not acquire lock for {deploy_key} — deploy already in progress")

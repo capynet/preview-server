@@ -110,3 +110,23 @@ async def is_deploy_locked(key: str) -> bool:
     """Check if a deploy lock is held."""
     v = get_valkey()
     return bool(await v.exists(f"deploy_lock:{key}"))
+
+
+# ---- Deploy cancellation ----
+
+async def request_deploy_cancel(key: str):
+    """Request cancellation of the current deploy for a preview."""
+    v = get_valkey()
+    await v.set(f"deploy_cancel:{key}", "1", ex=300)  # TTL 5min
+
+
+async def is_deploy_cancelled(key: str) -> bool:
+    """Check if cancellation was requested for this deploy."""
+    v = get_valkey()
+    return bool(await v.exists(f"deploy_cancel:{key}"))
+
+
+async def clear_deploy_cancel(key: str):
+    """Clear the cancellation flag."""
+    v = get_valkey()
+    await v.delete(f"deploy_cancel:{key}")
