@@ -47,7 +47,7 @@ Is the UI of preview manager ([server](server))
 - creo que esto ya existe: Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
 - Acceso por consola via ui y posibilidad de configurar pu key para acceder a los ddev? (creo que no porque se puede acceder sin mas)
 - IDEA cuando un preview acabe de generarse necesitamos proporcionar la url del preview en el MR de gitlab.
-- 
+- Necesito reescribir los logs de los preview. Ahroa mismo preview server procesa los logs pro deberian hacerse cargo de eso las VM ya que todo viene desde ahi y si se usa micro y ram deberia ser el de ellas.
 - Cuando este todo estable hay que quitar el debug "set -x"
 - soporte multisite.
 - Para guiar al usuario hay documentar como conectar gitlab a la app de previews:
@@ -162,3 +162,6 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Quiero poder marcar como favoritos algunso preview de rama o mr. Cuando se borre el preview esta desaparece silencionamente.
 - Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos.
 - estaria bien ver en el listado de preview o en su detalle cual es el destino de un MR (a master u otra rama). Includo esto me da la idea de agrupar por destinations onda arbol. 
+- Tengo storage box medio imlementado. es un poco mas lento pero mucho mas barato que r2. claude tiene memoria: por ahora el output sale mal codigicado y prev server se satura al procesar el output. 
+- VM warm pool: Mantener siempre 1 VM pre-creada lista para asignar al instante en deploys nuevos, y reponer automáticamente tras cada uso. 
+- Voy a necesitar alguna forma de poder abrir las preview en una ventana de incognito sin necesitar iniciar sesion. 

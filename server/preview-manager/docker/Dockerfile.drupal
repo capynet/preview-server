@@ -37,6 +37,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lsphp${LSPHP_VER}-dev \
         git \
         unzip \
+        htop \
         default-mysql-client \
     && rm -rf /var/lib/apt/lists/*
 

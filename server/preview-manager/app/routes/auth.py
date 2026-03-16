@@ -1,10 +1,14 @@
-"""Auth routes: setup, login, OAuth, sessions, CLI device flow."""
+"""Auth routes: setup, login, OAuth, sessions, CLI device flow, SSH keys."""
 
+import asyncio
 import logging
 import secrets
+import subprocess
+import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
 from config.settings import settings
 from app.auth import database as db
@@ -323,3 +327,129 @@ async def accept_invitation(body: AcceptInviteBody):
     response = Response(content='{"success": true}', media_type="application/json")
     _set_session_cookie(response, session_id)
     return response
+
+
+# ---- SSH Keys ----
+
+AUTHORIZED_KEYS_PATH = "/home/preview-manager/.ssh/authorized_keys"
+COMMAND_PREFIX = 'command="/usr/local/bin/preview-ssh-proxy"'
+MANAGED_MARKER = 'command="/usr/local/bin/preview-ssh-proxy"'
+
+VALID_KEY_PREFIXES = ("ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "sk-ssh-ed25519", "sk-ecdsa-sha2-nistp256")
+
+
+class SSHKeyBody(BaseModel):
+    public_key: str
+
+
+def _extract_fingerprint(public_key: str) -> str:
+    """Extract SHA256 fingerprint using ssh-keygen."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".pub", delete=True) as f:
+        f.write(public_key.strip() + "\n")
+        f.flush()
+        result = subprocess.run(
+            ["ssh-keygen", "-lf", f.name],
+            capture_output=True, text=True, timeout=5,
+        )
+    if result.returncode != 0:
+        raise ValueError(f"Invalid SSH key: {result.stderr.strip()}")
+    # Output format: "256 SHA256:abc123... comment (ED25519)"
+    parts = result.stdout.strip().split()
+    if len(parts) < 2:
+        raise ValueError("Could not parse fingerprint")
+    return parts[1]  # e.g. "SHA256:abc123..."
+
+
+def _extract_key_comment(public_key: str) -> str:
+    """Extract the comment (last field) from a public key line."""
+    parts = public_key.strip().split()
+    if len(parts) >= 3:
+        return parts[-1]
+    return "unnamed"
+
+
+async def _sync_authorized_keys():
+    """Regenerate authorized_keys from DB, preserving non-managed entries."""
+    all_keys = await db.get_all_ssh_keys()
+
+    def _write():
+        # Read existing file, keep non-managed lines
+        existing_lines = []
+        try:
+            with open(AUTHORIZED_KEYS_PATH, "r") as f:
+                for line in f:
+                    line = line.rstrip("\n")
+                    if not line or line.startswith("#"):
+                        existing_lines.append(line)
+                    elif MANAGED_MARKER not in line:
+                        existing_lines.append(line)
+        except FileNotFoundError:
+            pass
+
+        # Build managed lines from DB
+        managed_lines = []
+        for key_row in all_keys:
+            pk = key_row["public_key"].strip()
+            managed_lines.append(
+                f'{COMMAND_PREFIX},no-port-forwarding,no-X11-forwarding,no-agent-forwarding {pk}'
+            )
+
+        # Write: existing non-managed lines first, then managed lines
+        import os
+        with open(AUTHORIZED_KEYS_PATH, "w") as f:
+            for line in existing_lines:
+                f.write(line + "\n")
+            for line in managed_lines:
+                f.write(line + "\n")
+        os.chmod(AUTHORIZED_KEYS_PATH, 0o600)
+
+    await asyncio.to_thread(_write)
+
+
+@router.post("/ssh-keys")
+async def add_ssh_key(body: SSHKeyBody, user: UserWithContext = Depends(get_current_user)):
+    public_key = body.public_key.strip()
+
+    # Validate key format
+    if not any(public_key.startswith(prefix) for prefix in VALID_KEY_PREFIXES):
+        raise HTTPException(status_code=400, detail="Invalid SSH public key format")
+
+    # Extract fingerprint
+    try:
+        fingerprint = await asyncio.to_thread(_extract_fingerprint, public_key)
+    except (ValueError, subprocess.TimeoutExpired) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    # Extract name from key comment
+    name = _extract_key_comment(public_key)
+
+    # Store in DB
+    try:
+        key_row = await db.add_ssh_key(user.id, name, public_key, fingerprint)
+    except Exception as e:
+        if "unique" in str(e).lower() or "duplicate" in str(e).lower():
+            raise HTTPException(status_code=409, detail="SSH key already registered")
+        raise
+
+    # Sync authorized_keys file
+    await _sync_authorized_keys()
+
+    return {"id": key_row["id"], "name": key_row["name"], "fingerprint": key_row["fingerprint"]}
+
+
+@router.get("/ssh-keys")
+async def list_ssh_keys(user: UserWithContext = Depends(get_current_user)):
+    keys = await db.list_ssh_keys(user.id)
+    return keys
+
+
+@router.delete("/ssh-keys/{key_id}")
+async def delete_ssh_key(key_id: int, user: UserWithContext = Depends(get_current_user)):
+    deleted = await db.delete_ssh_key(key_id, user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="SSH key not found")
+
+    # Sync authorized_keys file
+    await _sync_authorized_keys()
+
+    return {"success": True}

@@ -229,6 +229,30 @@ func resolveOrgForProject(slug string) error {
 	return nil
 }
 
+// checkPreviewReady validates that a preview's VM is available for SSH/drush commands.
+func checkPreviewReady(detail *client.PreviewDetail, project, previewName string) error {
+	status := detail.Status
+
+	if detail.VmIP == "" {
+		switch status {
+		case "creating":
+			return fmt.Errorf("preview %s/%s is being created. A deploy is in progress — try again once it finishes", project, previewName)
+		case "failed":
+			return fmt.Errorf("preview %s/%s failed to deploy. Check the deploy log at the web UI for details", project, previewName)
+		case "deleting":
+			return fmt.Errorf("preview %s/%s is being deleted", project, previewName)
+		default:
+			return fmt.Errorf("preview %s/%s is not ready (status: %s). It may need a rebuild", project, previewName, status)
+		}
+	}
+
+	if status == "creating" {
+		return fmt.Errorf("preview %s/%s has a deploy in progress. Wait for it to finish before running commands", project, previewName)
+	}
+
+	return nil
+}
+
 // parsePreviewName parses "project/preview-name" into (project, previewName).
 // Accepts any preview name format (mr-123, branch-develop, etc.)
 func parsePreviewName(arg string) (string, string, error) {

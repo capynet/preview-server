@@ -192,3 +192,37 @@ async def approve_cli_auth_request(code: str, user_id: int, token: str):
         "UPDATE cli_auth_requests SET status = 'approved', user_id = $1, token = $2 WHERE code = $3 AND status = 'pending'",
         user_id, token, code,
     )
+
+
+# ---- SSH Keys ----
+
+async def add_ssh_key(user_id: int, name: str, public_key: str, fingerprint: str) -> dict:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        "INSERT INTO ssh_keys (user_id, name, public_key, fingerprint, created_at) VALUES ($1, $2, $3, $4, $5) RETURNING id, name, fingerprint, created_at",
+        user_id, name, public_key, fingerprint, _now(),
+    )
+    return dict(row)
+
+
+async def list_ssh_keys(user_id: int) -> list[dict]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        "SELECT id, name, fingerprint, created_at FROM ssh_keys WHERE user_id = $1 ORDER BY id",
+        user_id,
+    )
+    return [dict(r) for r in rows]
+
+
+async def delete_ssh_key(key_id: int, user_id: int) -> bool:
+    pool = await get_pool()
+    result = await pool.execute(
+        "DELETE FROM ssh_keys WHERE id = $1 AND user_id = $2", key_id, user_id
+    )
+    return result != "DELETE 0"
+
+
+async def get_all_ssh_keys() -> list[dict]:
+    pool = await get_pool()
+    rows = await pool.fetch("SELECT public_key FROM ssh_keys ORDER BY id")
+    return [dict(r) for r in rows]

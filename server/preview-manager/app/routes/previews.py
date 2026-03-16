@@ -167,6 +167,17 @@ def _build_preview_info(state: dict) -> PreviewInfo:
             except Exception:
                 pass
 
+    # Domain aliases: extract from preview.yml
+    domain_aliases: dict[str, str] = {}
+    if preview_path:
+        try:
+            from app.docker_compose import parse_preview_yml
+            config = parse_preview_yml(Path(preview_path))
+            for prefix in config.get("domain_aliases", []):
+                domain_aliases[prefix] = f"https://{prefix}--{url_hash}.mr.preview-mr.com"
+        except Exception:
+            pass
+
     return PreviewInfo(
         preview_name=state["preview_name"],
         project_slug=project_slug,
@@ -186,7 +197,9 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         auto_update=bool(state.get("auto_update", 1)),
         pinned=bool(state.get("pinned", 0)),
         env_vars=env_vars,
+        vm_ip=state.get("vm_ip"),
         post_deploy_status=state.get("post_deploy_status"),
+        domain_aliases=domain_aliases,
         exposed_services=exposed_services,
         stack=stack,
     )
@@ -753,15 +766,22 @@ async def restart_preview(
 async def drush_uli(
     project: str,
     preview_name: str,
+    body: dict = {},
     user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
-    """Get a one-time login link (drush uli) via SSH."""
+    """Get a one-time login link (drush uli) via SSH.
+
+    Optional body: {"uri": "https://admin--hash.mr.preview-mr.com"}
+    If not provided, uses the default preview URL.
+    """
     proj = await _resolve_project(user, project)
     executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
 
-    # Resolve drush URI: alias name from preview.yml → full domain, or default preview URL
-    url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
-    drush_uri = _resolve_drush_uri(user.org.slug, proj["slug"], preview_name, url_hash)
+    # Use provided URI or fall back to default preview URL
+    drush_uri = body.get("uri") if body else None
+    if not drush_uri:
+        url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
+        drush_uri = f"https://{url_hash}.mr.preview-mr.com"
 
     php_container = f"{preview_name}-{proj['slug']}-php"
 
@@ -850,6 +870,43 @@ async def rebuild_preview(
         "output": f"Rebuild started for {project_slug}/{preview_name} (branch: {state['branch']}, force_new={force_new})",
         "error": "",
     }
+
+
+@router.post("/previews/{preview_name}/terminal-token")
+async def get_terminal_token(
+    project: str,
+    preview_name: str,
+    body: dict = {},
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
+):
+    """Generate a short-lived HMAC token for direct terminal access on the VM."""
+    import hashlib
+    import hmac as hmac_mod
+    import time as time_mod
+
+    proj = await _resolve_project(user, project)
+    project_slug = proj["slug"]
+    container = body.get("container", "php")
+
+    # Derive the terminal secret (same as what the VM terminal server has)
+    terminal_secret = hmac_mod.new(
+        settings.secret_key.encode(),
+        f"terminal:{user.org.slug}:{project_slug}:{preview_name}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    # Build token: "container_name:expiry:hmac"
+    prefix = f"{preview_name}-{project_slug}"
+    container_name = f"{prefix}-{container}"
+    exp = int(time_mod.time()) + 60
+    payload = f"{container_name}:{exp}"
+    token_hmac = hmac_mod.new(
+        terminal_secret.encode(),
+        payload.encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    return {"token": f"{payload}:{token_hmac}", "container": container_name}
 
 
 @router.post("/previews/{preview_name}/rerun-post-deploy")

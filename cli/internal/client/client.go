@@ -47,6 +47,7 @@ type Preview struct {
 	LastDeployedAt *string `json:"last_deployed_at"`
 	BasicAuthUser  *string `json:"basic_auth_user"`
 	BasicAuthPass  *string `json:"basic_auth_pass"`
+	VmIP           string  `json:"vm_ip"`
 }
 
 func New(baseURL, token, org string) *Client {
@@ -108,6 +109,43 @@ func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
 	}
 
 	var result PreviewListResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode error: %w", err)
+	}
+	return &result, nil
+}
+
+// PreviewDetail is the full preview info returned by the detail endpoint.
+type PreviewDetail struct {
+	PreviewName  string `json:"preview_name"`
+	ProjectSlug  string `json:"project_slug"`
+	OrgSlug      string `json:"org_slug"`
+	Status       string `json:"status"`
+	URL          string `json:"url"`
+	Branch       string `json:"branch"`
+	CommitSHA    string `json:"commit_sha"`
+	VmIP         string `json:"vm_ip"`
+}
+
+func (c *Client) GetPreview(project, previewName string) (*PreviewDetail, error) {
+	url := fmt.Sprintf("%s/previews/%s", c.orgProjectPrefix(project), previewName)
+
+	resp, err := c.doRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("preview %s/%s not found", project, previewName)
+	}
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result PreviewDetail
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode error: %w", err)
 	}
@@ -504,6 +542,55 @@ func progressBar(pct float64, width int) string {
 		filled = width
 	}
 	return "[" + strings.Repeat("█", filled) + strings.Repeat("░", width-filled) + "]"
+}
+
+// SSHKeyInfo represents a registered SSH key.
+type SSHKeyInfo struct {
+	ID          int    `json:"id"`
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// RegisterSSHKey uploads a public SSH key to the server.
+func (c *Client) RegisterSSHKey(publicKey string) (*SSHKeyInfo, error) {
+	body := fmt.Sprintf(`{"public_key": %q}`, publicKey)
+	resp, err := c.doRequest("POST", fmt.Sprintf("%s/api/auth/ssh-keys", c.BaseURL), strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+
+	var key SSHKeyInfo
+	if err := json.NewDecoder(resp.Body).Decode(&key); err != nil {
+		return nil, err
+	}
+	return &key, nil
+}
+
+// ListSSHKeys returns the current user's registered SSH keys.
+func (c *Client) ListSSHKeys() ([]SSHKeyInfo, error) {
+	resp, err := c.doRequest("GET", fmt.Sprintf("%s/api/auth/ssh-keys", c.BaseURL), nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+
+	var keys []SSHKeyInfo
+	if err := json.NewDecoder(resp.Body).Decode(&keys); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 func formatBytes(b int64) string {

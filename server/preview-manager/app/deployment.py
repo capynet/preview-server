@@ -581,6 +581,18 @@ class PreviewDeployer:
                     f"{remote_dir}/{fname}",
                 )
 
+        # Write .env with TERMINAL_SECRET for the terminal sidecar
+        import hashlib
+        import hmac as hmac_mod
+        terminal_secret = hmac_mod.new(
+            settings.secret_key.encode(),
+            f"terminal:{self.org_slug}:{self.project_slug}:{self.preview_name}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+        env_cmd = f"echo 'TERMINAL_SECRET={terminal_secret}' > {VM_PREVIEW_DIR}/code/.env"
+        proc = await self._executor.run_shell(env_cmd)
+        await proc.communicate()
+
         elapsed = time.monotonic() - t0
         await self._log_step_end(step, elapsed, True, "")
 
@@ -1187,7 +1199,7 @@ class PreviewDeployer:
             )
 
     def _write_internal_settings(self):
-        """Write settings.preview.internal.php and ensure settings.php includes it.
+        """Write settings.preview.internal.php, drush aliases, and ensure settings.php includes it.
 
         Files are written locally and then uploaded to the VM.
         """
@@ -1195,7 +1207,24 @@ class PreviewDeployer:
         settings_dir = self.preview_path / docroot / "sites" / "default"
         settings_dir.mkdir(parents=True, exist_ok=True)
 
-        # 1. Write settings.preview.internal.php
+        # 1. Generate drush site aliases for domain aliases (preview.site.yml)
+        alias_prefixes = self._preview_config.get("domain_aliases", []) if self._preview_config else []
+        if alias_prefixes:
+            drush_sites_dir = self.preview_path / "drush" / "sites"
+            drush_sites_dir.mkdir(parents=True, exist_ok=True)
+            aliases = {}
+            for prefix in alias_prefixes:
+                alias_domain = f"{prefix}--{self.domain}"
+                aliases[prefix] = {"uri": f"https://{alias_domain}"}
+            import yaml as _yaml
+            alias_file = drush_sites_dir / "preview.site.yml"
+            alias_file.write_text(
+                "# Managed by Preview Manager — overwritten on every deploy.\n"
+                + _yaml.dump(aliases, default_flow_style=False, sort_keys=False)
+            )
+            logger.info(f"Wrote drush aliases: {', '.join(f'@preview.{p}' for p in alias_prefixes)}")
+
+        # 2. Write settings.preview.internal.php
         internal = settings_dir / "settings.preview.internal.php"
         internal.write_text("""\
 <?php

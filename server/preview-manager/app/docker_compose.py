@@ -199,6 +199,7 @@ def generate_docker_compose(
         "PREV_BRANCH": branch,
         "PREV_COMMIT_SHA": commit_sha,
         "PREV_URL": url,
+        "DRUSH_OPTIONS_URI": url,
         "PREV_DOMAIN": domain,
         "PREV_DB_HOST": f"{prefix}-db",
         "PREV_DB_NAME": "drupal",
@@ -317,6 +318,19 @@ def generate_docker_compose(
         solr_service["volumes"] = solr_volumes
         compose["services"]["solr"] = solr_service
         compose["volumes"]["solr_data"] = {"name": f"{prefix}_solr_data"}
+
+    # Terminal server sidecar — direct WebSocket terminal access from browser
+    compose["services"]["terminal"] = {
+        "image": _registry_image("vm-terminal-server:latest"),
+        "container_name": f"{prefix}-terminal",
+        "ports": ["8022:8022"],
+        "volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
+        "environment": {
+            "TERMINAL_SECRET": "${TERMINAL_SECRET}",
+            "CONTAINER_PREFIX": prefix,
+        },
+        "restart": "unless-stopped",
+    }
 
     # Expose — map host ports for exposed services.
     # Caddy routes are managed dynamically via the Admin API.

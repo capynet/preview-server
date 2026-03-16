@@ -136,6 +136,15 @@
     group: preview-manager
     mode: '0600'
 
+- name: Deploy preview-ssh-proxy script
+  copy:
+    src: "{{ playbook_dir }}/../../preview-manager/scripts/preview-ssh-proxy.sh"
+    dest: /usr/local/bin/preview-ssh-proxy
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [code]
+
 - name: Read SSH public key
   slurp:
     src: /home/preview-manager/.ssh/preview-vm.pub

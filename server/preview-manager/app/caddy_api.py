@@ -66,11 +66,27 @@ class CaddyRouteManager:
         """
         dial = f"{upstream_ip}:{port}"
         proxy_handler = self._build_upstream_proxy(dial, port)
+        terminal_dial = f"{upstream_ip}:8022"
         return {
             "match": [{"host": [domain]}],
             "handle": [{
                 "handler": "subroute",
                 "routes": [
+                    # Terminal WebSocket: proxy to terminal server on VM port 8022
+                    # Auth is handled by the terminal server itself via HMAC token
+                    {
+                        "match": [{"path": ["/_terminal/*"]}],
+                        "handle": [
+                            {
+                                "handler": "rewrite",
+                                "strip_path_prefix": "/_terminal",
+                            },
+                            {
+                                "handler": "reverse_proxy",
+                                "upstreams": [{"dial": terminal_dial}],
+                            },
+                        ],
+                    },
                     # Static assets: bypass auth, proxy directly to VM
                     {
                         "match": [{"path": _STATIC_PATTERNS}],
