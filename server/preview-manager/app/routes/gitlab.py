@@ -419,6 +419,7 @@ async def enable_project_previews(
                 "url": webhook_url,
                 "merge_requests_events": True,
                 "push_events": True,
+                "pipeline_events": True,
                 "enable_ssl_verification": True,
             }
             if settings.gitlab_webhook_secret:

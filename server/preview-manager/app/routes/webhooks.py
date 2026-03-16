@@ -332,6 +332,13 @@ async def gitlab_webhook(
             project_id=project_id, project_slug=project_slug,
             project_path=project_path,
         )
+    elif object_kind == "pipeline":
+        return await _handle_pipeline_event(
+            payload, request,
+            org_id=org_id, org_slug=org_slug,
+            project_id=project_id, project_slug=project_slug,
+            project_path=project_path,
+        )
     else:
         logger.debug(f"Ignoring webhook event: {object_kind}")
         return {"status": "ignored", "reason": f"unhandled event: {object_kind}"}
@@ -408,13 +415,91 @@ async def _handle_mr_event(
             if existing and not existing.get("auto_update", 1):
                 return {"status": "ignored", "reason": "auto_update disabled"}
 
-        await request.app.state.arq.enqueue_job(
-            "task_deploy_preview",
-            org_id, org_slug, project_id, project_slug, project_path,
-            preview_name, source_branch, commit_sha, "webhook", mr_iid,
-            False, mr_title, target_branch,
-        )
+        # Check if CI gating is enabled
+        from app.database import get_effective_require_ci
+        require_ci = await get_effective_require_ci(org_id, project_id)
+
+        if require_ci:
+            # Create/update the preview record so it shows in the UI as waiting
+            from app.state import PreviewStateManager
+            from app.websockets import preview_list_manager
+
+            url_hash = compute_url_hash(org_slug, project_slug, preview_name)
+            await PreviewStateManager.save_state(
+                project_id, preview_name,
+                url_hash=url_hash,
+                mr_id=mr_iid,
+                mr_title=mr_title,
+                branch=source_branch,
+                commit_sha=commit_sha,
+                status="waiting_for_ci",
+                ci_status="waiting",
+            )
+            await preview_list_manager.force_broadcast()
+            logger.info(f"CI gating: {project_slug}/{preview_name} waiting for pipeline success")
+        else:
+            await request.app.state.arq.enqueue_job(
+                "task_deploy_preview",
+                org_id, org_slug, project_id, project_slug, project_path,
+                preview_name, source_branch, commit_sha, "webhook", mr_iid,
+                False, mr_title, target_branch,
+            )
     else:
         return {"status": "ignored", "reason": f"unhandled action: {action}"}
 
     return {"status": "ok", "action": action, "project": project_path, "mr_iid": mr_iid}
+
+
+async def _handle_pipeline_event(
+    payload: dict,
+    request: Request,
+    *,
+    org_id: int,
+    org_slug: str,
+    project_id: int,
+    project_slug: str,
+    project_path: str,
+):
+    """Handle pipeline events: trigger deploy when CI passes for waiting previews."""
+    attrs = payload.get("object_attributes", {})
+    pipeline_status = attrs.get("status")
+    ref = attrs.get("ref", "")
+    sha = attrs.get("sha", "")
+
+    if pipeline_status not in ("success", "failed"):
+        return {"status": "ignored", "reason": f"pipeline status: {pipeline_status}"}
+
+    from app.database import get_previews_waiting_for_ci, update_preview_ci_status
+    from app.websockets import preview_list_manager
+
+    waiting = await get_previews_waiting_for_ci(project_id, ref)
+    if not waiting:
+        return {"status": "ignored", "reason": "no previews waiting for CI"}
+
+    if pipeline_status == "failed":
+        for preview in waiting:
+            await update_preview_ci_status(
+                project_id, preview["preview_name"],
+                ci_status="failed", status="failed",
+                error="CI pipeline failed",
+            )
+        await preview_list_manager.force_broadcast()
+        return {"status": "ok", "action": "ci_failed", "branch": ref}
+
+    # success
+    triggered = []
+    for preview in waiting:
+        preview_name = preview["preview_name"]
+        await update_preview_ci_status(project_id, preview_name, ci_status="success", status="creating")
+
+        await request.app.state.arq.enqueue_job(
+            "task_deploy_preview",
+            org_id, org_slug, project_id, project_slug, project_path,
+            preview_name, preview.get("branch", ref), preview.get("commit_sha", sha),
+            "webhook-ci", preview.get("mr_id"), False,
+            preview.get("mr_title"), preview.get("target_branch"),
+        )
+        triggered.append(preview_name)
+
+    await preview_list_manager.force_broadcast()
+    return {"status": "ok", "action": "ci_passed", "branch": ref, "triggered": triggered}

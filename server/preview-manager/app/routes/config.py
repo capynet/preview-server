@@ -11,6 +11,9 @@ from app.database import (
     update_organization,
     get_project_by_slug,
     upsert_project,
+    get_effective_require_ci,
+    update_org_require_ci,
+    update_project_require_ci,
 )
 from app.auth import database as auth_db
 
@@ -77,6 +80,80 @@ async def save_org_composer_proxy(
     body = await request.json()
     enabled = 1 if body.get("enabled") else 0
     await update_organization(user.org.id, composer_proxy_enabled=enabled)
+    return {"success": True}
+
+
+# ---------------------------------------------------------------------------
+# Org-level require CI success
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/settings/require-ci")
+async def get_org_require_ci(
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Get org-level require-ci-success configuration."""
+    from app.database import get_organization_by_id
+    org_data = await get_organization_by_id(user.org.id)
+    return {
+        "enabled": bool(org_data.get("require_ci_success", 0)) if org_data else False,
+    }
+
+
+@router.put("/api/orgs/{org}/settings/require-ci")
+async def save_org_require_ci(
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Save org-level require-ci-success configuration."""
+    body = await request.json()
+    enabled = bool(body.get("enabled", False))
+    await update_org_require_ci(user.org.id, enabled)
+    return {"success": True}
+
+
+@router.get("/api/orgs/{org}/projects/{project}/settings/require-ci")
+async def get_project_require_ci(
+    project: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Get project-level require-ci-success configuration."""
+    proj = await get_project_by_slug(user.org.id, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+
+    project_val = proj.get("require_ci_success")
+    effective = await get_effective_require_ci(user.org.id, proj["id"])
+
+    return {
+        "value": None if project_val is None else bool(project_val),
+        "inherited": project_val is None,
+        "effective": effective,
+    }
+
+
+@router.put("/api/orgs/{org}/projects/{project}/settings/require-ci")
+async def save_project_require_ci(
+    project: str,
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+):
+    """Save project-level require-ci-success configuration.
+
+    Body: {"value": null} to inherit from org, {"value": true/false} to override.
+    """
+    proj = await get_project_by_slug(user.org.id, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+
+    body = await request.json()
+    raw_value = body.get("value")
+    if raw_value is None:
+        value = None
+    else:
+        value = bool(raw_value)
+
+    await update_project_require_ci(user.org.id, project, value)
     return {"success": True}
 
 

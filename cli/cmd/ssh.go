@@ -16,31 +16,52 @@ import (
 )
 
 var sshCmd = &cobra.Command{
-	Use:   "ssh [container]",
+	Use:   "ssh [container] [project/preview-name]",
 	Short: "SSH into a container on a preview environment",
 	Long: `Open an interactive shell in a container running on a preview VM.
 
 The default container is "php" (lands in /var/www/html).
 Use "db" to connect to the database container.
 
-The project and preview are auto-detected from the current git branch.
+If project/preview-name is not given, auto-detects from the current git branch.
 On first use, you'll be asked to register your SSH key.
 
 Examples:
-  preview ssh              # php container, auto-detect preview
-  preview ssh db           # db container, auto-detect preview`,
-	Args: cobra.MaximumNArgs(1),
+  preview ssh                        # auto-detect, php container
+  preview ssh db                     # auto-detect, db container
+  preview ssh soudal/mr-1597         # explicit preview, php container
+  preview ssh db soudal/mr-1597      # explicit preview, db container`,
+	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		container := "php"
-		if len(args) == 1 {
+		var explicitPreview string
+
+		switch len(args) {
+		case 0:
+			// Auto-detect everything
+		case 1:
+			if strings.Contains(args[0], "/") {
+				explicitPreview = args[0]
+			} else {
+				container = args[0]
+			}
+		case 2:
 			container = args[0]
+			explicitPreview = args[1]
 		}
 
 		if err := ensureSSHKeyRegistered(); err != nil {
 			return err
 		}
 
-		r, err := resolvePreview()
+		var r *resolvedPreview
+		var err error
+
+		if explicitPreview != "" {
+			r, err = resolveExplicitPreview(explicitPreview)
+		} else {
+			r, err = resolvePreview()
+		}
 		if err != nil {
 			return err
 		}

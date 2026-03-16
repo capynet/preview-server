@@ -130,6 +130,43 @@ func resolvePreviewFull() (*resolvedPreview, error) {
 	return r, nil
 }
 
+// resolveExplicitPreview resolves a "project/preview-name" string directly (no git detection).
+func resolveExplicitPreview(arg string) (*resolvedPreview, error) {
+	project, previewName, err := parsePreviewName(arg)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := resolveOrgForProject(project); err != nil {
+		return nil, err
+	}
+
+	detail, err := apiClient.GetPreview(project, previewName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get preview details: %w", err)
+	}
+
+	if err := checkPreviewReady(detail, project, previewName); err != nil {
+		return nil, err
+	}
+
+	cfg := loadConfig()
+	jumpHost, err := resolveSSHJumpHost(cfg.APIURL)
+	if err != nil {
+		return nil, fmt.Errorf("could not determine SSH jump host: %w", err)
+	}
+
+	return &resolvedPreview{
+		OrgSlug:     apiClient.Org,
+		Project:     project,
+		PreviewName: previewName,
+		VmIP:        detail.VmIP,
+		JumpHost:    jumpHost,
+		Status:      detail.Status,
+		Branch:      detail.Branch,
+	}, nil
+}
+
 // resolvePreview returns cached info or does a full resolve.
 // If the cache exists, returns immediately with no output.
 func resolvePreview() (*resolvedPreview, error) {

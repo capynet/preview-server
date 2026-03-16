@@ -956,8 +956,18 @@ class PreviewDeployer:
             await self._update_post_deploy_status("success")
             logger.info(f"Post-deploy OK: {self.project_slug}/{self.preview_name}")
         except Exception as e:
-            logger.warning(f"Post-deploy script ({phase}) failed (non-fatal): {e}")
-            await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed (non-fatal): {e}{RESET}\n")
+            error_msg = str(e)
+            logger.warning(f"Post-deploy script ({phase}) failed (non-fatal): {error_msg}")
+            # Show the last part of the error output so the user can see what went wrong
+            error_lines = error_msg.split("\n")
+            if len(error_lines) > 1:
+                # The error includes captured output — show it
+                await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed (non-fatal):{RESET}\n")
+                for line in error_lines[1:]:
+                    if line.strip():
+                        await self._log_raw(f"{DIM}{line}{RESET}\n")
+            else:
+                await self._log_raw(f"\n{YELLOW}⚠ Post-deploy script failed (non-fatal): {error_msg}{RESET}\n")
             await self._update_post_deploy_status("failed")
 
     async def _run_project_post_deploy_script(self, phase: str):
@@ -1116,12 +1126,12 @@ class PreviewDeployer:
         php_container = f"{self.container_prefix}-php"
         # GIT_CONFIG vars tell git to trust /var/www/html (avoids "dubious ownership" with PTY)
         docker_flags = (
-            "-t -e COLUMNS=200"
+            "-t -w /var/www/html -e COLUMNS=200"
             " -e GIT_CONFIG_COUNT=1"
             " -e GIT_CONFIG_KEY_0=safe.directory"
             " -e GIT_CONFIG_VALUE_0=/var/www/html"
             if pty else
-            "-e COLUMNS=200"
+            "-w /var/www/html -e COLUMNS=200"
         )
         if env:
             for k, v in env.items():
