@@ -229,6 +229,92 @@ class HetznerCloudManager:
         servers = await _run(client.servers.get_all)
         return [s for s in servers if s.data_model.name.startswith("prev-")]
 
+    # ------------------------------------------------------------------
+    # Warm pool — pre-created VMs ready for instant assignment
+    # ------------------------------------------------------------------
+
+    POOL_PREFIX = "prev-pool-"
+
+    async def get_pool_vms(self) -> list[Server]:
+        """List all warm pool VMs (prev-pool-* prefix, status running)."""
+        client = _get_client()
+        servers = await _run(client.servers.get_all)
+        return [
+            s for s in servers
+            if s.data_model.name.startswith(self.POOL_PREFIX)
+            and s.data_model.status == "running"
+        ]
+
+    async def create_pool_vm(self) -> Server:
+        """Create a new VM for the warm pool."""
+        import uuid
+        suffix = uuid.uuid4().hex[:8]
+        name = f"{self.POOL_PREFIX}{suffix}"
+        logger.info("Creating warm pool VM: %s", name)
+        server = await self.create_vm(name)
+        # Wait for VM to be fully ready (SSH reachable)
+        await self.wait_for_vm_ready(server.data_model.id, timeout=300)
+        logger.info(
+            "Warm pool VM ready: %s (id=%d, ip=%s)",
+            name, server.data_model.id, server.data_model.public_net.ipv4.ip,
+        )
+        return server
+
+    async def claim_pool_vm(
+        self, new_name: str,
+        project_id: int = 0, preview_name: str = "",
+    ) -> Server | None:
+        """Claim a VM from the warm pool by renaming it. Returns None if pool is empty."""
+        pool_vms = await self.get_pool_vms()
+        if not pool_vms:
+            return None
+
+        # Pick the oldest pool VM (most likely to be fully ready)
+        pool_vms.sort(key=lambda s: s.data_model.created)
+        vm = pool_vms[0]
+
+        client = _get_client()
+        try:
+            await _run(vm.update, name=new_name)
+            # Refresh server data after rename
+            renamed = await _run(client.servers.get_by_id, vm.data_model.id)
+            logger.info(
+                "Claimed pool VM %s → %s (id=%d, ip=%s)",
+                vm.data_model.name, new_name,
+                renamed.data_model.id,
+                renamed.data_model.public_net.ipv4.ip,
+            )
+
+            # Log billing now that the VM is assigned to a project
+            if project_id:
+                import json
+                from app.database import log_cloud_resource
+                server_type = await self.get_server_type(client)
+                price_hourly = float(server_type.data_model.prices[0]["price_hourly"]["gross"])
+                price_monthly = float(server_type.data_model.prices[0]["price_monthly"]["gross"])
+                spec = json.dumps({
+                    "type": server_type.data_model.name,
+                    "vcpus": server_type.data_model.cores,
+                    "memory_gb": server_type.data_model.memory,
+                    "disk_gb": server_type.data_model.disk,
+                    "ip": renamed.data_model.public_net.ipv4.ip,
+                })
+                await log_cloud_resource(
+                    project_id=project_id, preview_name=preview_name,
+                    resource_type="vm", resource_id=renamed.data_model.id,
+                    resource_name=new_name, spec=spec,
+                    price_hourly=price_hourly, price_monthly=price_monthly,
+                )
+
+            return renamed
+        except Exception as e:
+            logger.warning("Failed to claim pool VM %s: %s", vm.data_model.name, e)
+            return None
+
+    def is_pool_vm(self, vm_name: str) -> bool:
+        """Check if a VM name belongs to the warm pool."""
+        return vm_name.startswith(self.POOL_PREFIX)
+
 
 # Singleton
 cloud_manager = HetznerCloudManager()

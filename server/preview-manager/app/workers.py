@@ -290,6 +290,12 @@ async def task_cleanup_orphan_vms(ctx):
     await cleanup_orphan_vms()
 
 
+async def task_replenish_warm_pool(ctx):
+    """Ensure warm pool has enough pre-created VMs ready. Runs as cron job."""
+    from app.tasks.warm_pool import replenish_warm_pool
+    await replenish_warm_pool()
+
+
 async def task_docker_prune(ctx):
     """Remove unused Docker images and build cache. Runs as cron job."""
     import asyncio
@@ -311,7 +317,7 @@ async def task_docker_prune(ctx):
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_docker_prune]
+    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_docker_prune]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
@@ -322,5 +328,6 @@ class WorkerSettings:
         cron(task_auto_erase, hour=None, minute=0),  # Every hour
         cron(task_check_vms, hour=None, minute={0, 15, 30, 45}),  # Every 15 min
         cron(task_cleanup_orphan_vms, hour=None, minute={10, 40}),  # Every 30 min
+        cron(task_replenish_warm_pool, hour=None, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),  # Every 5 min
         cron(task_docker_prune, hour={3}, minute=0),  # Daily at 3 AM
     ]

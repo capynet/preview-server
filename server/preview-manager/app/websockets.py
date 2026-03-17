@@ -163,13 +163,40 @@ class DeploymentLogBroadcaster:
             logger.warning(f"Failed to broadcast deploy_status: {e}")
 
     async def broadcast_phase_event(self, deployment_id: int, event_type: str, data: dict):
-        """Broadcast a phase event (phases_init or phase_update) to subscribers."""
+        """Broadcast a phase event (phases_init or phase_update) to subscribers.
+
+        Also stores the latest phases snapshot in Valkey so late-joining clients
+        can receive the current state on replay.
+        """
         try:
-            from app.valkey import publish_event
-            await publish_event(f"deploy_logs:{deployment_id}", {
-                "type": event_type,
-                **data,
-            })
+            from app.valkey import publish_event, get_valkey
+            msg = {"type": event_type, **data}
+            await publish_event(f"deploy_logs:{deployment_id}", msg)
+
+            # Store latest phases snapshot for replay on late-join
+            if event_type == "phases_init":
+                v = get_valkey()
+                await v.set(
+                    f"deploy_phases:{deployment_id}",
+                    json.dumps(data["phases"]),
+                    ex=7200,
+                )
+            elif event_type == "phase_update":
+                # Update the stored snapshot
+                v = get_valkey()
+                raw = await v.get(f"deploy_phases:{deployment_id}")
+                if raw:
+                    phases = json.loads(raw)
+                    phase = data["phase"]
+                    for i, p in enumerate(phases):
+                        if p["name"] == phase["name"]:
+                            phases[i] = {**phases[i], **phase}
+                            break
+                    await v.set(
+                        f"deploy_phases:{deployment_id}",
+                        json.dumps(phases),
+                        ex=7200,
+                    )
         except Exception as e:
             logger.warning(f"Failed to broadcast {event_type}: {e}")
 
@@ -675,6 +702,17 @@ async def websocket_deployment_logs(websocket: WebSocket, deployment_id: int):
     except Exception as e:
         logger.warning(f"Error replaying deployment logs: {e}")
 
+    # Replay current phases snapshot (if available)
+    try:
+        from app.valkey import get_valkey
+        v = get_valkey()
+        phases_raw = await v.get(f"deploy_phases:{deployment_id}")
+        if phases_raw:
+            phases = json.loads(phases_raw)
+            await websocket.send_json({"type": "phases_init", "phases": phases})
+    except Exception as e:
+        logger.warning(f"Error replaying phases: {e}")
+
     # Check if already complete
     try:
         complete = await get_deploy_complete(deployment_id)
@@ -1094,8 +1132,8 @@ async def websocket_agent_callback(websocket: WebSocket):
                         json.dumps(phase_data),
                     )
                     await r.expire(f"agent_phases:{deployment_id}", 3600)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to store agent phase in Valkey: {e}")
 
             elif msg_type == "complete":
                 success = data.get("success", False)

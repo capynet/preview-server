@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     hetzner_ssh_private_key_path: str = ""
     hetzner_ssh_public_key: str = ""
 
+    # Warm pool — pre-created VMs ready for instant assignment
+    warm_pool_size: int = 1  # Number of VMs to keep ready in the pool
+
     # Uvicorn
     uvicorn_workers: int = 2
 

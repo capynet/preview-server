@@ -156,9 +156,9 @@ func (d *Deployer) deployNew() (bool, string) {
 		{"generate_settings", d.stepGenerateSettings},
 		{"docker_pull", d.stepDockerPull},
 		{"docker_up", d.stepDockerUp},
+		{"composer_install", d.stepComposerInstall},
 		{"wait_for_db", d.stepWaitForDB},
 		{"import_db", d.stepImportDB},
-		{"composer_install", d.stepComposerInstall},
 		{"import_files", d.stepImportFiles},
 		{"deploy_script", func() error { return d.stepDeployScript("new") }},
 		{"post_deploy", func() error { return d.stepPostDeploy("new") }},
@@ -452,7 +452,7 @@ func (d *Deployer) stepStart(name string) {
 	if label == "" {
 		label = name
 	}
-	d.log(fmt.Sprintf("\n⚙️ %s\n", label))
+	d.log(fmt.Sprintf("\n\n\n⚙️ %s\n────────────────────────────────────────────────────────────────────\n\n", label))
 }
 
 func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg string) {
@@ -491,9 +491,9 @@ func (d *Deployer) writeResult(success bool, duration int, errMsg string) {
 
 	activeDeployMu.Lock()
 	if success {
-		lastStatus = DeployStatus{Status: "success", DeploymentID: d.job.DeploymentID, Phase: d.phase, Elapsed: duration}
+		lastStatus = DeployStatus{Status: "success", DeploymentID: d.job.DeploymentID, Step: d.stepName, Phase: d.phase, Elapsed: duration}
 	} else {
-		lastStatus = DeployStatus{Status: "failed", DeploymentID: d.job.DeploymentID, Phase: d.phase, Elapsed: duration, Error: errMsg}
+		lastStatus = DeployStatus{Status: "failed", DeploymentID: d.job.DeploymentID, Step: d.stepName, Phase: d.phase, Elapsed: duration, Error: errMsg}
 	}
 	activeDeployMu.Unlock()
 }

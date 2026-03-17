@@ -125,7 +125,7 @@ func WriteSettings(repoPath string, job *DeployJob, cfg *PreviewConfig) error {
 	settingsPhpPath := filepath.Join(settingsDir, "settings.php")
 	if data, err := os.ReadFile(settingsPhpPath); err == nil {
 		content := string(data)
-		if !strings.Contains(content, "PREV_IS_PREVIEW") {
+		if !strings.Contains(content, "settings.preview.internal.php") {
 			content = strings.TrimRight(content, "\n") + "\n" + settingsIncludeSnippet
 			if err := os.WriteFile(settingsPhpPath, []byte(content), 0644); err != nil {
 				return fmt.Errorf("failed to update settings.php: %w", err)

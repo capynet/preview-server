@@ -35,10 +35,13 @@ async def cleanup_orphan_vms():
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=GRACE_PERIOD_MINUTES)
 
+    from app.cloud import cloud_manager
+
     orphans = [
         vm for vm in hetzner_vms
         if vm.data_model.id not in db_vm_ids
         and vm.data_model.created < cutoff
+        and not cloud_manager.is_pool_vm(vm.data_model.name)
     ]
 
     if not orphans:

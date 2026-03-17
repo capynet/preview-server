@@ -75,10 +75,10 @@ DEPLOY_PHASES: dict[str, list[dict]] = {
         {"name": "generate_settings", "label": "Generating settings",     "required": True},
         {"name": "docker_pull",       "label": "Pulling Docker images",   "required": True},
         {"name": "docker_up",         "label": "Starting containers",     "required": True},
+        {"name": "composer_install",  "label": "Installing dependencies", "required": True},
         {"name": "wait_for_db",       "label": "Waiting for database",    "required": True},
         {"name": "import_db",         "label": "Importing database",      "required": True},
         {"name": "import_files",      "label": "Importing files",         "required": True},
-        {"name": "composer_install",  "label": "Installing dependencies", "required": True},
         {"name": "deploy_script",     "label": "Running deploy script",   "required": True},
         {"name": "post_deploy",       "label": "Running post-deploy",     "required": False},
     ],
@@ -117,6 +117,7 @@ class PhaseTracker:
         self._phase_index: dict[str, int] = {
             p["name"]: i for i, p in enumerate(self.phases)
         }
+        self._phase_start_times: dict[str, float] = {}
 
     async def init_broadcast(self):
         """Send the initial phases list to the frontend."""
@@ -128,11 +129,26 @@ class PhaseTracker:
         )
 
     async def start_phase(self, name: str):
-        """Mark a phase as running."""
+        """Mark a phase as running.
+
+        Also marks all earlier phases that are still pending/running as success,
+        since the agent must have completed them to reach this point.
+        """
         idx = self._phase_index.get(name)
         if idx is None:
             return
+        now = time.monotonic()
+        # Mark all preceding pending/running phases as success with computed duration
+        for i in range(idx):
+            if self.phases[i]["status"] in ("pending", "running"):
+                phase_name = self.phases[i]["name"]
+                start_t = self._phase_start_times.get(phase_name)
+                if start_t is not None:
+                    self.phases[i]["duration"] = round(now - start_t, 1)
+                self.phases[i]["status"] = "success"
+                await self._broadcast_update(self.phases[i])
         self.phases[idx]["status"] = "running"
+        self._phase_start_times[name] = now
         await self._broadcast_update(self.phases[idx])
 
     async def end_phase(self, name: str, success: bool, duration: float | None = None):
@@ -143,6 +159,10 @@ class PhaseTracker:
         self.phases[idx]["status"] = "success" if success else "failed"
         if duration is not None:
             self.phases[idx]["duration"] = round(duration, 1)
+        elif name in self._phase_start_times:
+            self.phases[idx]["duration"] = round(
+                time.monotonic() - self._phase_start_times[name], 1
+            )
         await self._broadcast_update(self.phases[idx])
 
     async def skip_phase(self, name: str):
@@ -174,7 +194,19 @@ class PhaseTracker:
         try:
             from app.valkey import get_valkey
             r = get_valkey()
-            agent_data = await r.hgetall(f"agent_phases:{self.deployment_id}")
+            # Retry a few times in case of race condition with WS handler
+            agent_data = None
+            for attempt in range(3):
+                agent_data = await r.hgetall(f"agent_phases:{self.deployment_id}")
+                if agent_data:
+                    break
+                await asyncio.sleep(0.5)
+
+            if not agent_data:
+                logger.warning(f"No agent phases found in Valkey for deployment {self.deployment_id}")
+                return
+
+            merged = 0
             for name_bytes, data_bytes in agent_data.items():
                 name = name_bytes if isinstance(name_bytes, str) else name_bytes.decode()
                 phase_data = json.loads(data_bytes)
@@ -183,6 +215,8 @@ class PhaseTracker:
                     self.phases[idx]["status"] = phase_data.get("status", self.phases[idx]["status"])
                     if phase_data.get("duration") is not None:
                         self.phases[idx]["duration"] = phase_data["duration"]
+                    merged += 1
+            logger.info(f"Synced {merged} agent phases from Valkey for deployment {self.deployment_id}")
         except Exception as e:
             logger.warning(f"Failed to sync agent phases from Valkey: {e}")
 
@@ -443,15 +477,24 @@ class PreviewDeployer:
             except Exception:
                 already_finished = None
 
-            if not already_finished and self._deployment_id:
-                await finish_deployment(
-                    self._deployment_id, "failed",
-                    log_output="\n".join(self._log_buffer),
-                    error=str(e),
-                    duration=duration,
-                    phases=phases_json,
-                )
-                await deployment_log_broadcaster.complete(self._deployment_id, False)
+            if self._deployment_id:
+                if not already_finished:
+                    await finish_deployment(
+                        self._deployment_id, "failed",
+                        log_output="\n".join(self._log_buffer),
+                        error=str(e),
+                        duration=duration,
+                        phases=phases_json,
+                    )
+                    await deployment_log_broadcaster.complete(self._deployment_id, False)
+                elif phases_json:
+                    # Agent already finished but we need to store phases
+                    from app.database import get_pool
+                    pool = await get_pool()
+                    await pool.execute(
+                        "UPDATE deployments SET phases = $1 WHERE id = $2",
+                        phases_json, self._deployment_id,
+                    )
 
             return False
 
@@ -548,7 +591,7 @@ class PreviewDeployer:
         return result
 
     async def _ensure_vm(self):
-        """Create a new VM or reuse an existing one."""
+        """Create a new VM or reuse an existing one (tries warm pool first)."""
         preview = await get_preview(self.project_id, self.preview_name)
         existing_vm_id = preview.get("vm_id") if preview else None
         existing_vm_ip = preview.get("vm_ip") if preview else None
@@ -563,7 +606,29 @@ class PreviewDeployer:
         else:
             raw = f"{self.project_slug}-{self.preview_name}"
             vm_name = f"prev-{hashlib.md5(raw.encode()).hexdigest()[:8]}"
-            server = await self._step_create_vm(vm_name)
+
+            # Try to claim a pre-created VM from the warm pool
+            server = await cloud_manager.claim_pool_vm(
+                vm_name, project_id=self.project_id, preview_name=self.preview_name,
+            )
+            if server:
+                await self._log_raw(
+                    f"{DIM}Claimed VM from warm pool (ip={server.data_model.public_net.ipv4.ip}){RESET}\n"
+                )
+                # Immediately trigger pool replenishment in background
+                try:
+                    from arq import create_pool as create_arq_pool
+                    from arq.connections import RedisSettings
+                    pool = await create_arq_pool(RedisSettings.from_dsn(settings.valkey_url))
+                    await pool.enqueue_job("task_replenish_warm_pool")
+                    await pool.aclose()
+                    logger.info("Enqueued warm pool replenishment after claim")
+                except Exception as e:
+                    logger.warning(f"Failed to enqueue pool replenishment: {e}")
+            else:
+                # No pool VM available — create one from scratch
+                server = await self._step_create_vm(vm_name)
+
             self._vm_id = server.data_model.id
             self._vm_ip = server.data_model.public_net.ipv4.ip
             # Update VM info in DB
@@ -791,13 +856,22 @@ class PreviewDeployer:
 
         log_offset = 0
         current_phase = "deploy"
+        current_step = ""
         deadline = time.monotonic() + timeout
         poll_interval = 2  # seconds
         poll_url = f"http://{self._vm_ip}:8022/deploy/logs/{self._deployment_id}"
+        status_url = f"http://{self._vm_ip}:8022/deploy/status"
 
         def _poll(offset: int) -> dict | None:
             try:
                 req = urllib.request.urlopen(f"{poll_url}?offset={offset}", timeout=10)
+                return json.loads(req.read())
+            except Exception:
+                return None
+
+        def _poll_status() -> dict | None:
+            try:
+                req = urllib.request.urlopen(status_url, timeout=5)
                 return json.loads(req.read())
             except Exception:
                 return None
@@ -828,9 +902,45 @@ class PreviewDeployer:
 
                 result = data.get("result")
                 if result is not None:
+                    if self._phase_tracker:
+                        # Do a final status poll to get the actual step where it ended
+                        final_status = await asyncio.to_thread(_poll_status)
+                        final_step = (final_status or {}).get("step", "") or current_step
+                        success = result.get("success", False)
+
+                        if final_step and final_step != current_step:
+                            # Agent advanced past what we last saw — mark intermediates
+                            if current_step:
+                                await self._phase_tracker.end_phase(current_step, True)
+                            # start_phase will mark all skipped phases as success
+                            await self._phase_tracker.start_phase(final_step)
+
+                        if final_step:
+                            await self._phase_tracker.end_phase(final_step, success)
+                        elif current_step:
+                            await self._phase_tracker.end_phase(current_step, success)
+
                     return result
 
-            await asyncio.sleep(poll_interval)
+            # Poll agent status to track current step for phase updates
+            if self._phase_tracker:
+                status_data = await asyncio.to_thread(_poll_status)
+                if status_data:
+                    agent_status = status_data.get("status", "")
+                    step = status_data.get("step", "")
+
+                    if agent_status == "running" and step and step != current_step:
+                        # Previous step finished successfully, new step started
+                        if current_step:
+                            await self._phase_tracker.end_phase(current_step, True)
+                        current_step = step
+                        await self._phase_tracker.start_phase(step)
+                    elif agent_status in ("success", "failed") and current_step:
+                        # Agent finished — mark last step
+                        await self._phase_tracker.end_phase(
+                            current_step, agent_status == "success",
+                        )
+                        current_step = ""
 
             await asyncio.sleep(poll_interval)
 
@@ -1984,7 +2094,7 @@ if (getenv('PREV_IS_PREVIEW')) {
         return self._STEP_LABELS.get(step, step)
 
     async def _log_step_start(self, step: str):
-        await self._log_raw(f"\n{CYAN}⚙️ {self._step_label(step)}{RESET}\n")
+        await self._log_raw(f"\n\n\n{CYAN}⚙️ {self._step_label(step)}{RESET}\n{DIM}────────────────────────────────────────────────────────────────────{RESET}\n\n")
         # Update phase tracker for coordinator steps
         phase_name = _COORDINATOR_STEP_TO_PHASE.get(step)
         if phase_name and self._phase_tracker:
