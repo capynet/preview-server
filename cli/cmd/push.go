@@ -257,8 +257,17 @@ func getDrupalFilesDir() (string, error) {
 		return "", fmt.Errorf("failed to run ddev drush status: %w", err)
 	}
 
+	// Strip any non-JSON output (PHP warnings, deprecation notices, etc.)
+	// by finding the first '{' in the output.
+	raw := string(out)
+	idx := strings.Index(raw, "{")
+	if idx < 0 {
+		return "", fmt.Errorf("drush status returned no JSON (output: %s)", raw[:min(len(raw), 200)])
+	}
+	jsonBytes := []byte(raw[idx:])
+
 	var status map[string]interface{}
-	if err := json.Unmarshal(out, &status); err != nil {
+	if err := json.Unmarshal(jsonBytes, &status); err != nil {
 		return "", fmt.Errorf("failed to parse drush status: %w", err)
 	}
 

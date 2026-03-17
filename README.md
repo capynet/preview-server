@@ -167,3 +167,5 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - el preview agent podria abrover cualquier cosa que suceda en la vm. por ejemplo el uso de cpu ram y disco que veo en la preview detail page.
 -  "Usar estadísticas semanales de imágenes Docker más usadas para regenerar automáticamente el snapshot de VM con las imágenes con mayor probabilidad de uso, reduciendo el tiempo de pull en deploys."
 - Pre-cargar imágenes Docker en el snapshot de VM para eliminar el pull en la mayoría de deploys, manteniendo la phase 'Pulling Docker images' como fallback para imágenes no incluidas en el snapshot."
+- Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
+- Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm. 

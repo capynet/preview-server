@@ -39,7 +39,7 @@ var rootCmd = &cobra.Command{
 
 		// Commands that don't require auth
 		name := cmd.Name()
-		if name == "setup" || name == "api" || name == "project" || name == "login" || name == "logout" || name == "help" || name == "completion" || name == "self-update" {
+		if name == "setup" || name == "api" || name == "login" || name == "logout" || name == "help" || name == "completion" || name == "self-update" {
 			return
 		}
 

@@ -4,31 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/spf13/cobra"
 )
 
 var overrideFlag bool
-
-var setupProjectCmd = &cobra.Command{
-	Use:   "project",
-	Short: "Scaffold a Drupal project for preview environments",
-	Long: `Creates the necessary files for preview compatibility:
-
-  1. Creates web/sites/default/settings.preview.php for custom overrides
-  2. Creates preview.yml template in the project root
-  3. Creates deploy script templates in scripts/preview/
-
-The preview include snippet in settings.php and the internal settings
-file (settings.preview.internal.php) are managed automatically by
-the deployer — you don't need to touch them.
-
-Run this command from the root of your Drupal project.
-Use --override to overwrite existing files with the latest templates.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return runSetupProject()
-	},
-}
 
 func runSetupProject() error {
 	// Verify we're in a Drupal project
@@ -373,7 +351,3 @@ echo "Post-deploy complete."
 `
 }
 
-func init() {
-	setupProjectCmd.Flags().BoolVar(&overrideFlag, "override", false, "Overwrite existing files with the latest templates")
-	setupCmd.AddCommand(setupProjectCmd)
-}
