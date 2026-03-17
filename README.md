@@ -164,4 +164,4 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - estaria bien ver en el listado de preview o en su detalle cual es el destino de un MR (a master u otra rama). Includo esto me da la idea de agrupar por destinations onda arbol. 
 - Tengo storage box medio imlementado. es un poco mas lento pero mucho mas barato que r2. claude tiene memoria: por ahora el output sale mal codigicado y prev server se satura al procesar el output. 
 - VM warm pool: Mantener siempre 1 VM pre-creada lista para asignar al instante en deploys nuevos, y reponer automáticamente tras cada uso. 
-- Voy a necesitar alguna forma de poder abrir las preview en una ventana de incognito sin necesitar iniciar sesion. 
+- el preview agent podria abrover cualquier cosa que suceda en la vm. por ejemplo el uso de cpu ram y disco que veo en la preview detail page.  

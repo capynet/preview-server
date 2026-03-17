@@ -1,0 +1,45 @@
+---
+# Setup the preview-agent on a VM (or snapshot base).
+# Usage: ansible-playbook -i "VM_IP," playbooks/setup-vm-agent.yml -e "preview_server_url=https://api.preview-mr.com"
+#
+# This installs:
+# - preview-agent-update script (downloads agent binary from server)
+# - preview-agent.service (systemd, starts agent on boot)
+# - /etc/preview-agent.env (server URL config)
+
+- name: Setup Preview Agent on VM
+  hosts: all
+  become: yes
+  vars:
+    preview_server_url: "https://api.preview-mr.com"
+
+  tasks:
+    - name: Copy preview-agent-update script
+      copy:
+        src: "{{ playbook_dir }}/../../../vm-agent/systemd/preview-agent-update"
+        dest: /usr/local/bin/preview-agent-update
+        mode: "0755"
+
+    - name: Copy preview-agent systemd service
+      copy:
+        src: "{{ playbook_dir }}/../../../vm-agent/systemd/preview-agent.service"
+        dest: /etc/systemd/system/preview-agent.service
+        mode: "0644"
+      notify: Reload systemd
+
+    - name: Write preview-agent environment config
+      copy:
+        content: "PREVIEW_SERVER_URL={{ preview_server_url }}\n"
+        dest: /etc/preview-agent.env
+        mode: "0644"
+
+    - name: Enable preview-agent service
+      systemd:
+        name: preview-agent
+        enabled: yes
+        daemon_reload: yes
+
+  handlers:
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes

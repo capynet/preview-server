@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/cli", tags=["cli"])
+internal_router = APIRouter(tags=["internal"])
 
 CLI_DIR = Path("/var/www/preview-manager/cli")
 INSTALL_SCRIPT = CLI_DIR / "install.sh"
@@ -57,4 +58,23 @@ async def download_binary(os: str, arch: str):
         binary_path,
         media_type="application/octet-stream",
         filename="preview",
+    )
+
+
+# ---------------------------------------------------------------------------
+# VM Agent binary download
+# ---------------------------------------------------------------------------
+
+AGENT_BINARY = CLI_DIR / "preview-agent"
+
+
+@internal_router.get("/api/internal/agent/download")
+async def download_agent():
+    """Download the preview-agent binary for VMs."""
+    if not AGENT_BINARY.exists():
+        return PlainTextResponse("Agent binary not found", status_code=404)
+    return FileResponse(
+        AGENT_BINARY,
+        media_type="application/octet-stream",
+        filename="preview-agent",
     )

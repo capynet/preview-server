@@ -173,6 +173,27 @@ func (c *Client) PostAction(project string, mrID int, action string) (*ActionRes
 	return &result, nil
 }
 
+func (c *Client) PostActionByName(project string, previewName string, action string) (*ActionResult, error) {
+	url := fmt.Sprintf("%s/previews/%s/%s", c.orgProjectPrefix(project), previewName, action)
+
+	resp, err := c.doRequest("POST", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode == 404 {
+		return nil, fmt.Errorf("preview %s/%s not found", project, previewName)
+	}
+
+	var result ActionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("decode error: %w", err)
+	}
+	return &result, nil
+}
+
 func (c *Client) PostDrush(project string, mrID int, args string) (*ActionResult, error) {
 	return c.PostDrushByName(project, fmt.Sprintf("mr-%d", mrID), args)
 }

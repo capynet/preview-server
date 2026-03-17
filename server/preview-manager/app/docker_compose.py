@@ -319,18 +319,8 @@ def generate_docker_compose(
         compose["services"]["solr"] = solr_service
         compose["volumes"]["solr_data"] = {"name": f"{prefix}_solr_data"}
 
-    # Terminal server sidecar — direct WebSocket terminal access from browser
-    compose["services"]["terminal"] = {
-        "image": _registry_image("vm-terminal-server:latest"),
-        "container_name": f"{prefix}-terminal",
-        "ports": ["8022:8022"],
-        "volumes": ["/var/run/docker.sock:/var/run/docker.sock"],
-        "environment": {
-            "TERMINAL_SECRET": "${TERMINAL_SECRET}",
-            "CONTAINER_PREFIX": prefix,
-        },
-        "restart": "unless-stopped",
-    }
+    # Terminal/deploy is handled by the native preview-agent on the VM (port 8022).
+    # No Docker sidecar needed.
 
     # Expose — map host ports for exposed services.
     # Caddy routes are managed dynamically via the Admin API.

@@ -1,6 +1,8 @@
 """WebSocket endpoints and helpers"""
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import os
@@ -146,6 +148,19 @@ class DeploymentLogBroadcaster:
             await publish_event(f"deploy_logs:{deployment_id}", {"type": "log", "line": line})
         except Exception:
             pass  # Don't break deployment if Valkey is down
+
+    async def broadcast_deploy_status(self, deployment_id: int, status: str, duration: int):
+        """Notify subscribers that the deploy phase changed (e.g. deploy done, post-deploy starting)."""
+        try:
+            from app.valkey import publish_event
+            logger.info(f"Broadcasting deploy_status: deployment_id={deployment_id} status={status} duration={duration}")
+            await publish_event(f"deploy_logs:{deployment_id}", {
+                "type": "deploy_status",
+                "status": status,
+                "duration": duration,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to broadcast deploy_status: {e}")
 
     async def complete(self, deployment_id: int, success: bool):
         """Mark deployment as complete in Valkey and notify subscribers."""
@@ -672,8 +687,11 @@ async def websocket_deployment_logs(websocket: WebSocket, deployment_id: int):
                 )
                 if msg and msg.get("type") == "message":
                     data = json.loads(msg["data"])
+                    msg_type = data.get("type", "unknown")
+                    if msg_type != "log":
+                        logger.info(f"Deploy WS relay: deployment_id={deployment_id} msg_type={msg_type}")
                     await websocket.send_json(data)
-                    if data.get("type") == "complete":
+                    if msg_type == "complete":
                         break
             except asyncio.TimeoutError:
                 # Keep alive — check if client is still connected
@@ -911,4 +929,195 @@ async def websocket_preview_action(
             })
             await websocket.close()
         except:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Agent callback WebSocket (VM agent → server log relay)
+# ---------------------------------------------------------------------------
+
+_AGENT_STEP_LABELS = {
+    "git_clone": "Cloning repository",
+    "git_fetch": "Fetching latest changes",
+    "parse_config": "Parsing configuration",
+    "generate_compose": "Generating environment",
+    "generate_settings": "Generating settings",
+    "docker_pull": "Pulling Docker images",
+    "docker_up": "Starting containers",
+    "wait_for_db": "Waiting for database",
+    "import_db": "Importing database",
+    "import_files": "Importing files",
+    "composer_install": "Installing dependencies",
+    "deploy_script": "Running deploy script",
+    "post_deploy": "Running post-deploy script",
+}
+
+
+def _agent_step_label(name: str) -> str:
+    return _AGENT_STEP_LABELS.get(name, name.replace("_", " ").title())
+
+
+def _validate_agent_token(token: str) -> int | None:
+    """Validate agent callback token. Returns deployment_id or None."""
+    if not token:
+        return None
+    parts = token.split(":")
+    if len(parts) != 3:
+        return None
+    deployment_id_str, expiry_str, sig = parts[0], parts[1], parts[2]
+
+    try:
+        if int(time.time()) > int(expiry_str):
+            return None
+    except (ValueError, TypeError):
+        return None
+
+    payload = f"{deployment_id_str}:{expiry_str}"
+    expected = hmac.new(
+        settings.secret_key.encode(), payload.encode(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected):
+        return None
+
+    try:
+        return int(deployment_id_str)
+    except (ValueError, TypeError):
+        return None
+
+
+@router.websocket("/ws/internal/agent")
+async def websocket_agent_callback(websocket: WebSocket):
+    """Receive deploy logs from VM agent and relay to Valkey pub/sub."""
+    token = websocket.query_params.get("token", "")
+    deployment_id_param = websocket.query_params.get("deployment_id", "")
+
+    # Validate token
+    validated_id = _validate_agent_token(token)
+    if validated_id is None:
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+
+    # If deployment_id param is provided, it must match the token
+    if deployment_id_param:
+        try:
+            if int(deployment_id_param) != validated_id:
+                raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+        except (ValueError, TypeError):
+            raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+
+    deployment_id = validated_id
+
+    await websocket.accept()
+    logger.info(f"Agent WS connected: deployment_id={deployment_id}")
+
+    # Ensure deployment log broadcaster is registered
+    await deployment_log_broadcaster.register(deployment_id)
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                logger.warning(f"Agent WS invalid JSON: {raw[:200]}")
+                continue
+            msg_type = data.get("type")
+            msg_type = data.get("type")
+
+            if msg_type == "log":
+                # Relay log line to existing deployment log broadcaster
+                await deployment_log_broadcaster.add_log(
+                    deployment_id, data.get("line", "")
+                )
+
+            elif msg_type == "step":
+                # Step status update -- log it as a formatted line
+                name = data.get("name", "")
+                step_status = data.get("status", "")
+                duration = data.get("duration", 0)
+                error_msg = data.get("error", "")
+
+                if step_status == "running":
+                    await deployment_log_broadcaster.add_log(
+                        deployment_id,
+                        f"\n\033[1;36m\u2699\ufe0f {_agent_step_label(name)}\033[0m\n",
+                    )
+                elif step_status == "done":
+                    dur_str = f"{int(duration)}s" if duration else ""
+                    await deployment_log_broadcaster.add_log(
+                        deployment_id,
+                        f"\033[1;32m\u2713 {_agent_step_label(name)}\033[0m"
+                        f" \033[0;90mcompleted in {dur_str}\033[0m\n\n",
+                    )
+                elif step_status == "failed":
+                    dur_str = f"{int(duration)}s" if duration else ""
+                    line = (
+                        f"\033[1;31m\u2717 {_agent_step_label(name)}\033[0m"
+                        f" \033[0;90mfailed after {dur_str}\033[0m\n"
+                    )
+                    if error_msg:
+                        line += f"  Error: {error_msg}\n"
+                    await deployment_log_broadcaster.add_log(deployment_id, line)
+
+            elif msg_type == "complete":
+                success = data.get("success", False)
+                duration = data.get("duration", 0)
+                error_msg = data.get("error", "")
+
+                # Update deployment record
+                from app.database import finish_deployment
+                dep_status = "success" if success else "failed"
+                await finish_deployment(
+                    deployment_id, dep_status,
+                    error=error_msg if error_msg else None,
+                    duration=int(duration) if duration else None,
+                )
+                await deployment_log_broadcaster.complete(deployment_id, success)
+
+                # Store result in Valkey so the deployer can read it
+                from app.valkey import get_valkey
+                r = get_valkey()
+                result = json.dumps({
+                    "success": success,
+                    "error": error_msg,
+                    "duration": duration,
+                })
+                await r.set(
+                    f"agent_deploy_result:{deployment_id}", result, ex=3600
+                )
+                await r.publish(
+                    f"agent_deploy_done:{deployment_id}", result
+                )
+
+                logger.info(
+                    f"Agent deploy complete: deployment_id={deployment_id} "
+                    f"success={success} duration={duration}s"
+                )
+                break
+
+            elif msg_type == "post_deploy_status":
+                # Update post-deploy status in DB
+                pd_status = data.get("status")
+                preview_name = data.get("preview_name", "")
+                project_id = data.get("project_id")
+                if preview_name and project_id and pd_status:
+                    try:
+                        await PreviewStateManager.save_state(
+                            int(project_id), preview_name,
+                            post_deploy_status=pd_status,
+                        )
+                        from app.valkey import publish_event
+                        await publish_event("previews:global", {
+                            "action": "state_change",
+                            "preview_name": preview_name,
+                            "post_deploy_status": pd_status,
+                        })
+                    except Exception as e:
+                        logger.warning(f"Failed to update post_deploy_status: {e}")
+
+    except Exception as e:
+        logger.warning(f"Agent WS error (deployment_id={deployment_id}): {e}", exc_info=True)
+    finally:
+        try:
+            await websocket.close()
+        except Exception:
             pass

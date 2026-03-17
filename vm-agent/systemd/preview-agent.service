@@ -1,0 +1,16 @@
+[Unit]
+Description=Preview Agent
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/local/bin/preview-agent-update
+ExecStart=/usr/local/bin/preview-agent
+Restart=always
+RestartSec=5
+Environment=PORT=8022
+EnvironmentFile=-/etc/preview-agent.env
+
+[Install]
+WantedBy=multi-user.target

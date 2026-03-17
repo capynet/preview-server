@@ -2,11 +2,14 @@
 
 import asyncio
 import hashlib
+import hmac as hmac_mod
+import json
 import logging
 import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from app.docker_compose import (
     detect_docroot,
@@ -206,32 +209,35 @@ class PreviewDeployer:
         )
 
         try:
-            if is_new:
-                logger.info(f"NEW deploy: {self.project_slug}/{self.preview_name}")
-                await self._deploy_new()
-            else:
-                logger.info(f"UPDATE deploy: {self.project_slug}/{self.preview_name}")
-                await self._deploy_update()
+            # Use agent-based deployment
+            logger.info(f"{deploy_type} deploy (agent): {self.project_slug}/{self.preview_name}")
+            agent_result = await self._deploy_via_agent(is_new)
 
             deploy_duration = int((datetime.now(timezone.utc) - start).total_seconds())
+
+            # If there was a post-deploy phase, notify the UI
+            if agent_result and agent_result.get("had_post_deploy"):
+                await deployment_log_broadcaster.broadcast_deploy_status(
+                    self._deployment_id, "success", deploy_duration
+                )
+
+            # Finalize deployment record with logs
+            if self._deployment_id:
+                await finish_deployment(
+                    self._deployment_id, "success",
+                    log_output="\n".join(self._log_buffer),
+                    duration=deploy_duration,
+                )
+                await deployment_log_broadcaster.complete(self._deployment_id, True)
+
             await self._save_state("active", duration=deploy_duration)
 
             # Register Caddy routes (main + aliases + exposed services)
             if self._vm_ip:
                 try:
                     url_hash = compute_url_hash(self.org_slug, self.project_slug, self.preview_name)
-                    alias_domains = None
-                    expose_services = None
-                    if self._preview_config:
-                        aliases = self._preview_config.get("domain_aliases", [])
-                        main_domain = f"{url_hash}.mr.preview-mr.com"
-                        if aliases:
-                            alias_domains = [f"{a}--{main_domain}" for a in aliases]
-                        expose_services = self._preview_config.get("expose") or None
                     await caddy_manager.add_preview_routes(
                         url_hash, self._vm_ip,
-                        alias_domains=alias_domains,
-                        expose_services=expose_services,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route for {self.domain}: {e}")
@@ -240,32 +246,7 @@ class PreviewDeployer:
                 f"Deploy OK: {self.project_slug}/{self.preview_name} in {deploy_duration}s"
             )
 
-            # Mark deployment as success immediately (post-deploy won't change this)
-            if self._deployment_id:
-                await update_deployment_status(self._deployment_id, "success")
-                from app.valkey import publish_event
-                await publish_event(
-                    f"deploy_logs:{self._deployment_id}",
-                    {"type": "deploy_status", "status": "success", "duration": deploy_duration},
-                )
-                await preview_list_manager.force_broadcast()
-
-            # Post-deploy runs in the same log stream but cannot change deploy status.
-            phase = "new" if is_new else "update"
-            await self._run_project_post_deploy_inline(phase)
-
-            # Final summary
-            total_duration = int((datetime.now(timezone.utc) - start).total_seconds())
-            await self._log_summary(True, total_duration)
-
-            if self._deployment_id:
-                await finish_deployment(
-                    self._deployment_id, "success",
-                    log_output="\n".join(self._log_buffer),
-                    duration=total_duration,
-                )
-                await deployment_log_broadcaster.complete(self._deployment_id, True)
-
+            await preview_list_manager.force_broadcast()
             return True
 
         except DeployCancelled:
@@ -296,10 +277,16 @@ class PreviewDeployer:
             )
             await self._save_state("failed", error=str(e), duration=duration)
 
-            # Failure summary
-            await self._log_summary(False, duration, error=str(e))
+            # Check if the agent already finished the deployment (e.g. agent
+            # reported failure via WS before the deployer raised).
+            from app.valkey import get_valkey
+            try:
+                r = get_valkey()
+                already_finished = await r.get(f"agent_deploy_result:{self._deployment_id}")
+            except Exception:
+                already_finished = None
 
-            if self._deployment_id:
+            if not already_finished and self._deployment_id:
                 await finish_deployment(
                     self._deployment_id, "failed",
                     log_output="\n".join(self._log_buffer),
@@ -311,7 +298,397 @@ class PreviewDeployer:
             return False
 
     # ------------------------------------------------------------------
-    # New preview (cloud)
+    # Agent-based deployment (delegates to VM agent)
+    # ------------------------------------------------------------------
+
+    async def _deploy_via_agent(self, is_new: bool):
+        """Delegate deploy execution to the VM agent running on the VM."""
+        import urllib.request
+
+        # 1. Create/reuse VM
+        await self._ensure_vm()
+
+        # 2. Provision agent on VM (install + start if not running)
+        await self._provision_agent()
+
+        # 3. Wait for agent health check
+        await self._wait_for_agent()
+
+        # 4. Check if agent is already running a deploy for this preview
+        #    If so, attach to it (poll its logs) instead of starting a new one.
+        #    This handles re-enqueued jobs after worker restart.
+        try:
+            status_data = await asyncio.to_thread(
+                lambda: json.loads(
+                    urllib.request.urlopen(
+                        f"http://{self._vm_ip}:8022/deploy/status", timeout=5
+                    ).read()
+                )
+            )
+            agent_status = status_data.get("status", "idle")
+            agent_deploy_id = status_data.get("deployment_id", 0)
+
+            if agent_status == "running":
+                # Agent already running a deploy — attach to it
+                self._deployment_id = agent_deploy_id
+                await self._log_raw(
+                    f"{DIM}Agent already running deploy #{agent_deploy_id}, attaching...{RESET}\n"
+                )
+                result = await self._wait_for_agent_completion()
+                if not result["success"]:
+                    raise RuntimeError(result.get("error", "Deploy failed on VM"))
+                return result
+
+            if agent_status in ("success", "failed") and agent_deploy_id == self._deployment_id:
+                # Agent already finished this exact deploy — return its result
+                result_data = await asyncio.to_thread(
+                    lambda: json.loads(
+                        urllib.request.urlopen(
+                            f"http://{self._vm_ip}:8022/deploy/logs/{self._deployment_id}?offset=0",
+                            timeout=10,
+                        ).read()
+                    )
+                )
+                result = result_data.get("result")
+                if result:
+                    # Relay all logs
+                    content = result_data.get("content", "")
+                    if content:
+                        await self._log_raw(content)
+                    if not result["success"]:
+                        raise RuntimeError(result.get("error", "Deploy failed on VM"))
+                    return result
+        except (urllib.error.URLError, Exception) as e:
+            logger.warning(f"Could not check agent status: {e}")
+
+        # 5. Build deploy job payload and POST to agent
+        job = await self._build_agent_job(is_new)
+
+        await self._log_raw(f"{DIM}Sending deploy job to agent...{RESET}\n")
+        try:
+            resp_data = await asyncio.to_thread(
+                lambda: urllib.request.urlopen(
+                    urllib.request.Request(
+                        f"http://{self._vm_ip}:8022/deploy",
+                        data=json.dumps(job).encode(),
+                        headers={"Content-Type": "application/json"},
+                    ),
+                    timeout=30,
+                ).read()
+            )
+        except Exception as e:
+            raise RuntimeError(f"Agent rejected deploy: {e}")
+
+        await self._log_raw(f"{DIM}Agent accepted job, waiting for completion...{RESET}\n")
+
+        # 6. Wait for agent completion
+        result = await self._wait_for_agent_completion()
+
+        if not result["success"]:
+            raise RuntimeError(result.get("error", "Deploy failed on VM"))
+
+        return result
+
+    async def _ensure_vm(self):
+        """Create a new VM or reuse an existing one."""
+        preview = await get_preview(self.project_id, self.preview_name)
+        existing_vm_id = preview.get("vm_id") if preview else None
+        existing_vm_ip = preview.get("vm_ip") if preview else None
+
+        if existing_vm_id and existing_vm_ip:
+            self._vm_id = existing_vm_id
+            self._vm_ip = existing_vm_ip
+            logger.info(f"Reusing existing VM {self._vm_id} ({self._vm_ip})")
+            await self._log_raw(
+                f"{DIM}Reusing existing VM {self._vm_id} ({self._vm_ip}){RESET}\n"
+            )
+        else:
+            raw = f"{self.project_slug}-{self.preview_name}"
+            vm_name = f"prev-{hashlib.md5(raw.encode()).hexdigest()[:8]}"
+            server = await self._step_create_vm(vm_name)
+            self._vm_id = server.data_model.id
+            self._vm_ip = server.data_model.public_net.ipv4.ip
+            # Update VM info in DB
+            preview = await get_preview(self.project_id, self.preview_name)
+            if preview:
+                await update_preview_vm(preview["id"], self._vm_id, self._vm_ip)
+
+    async def _provision_agent(self):
+        """Install and start the preview-agent on the VM via SSH.
+
+        This ensures the agent is running even if the VM snapshot doesn't
+        include it. On subsequent deploys for the same VM, this is a no-op
+        because the agent is already running.
+        """
+        step = "provision-agent"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        # Check if agent is already running — if so, restart to get latest version
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                resp = await client.get(f"http://{self._vm_ip}:8022/health")
+                if resp.status_code == 200:
+                    # Agent running — restart to update binary
+                    executor = RemoteExecutor(self._vm_ip)
+                    proc = await executor.run_shell("systemctl restart preview-agent")
+                    await proc.communicate()
+                    elapsed = time.monotonic() - t0
+                    await self._log_step_end(step, elapsed, True, f"{DIM}Agent updated{RESET}")
+                    return
+        except Exception:
+            pass
+
+        # Agent not running — wait for SSH first
+        executor = RemoteExecutor(self._vm_ip)
+        await executor.wait_for_ssh(timeout=120)
+
+        # Install the agent: download binary + create systemd service
+        api_url = f"https://api.preview-mr.com"
+        install_cmd = (
+            # Download agent binary
+            f"curl -sf -o /usr/local/bin/preview-agent {api_url}/api/internal/agent/download && "
+            f"chmod +x /usr/local/bin/preview-agent && "
+            # Write env config
+            f"echo 'PREVIEW_SERVER_URL={api_url}' > /etc/preview-agent.env && "
+            # Create update script
+            f"cat > /usr/local/bin/preview-agent-update << 'UPDATESCRIPT'\n"
+            f"#!/bin/bash\n"
+            f"set -euo pipefail\n"
+            f"source /etc/preview-agent.env 2>/dev/null || true\n"
+            f"AGENT_URL=\"${{PREVIEW_SERVER_URL:-{api_url}}}/api/internal/agent/download\"\n"
+            f"curl -sf -o /usr/local/bin/preview-agent.new \"$AGENT_URL\" && "
+            f"chmod +x /usr/local/bin/preview-agent.new && "
+            f"mv /usr/local/bin/preview-agent.new /usr/local/bin/preview-agent || true\n"
+            f"UPDATESCRIPT\n"
+            f"chmod +x /usr/local/bin/preview-agent-update && "
+            # Create systemd service
+            f"cat > /etc/systemd/system/preview-agent.service << 'SERVICEFILE'\n"
+            f"[Unit]\n"
+            f"Description=Preview Agent\n"
+            f"After=docker.service\n"
+            f"Requires=docker.service\n"
+            f"\n"
+            f"[Service]\n"
+            f"Type=simple\n"
+            f"ExecStartPre=/usr/local/bin/preview-agent-update\n"
+            f"ExecStart=/usr/local/bin/preview-agent\n"
+            f"Restart=always\n"
+            f"RestartSec=5\n"
+            f"Environment=PORT=8022\n"
+            f"EnvironmentFile=-/etc/preview-agent.env\n"
+            f"\n"
+            f"[Install]\n"
+            f"WantedBy=multi-user.target\n"
+            f"SERVICEFILE\n"
+            f"systemctl daemon-reload && "
+            f"systemctl enable preview-agent && "
+            f"systemctl start preview-agent"
+        )
+
+        proc = await executor.run_shell(install_cmd)
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            output = (stdout.decode() + stderr.decode())[-500:]
+            raise RuntimeError(f"[{step}] Failed to install agent:\n{output}")
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, True, f"{DIM}Agent installed and started{RESET}")
+
+    async def _wait_for_agent(self, timeout: int = 120):
+        """Wait for the VM agent to be reachable on port 8022."""
+        step = "wait-agent"
+        await self._log_step_start(step)
+        t0 = time.monotonic()
+
+        import httpx
+        max_attempts = timeout // 2
+        for i in range(max_attempts):
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    resp = await client.get(f"http://{self._vm_ip}:8022/health")
+                    if resp.status_code == 200:
+                        elapsed = time.monotonic() - t0
+                        await self._log_step_end(
+                            step, elapsed, True,
+                            f"{DIM}Agent ready{RESET}",
+                        )
+                        return
+            except Exception:
+                pass
+            await asyncio.sleep(2)
+
+        elapsed = time.monotonic() - t0
+        await self._log_step_end(step, elapsed, False, "Agent not reachable")
+        raise RuntimeError(
+            f"Agent not reachable on {self._vm_ip}:8022 after {timeout}s"
+        )
+
+    async def _build_agent_job(self, is_new: bool) -> dict:
+        """Build the deploy job payload for the agent."""
+        from app.routes.gitlab import _get_org_gitlab_token
+
+        gitlab_url, gitlab_token = await _get_org_gitlab_token(self.org_id)
+        parsed = urlparse(gitlab_url)
+        gitlab_host = parsed.hostname
+
+        # Get project to find the gitlab path
+        project = await get_project(self.project_id)
+        project_path = project.get("gitlab_project_path", "") if project else ""
+
+        git_clone_url = f"https://oauth2:{gitlab_token}@{gitlab_host}/{project_path}.git"
+
+        url_hash = compute_url_hash(
+            self.org_slug, self.project_slug, self.preview_name
+        )
+
+        # Compute terminal secret (same logic as _upload_compose_and_settings)
+        terminal_secret = hmac_mod.new(
+            settings.secret_key.encode(),
+            f"terminal:{self.org_slug}:{self.project_slug}:{self.preview_name}".encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        # Load extra env vars from project and preview
+        extra_env: dict[str, str] = {}
+        try:
+            proj = await get_project(self.project_id)
+            if proj and proj.get("env_vars"):
+                project_env = proj["env_vars"]
+                if isinstance(project_env, str):
+                    project_env = json.loads(project_env)
+                extra_env.update(project_env)
+
+            preview_row = await get_preview(self.project_id, self.preview_name)
+            if preview_row and preview_row.get("env_vars"):
+                preview_env = preview_row["env_vars"]
+                if isinstance(preview_env, str):
+                    preview_env = json.loads(preview_env)
+                extra_env.update(preview_env)
+        except Exception as e:
+            logger.warning(f"Error loading extra env vars for agent job: {e}")
+
+        # Check if composer proxy is enabled for this org
+        composer_proxy_url = ""
+        if self.org_id:
+            from app.database import get_organization_by_id
+            org = await get_organization_by_id(self.org_id)
+            proxy_enabled = org.get("composer_proxy_enabled", 0) if org else 0
+            if proxy_enabled and settings.composer_proxy_url:
+                composer_proxy_url = settings.composer_proxy_url
+
+        # Build storage config
+        storage_config: dict = {"type": settings.storage_backend}
+        if settings.storage_backend == "s3":
+            storage_config.update({
+                "endpoint": settings.hetzner_s3_endpoint,
+                "access_key": settings.hetzner_s3_access_key,
+                "secret_key": settings.hetzner_s3_secret_key,
+                "bucket": settings.hetzner_s3_bucket,
+                "base_db_key": f"base-files/{self.project_slug}/db.sql.gz",
+                "base_files_key": f"base-files/{self.project_slug}/files.tar.gz",
+            })
+        elif settings.storage_backend == "storagebox":
+            storage_config.update({
+                "host": settings.storagebox_host,
+                "port": settings.storagebox_port,
+                "user": settings.storagebox_user,
+                "password": settings.storagebox_password,
+                "base_path": settings.storagebox_base_path,
+                "base_db_key": f"base-files/{self.project_slug}/db.sql.gz",
+                "base_files_key": f"base-files/{self.project_slug}/files.tar.gz",
+            })
+
+        return {
+            "deployment_id": self._deployment_id,
+            "phase": "new" if is_new else "update",
+            "force_new": self.force_new,
+            "org_slug": self.org_slug,
+            "project_slug": self.project_slug,
+            "project_id": self.project_id,
+            "preview_name": self.preview_name,
+            "branch": self.branch,
+            "commit_sha": self.commit_sha,
+            "mr_iid": self.mr_iid,
+            "mr_title": self.mr_title,
+            "target_branch": self.target_branch,
+            "git_clone_url": git_clone_url,
+            "composer_proxy_url": composer_proxy_url,
+            "docker_registry": settings.docker_registry,
+            "url_hash": url_hash,
+            "domain": self.domain,
+            "preview_url": self.preview_url,
+            "terminal_secret": terminal_secret,
+            "storage": storage_config,
+            "env_vars": extra_env,
+            "callback_url": f"ws://91.99.157.66:8000/ws/internal/agent",
+            "callback_token": self._generate_callback_token(),
+        }
+
+    async def _wait_for_agent_completion(self, timeout: int = 36000):
+        """Poll the agent for deploy logs and completion status."""
+        import urllib.request
+        import urllib.error
+
+        log_offset = 0
+        current_phase = "deploy"
+        deadline = time.monotonic() + timeout
+        poll_interval = 2  # seconds
+        poll_url = f"http://{self._vm_ip}:8022/deploy/logs/{self._deployment_id}"
+
+        def _poll(offset: int) -> dict | None:
+            try:
+                req = urllib.request.urlopen(f"{poll_url}?offset={offset}", timeout=10)
+                return json.loads(req.read())
+            except Exception:
+                return None
+
+        while time.monotonic() < deadline:
+            data = await asyncio.to_thread(_poll, log_offset)
+
+            if data:
+                content = data.get("content", "")
+                if content:
+                    await self._log_raw(content)
+                    log_offset = data.get("size", log_offset)
+
+                # Check for phase change (deploy → post_deploy)
+                phase = data.get("phase") or "deploy"
+                if phase != current_phase:
+                    logger.info(f"Phase change detected: {current_phase} → {phase} (deployment {self._deployment_id})")
+                    current_phase = phase
+                    if phase == "post_deploy":
+                        from app.websockets import deployment_log_broadcaster
+                        try:
+                            await deployment_log_broadcaster.broadcast_deploy_status(
+                                self._deployment_id, "success", 0
+                            )
+                            logger.info(f"broadcast_deploy_status sent for deployment {self._deployment_id}")
+                        except Exception as e:
+                            logger.error(f"Failed to broadcast deploy_status: {e}", exc_info=True)
+
+                result = data.get("result")
+                if result is not None:
+                    return result
+
+            await asyncio.sleep(poll_interval)
+
+            await asyncio.sleep(poll_interval)
+
+        raise RuntimeError(f"Agent deploy timed out after {timeout}s")
+
+    def _generate_callback_token(self) -> str:
+        """Generate a short-lived HMAC token for agent WebSocket auth."""
+        expiry = int(time.time()) + 3600  # 1 hour
+        payload = f"{self._deployment_id}:{expiry}"
+        sig = hmac_mod.new(
+            settings.secret_key.encode(), payload.encode(), hashlib.sha256
+        ).hexdigest()
+        return f"{payload}:{sig}"
+
+    # ------------------------------------------------------------------
+    # New preview (cloud) — legacy SSH-based, kept as dead code
     # ------------------------------------------------------------------
 
     async def _deploy_new(self):
@@ -396,7 +773,7 @@ class PreviewDeployer:
         # Done — traffic is proxied via wake_preview middleware
 
     # ------------------------------------------------------------------
-    # Update preview (cloud)
+    # Update preview (cloud) — legacy SSH-based, kept as dead code
     # ------------------------------------------------------------------
 
     async def _deploy_update(self):
@@ -1425,6 +1802,7 @@ if (getenv('PREV_IS_PREVIEW')) {
     _STEP_LABELS: dict[str, str] = {
         "create-vm": "Creating virtual machine",
         "wait-ssh": "Waiting for SSH",
+        "wait-agent": "Waiting for agent",
         "setup-vm": "Setting up VM",
         "pull-images": "Pulling Docker images",
         "sync-code": "Syncing code to VM",

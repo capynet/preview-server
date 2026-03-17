@@ -54,7 +54,6 @@ async def _clone_and_deploy(
     """
     from app.deployment import PreviewDeployer
     from app.state import PreviewStateManager
-    from app.routes.gitlab import _get_org_gitlab_token
     from app.valkey import (
         acquire_deploy_lock, release_deploy_lock, is_deploy_locked,
         is_deploy_cancelled, clear_deploy_cancel,
@@ -106,50 +105,12 @@ async def _clone_and_deploy(
             await deployment_log_broadcaster.register(early_deployment_id)
             await preview_list_manager.force_broadcast()
 
-        # Ensure local preview directory exists (for compose generation)
+        # Ensure local preview directory exists (for state management)
         preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
         preview_path.mkdir(parents=True, exist_ok=True)
 
-        # Get org's GitLab token for cloning
-        try:
-            gitlab_url, gitlab_token = await _get_org_gitlab_token(org_id)
-        except Exception as e:
-            logger.error(f"Failed to get GitLab token for org {org_slug}: {e}")
-            from app.database import finish_deployment
-            if early_deployment_id:
-                await finish_deployment(
-                    early_deployment_id, "failed",
-                    f"Failed to get GitLab token: {e}"
-                )
-            await PreviewStateManager.save_state(
-                project_id, preview_name,
-                status="failed",
-                last_deployment_error="Failed to get GitLab token",
-            )
-            await preview_list_manager.force_broadcast()
-            return
-
-        # Clone locally (shallow, for preview.yml parsing only)
-        ok = await _local_sync_repo(
-            gitlab_url, gitlab_token, project_path,
-            org_slug, project_slug, preview_name,
-            source_branch, commit_sha, preview_path,
-        )
-        if not ok:
-            logger.error(f"Local clone failed for {deploy_key}")
-            from app.database import finish_deployment
-            if early_deployment_id:
-                await finish_deployment(
-                    early_deployment_id, "failed",
-                    "Clone failed (git clone error, check logs)"
-                )
-            await PreviewStateManager.save_state(
-                project_id, preview_name,
-                status="failed",
-                last_deployment_error="Clone failed",
-            )
-            await preview_list_manager.force_broadcast()
-            return
+        # Note: git clone is now handled by the VM agent.
+        # The local preview_path is kept for state management only.
 
         deployer = PreviewDeployer(
             org_id=org_id,
