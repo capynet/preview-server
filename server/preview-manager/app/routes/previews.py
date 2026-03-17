@@ -951,6 +951,13 @@ async def list_preview_deployments(
     if not preview:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
     deployments = await db_list_deployments(preview["id"], limit=limit)
+    # Parse phases JSON string into list for each deployment
+    for d in deployments:
+        if d.get("phases") and isinstance(d["phases"], str):
+            try:
+                d["phases"] = json.loads(d["phases"])
+            except (json.JSONDecodeError, TypeError):
+                d["phases"] = None
     return {"deployments": deployments, "total": len(deployments)}
 
 
@@ -968,6 +975,13 @@ async def get_preview_deployment(
     preview = await get_preview(proj["id"], preview_name)
     if not preview or deployment["preview_id"] != preview["id"]:
         raise HTTPException(status_code=404, detail="Deployment not found for this preview")
+
+    # Parse phases JSON
+    if deployment.get("phases") and isinstance(deployment["phases"], str):
+        try:
+            deployment["phases"] = json.loads(deployment["phases"])
+        except (json.JSONDecodeError, TypeError):
+            deployment["phases"] = None
 
     # Check if log stream is still active in Valkey (e.g. post-deploy running)
     try:

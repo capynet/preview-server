@@ -61,6 +61,144 @@ DIM = "\033[0;90m"
 RESET = "\033[0m"
 
 
+# ---------------------------------------------------------------------------
+# Deploy Phases — ordered list of phases per deploy type
+# ---------------------------------------------------------------------------
+
+DEPLOY_PHASES: dict[str, list[dict]] = {
+    "new": [
+        {"name": "provision_agent",   "label": "Provisioning agent",      "required": True},
+        {"name": "wait_agent",        "label": "Waiting for agent",       "required": True},
+        {"name": "git_clone",         "label": "Cloning repository",      "required": True},
+        {"name": "parse_config",      "label": "Parsing configuration",   "required": True},
+        {"name": "generate_compose",  "label": "Configuring environment", "required": True},
+        {"name": "generate_settings", "label": "Generating settings",     "required": True},
+        {"name": "docker_pull",       "label": "Pulling Docker images",   "required": True},
+        {"name": "docker_up",         "label": "Starting containers",     "required": True},
+        {"name": "wait_for_db",       "label": "Waiting for database",    "required": True},
+        {"name": "import_db",         "label": "Importing database",      "required": True},
+        {"name": "import_files",      "label": "Importing files",         "required": True},
+        {"name": "composer_install",  "label": "Installing dependencies", "required": True},
+        {"name": "deploy_script",     "label": "Running deploy script",   "required": True},
+        {"name": "post_deploy",       "label": "Running post-deploy",     "required": False},
+    ],
+    "update": [
+        {"name": "provision_agent",   "label": "Provisioning agent",      "required": True},
+        {"name": "wait_agent",        "label": "Waiting for agent",       "required": True},
+        {"name": "git_fetch",         "label": "Fetching latest changes", "required": True},
+        {"name": "parse_config",      "label": "Parsing configuration",   "required": True},
+        {"name": "generate_compose",  "label": "Configuring environment", "required": True},
+        {"name": "generate_settings", "label": "Generating settings",     "required": True},
+        {"name": "docker_up",         "label": "Starting containers",     "required": True},
+        {"name": "composer_install",  "label": "Installing dependencies", "required": True},
+        {"name": "deploy_script",     "label": "Running deploy script",   "required": True},
+        {"name": "post_deploy",       "label": "Running post-deploy",     "required": False},
+    ],
+}
+
+# Map coordinator step names to phase names
+_COORDINATOR_STEP_TO_PHASE = {
+    "provision-agent": "provision_agent",
+    "wait-agent": "wait_agent",
+}
+
+
+class PhaseTracker:
+    """Tracks deploy phases and broadcasts updates to the frontend."""
+
+    def __init__(self, deploy_type: str, deployment_id: int | None):
+        self.deployment_id = deployment_id
+        self.deploy_type = deploy_type
+        template = DEPLOY_PHASES.get(deploy_type, DEPLOY_PHASES["update"])
+        self.phases: list[dict] = [
+            {**p, "status": "pending", "duration": None}
+            for p in template
+        ]
+        self._phase_index: dict[str, int] = {
+            p["name"]: i for i, p in enumerate(self.phases)
+        }
+
+    async def init_broadcast(self):
+        """Send the initial phases list to the frontend."""
+        if not self.deployment_id:
+            return
+        from app.websockets import deployment_log_broadcaster
+        await deployment_log_broadcaster.broadcast_phase_event(
+            self.deployment_id, "phases_init", {"phases": self.phases}
+        )
+
+    async def start_phase(self, name: str):
+        """Mark a phase as running."""
+        idx = self._phase_index.get(name)
+        if idx is None:
+            return
+        self.phases[idx]["status"] = "running"
+        await self._broadcast_update(self.phases[idx])
+
+    async def end_phase(self, name: str, success: bool, duration: float | None = None):
+        """Mark a phase as success/failed."""
+        idx = self._phase_index.get(name)
+        if idx is None:
+            return
+        self.phases[idx]["status"] = "success" if success else "failed"
+        if duration is not None:
+            self.phases[idx]["duration"] = round(duration, 1)
+        await self._broadcast_update(self.phases[idx])
+
+    async def skip_phase(self, name: str):
+        """Mark a phase as skipped."""
+        idx = self._phase_index.get(name)
+        if idx is None:
+            return
+        self.phases[idx]["status"] = "skipped"
+        await self._broadcast_update(self.phases[idx])
+
+    def compute_final_status(self) -> str:
+        """Compute final deploy status based on required phases."""
+        required_failed = any(
+            p["status"] == "failed" for p in self.phases if p["required"]
+        )
+        if required_failed:
+            return "failed"
+        non_required_failed = any(
+            p["status"] == "failed" for p in self.phases if not p["required"]
+        )
+        if non_required_failed:
+            return "warning"
+        return "success"
+
+    async def sync_agent_phases(self):
+        """Read agent phase states from Valkey and merge into our tracking."""
+        if not self.deployment_id:
+            return
+        try:
+            from app.valkey import get_valkey
+            r = get_valkey()
+            agent_data = await r.hgetall(f"agent_phases:{self.deployment_id}")
+            for name_bytes, data_bytes in agent_data.items():
+                name = name_bytes if isinstance(name_bytes, str) else name_bytes.decode()
+                phase_data = json.loads(data_bytes)
+                idx = self._phase_index.get(name)
+                if idx is not None:
+                    self.phases[idx]["status"] = phase_data.get("status", self.phases[idx]["status"])
+                    if phase_data.get("duration") is not None:
+                        self.phases[idx]["duration"] = phase_data["duration"]
+        except Exception as e:
+            logger.warning(f"Failed to sync agent phases from Valkey: {e}")
+
+    def to_json(self) -> str:
+        """Serialize phases to JSON for DB storage."""
+        return json.dumps(self.phases)
+
+    async def _broadcast_update(self, phase: dict):
+        if not self.deployment_id:
+            return
+        from app.websockets import deployment_log_broadcaster
+        await deployment_log_broadcaster.broadcast_phase_event(
+            self.deployment_id, "phase_update", {"phase": phase}
+        )
+
+
 def _fmt_duration(seconds: float) -> str:
     """Format seconds into a human-readable duration string."""
     s = int(seconds)
@@ -137,6 +275,7 @@ class PreviewDeployer:
         self._executor: RemoteExecutor | None = None
         self._vm_id: int | None = None
         self._vm_ip: str | None = None
+        self._phase_tracker: PhaseTracker | None = None
 
     # ------------------------------------------------------------------
     # Cancellation
@@ -202,6 +341,11 @@ class PreviewDeployer:
         is_new = await self.is_new()
         deploy_type = "NEW" if is_new else "UPDATE"
 
+        # Initialize phase tracker
+        phase_type = "new" if is_new else "update"
+        self._phase_tracker = PhaseTracker(phase_type, self._deployment_id)
+        await self._phase_tracker.init_broadcast()
+
         # Deploy header
         await self._log_raw(
             f"\n{BOLD}{CYAN}{deploy_type} Deploy: {self.project_slug}/{self.preview_name}{RESET}\n"
@@ -221,14 +365,20 @@ class PreviewDeployer:
                     self._deployment_id, "success", deploy_duration
                 )
 
-            # Finalize deployment record with logs
+            # Sync agent phases from Valkey and compute final status
+            if self._phase_tracker:
+                await self._phase_tracker.sync_agent_phases()
+            final_status = self._phase_tracker.compute_final_status() if self._phase_tracker else "success"
+
+            # Finalize deployment record with logs and phases
             if self._deployment_id:
                 await finish_deployment(
-                    self._deployment_id, "success",
+                    self._deployment_id, final_status,
                     log_output="\n".join(self._log_buffer),
                     duration=deploy_duration,
+                    phases=self._phase_tracker.to_json() if self._phase_tracker else None,
                 )
-                await deployment_log_broadcaster.complete(self._deployment_id, True)
+                await deployment_log_broadcaster.complete(self._deployment_id, final_status != "failed")
 
             await self._save_state("active", duration=deploy_duration)
 
@@ -258,12 +408,14 @@ class PreviewDeployer:
                 f"\n{YELLOW}Deploy cancelled — a new rebuild was requested{RESET}\n"
             )
 
+            phases_json = self._phase_tracker.to_json() if self._phase_tracker else None
             if self._deployment_id:
                 await finish_deployment(
                     self._deployment_id, "cancelled",
                     log_output="\n".join(self._log_buffer),
                     error="Cancelled by new rebuild request",
                     duration=duration,
+                    phases=phases_json,
                 )
                 await deployment_log_broadcaster.complete(self._deployment_id, False)
 
@@ -276,6 +428,11 @@ class PreviewDeployer:
                 exc_info=True,
             )
             await self._save_state("failed", error=str(e), duration=duration)
+
+            # Sync agent phases if available
+            if self._phase_tracker:
+                await self._phase_tracker.sync_agent_phases()
+            phases_json = self._phase_tracker.to_json() if self._phase_tracker else None
 
             # Check if the agent already finished the deployment (e.g. agent
             # reported failure via WS before the deployer raised).
@@ -292,6 +449,7 @@ class PreviewDeployer:
                     log_output="\n".join(self._log_buffer),
                     error=str(e),
                     duration=duration,
+                    phases=phases_json,
                 )
                 await deployment_log_broadcaster.complete(self._deployment_id, False)
 
@@ -1827,6 +1985,10 @@ if (getenv('PREV_IS_PREVIEW')) {
 
     async def _log_step_start(self, step: str):
         await self._log_raw(f"\n{CYAN}⚙️ {self._step_label(step)}{RESET}\n")
+        # Update phase tracker for coordinator steps
+        phase_name = _COORDINATOR_STEP_TO_PHASE.get(step)
+        if phase_name and self._phase_tracker:
+            await self._phase_tracker.start_phase(phase_name)
 
     async def _log_step_end(self, step: str, duration: float, success: bool, output: str):
         label = self._step_label(step)
@@ -1847,6 +2009,11 @@ if (getenv('PREV_IS_PREVIEW')) {
                 )
 
         await self._log_raw(status_line + "\n")
+
+        # Update phase tracker for coordinator steps
+        phase_name = _COORDINATOR_STEP_TO_PHASE.get(step)
+        if phase_name and self._phase_tracker:
+            await self._phase_tracker.end_phase(phase_name, success, duration)
 
     async def _log_summary(self, success: bool, total_duration: int, error: str | None = None):
         dur_str = _fmt_duration(total_duration)

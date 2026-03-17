@@ -568,13 +568,14 @@ async def finish_deployment(
     deployment_id: int, status: str,
     log_output: str = "", error: str | None = None,
     duration: int | None = None,
+    phases: str | None = None,
 ):
     pool = await get_pool()
     await pool.execute(
         """UPDATE deployments
-           SET status = $1, log_output = $2, error = $3, duration = $4, completed_at = $5
-           WHERE id = $6""",
-        status, log_output, error, duration, _now(), deployment_id,
+           SET status = $1, log_output = $2, error = $3, duration = $4, completed_at = $5, phases = $6
+           WHERE id = $7""",
+        status, log_output, error, duration, _now(), phases, deployment_id,
     )
 
 
@@ -614,7 +615,7 @@ async def list_deployments(preview_id: int, limit: int = 50) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(
         """SELECT id, preview_id, status, error, triggered_by,
-                  started_at, completed_at, duration, type
+                  started_at, completed_at, duration, type, phases
            FROM deployments
            WHERE preview_id = $1
            ORDER BY started_at DESC

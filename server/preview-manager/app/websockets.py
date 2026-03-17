@@ -162,6 +162,17 @@ class DeploymentLogBroadcaster:
         except Exception as e:
             logger.warning(f"Failed to broadcast deploy_status: {e}")
 
+    async def broadcast_phase_event(self, deployment_id: int, event_type: str, data: dict):
+        """Broadcast a phase event (phases_init or phase_update) to subscribers."""
+        try:
+            from app.valkey import publish_event
+            await publish_event(f"deploy_logs:{deployment_id}", {
+                "type": event_type,
+                **data,
+            })
+        except Exception as e:
+            logger.warning(f"Failed to broadcast {event_type}: {e}")
+
     async def complete(self, deployment_id: int, success: bool):
         """Mark deployment as complete in Valkey and notify subscribers."""
         try:
@@ -1036,11 +1047,19 @@ async def websocket_agent_callback(websocket: WebSocket):
                 duration = data.get("duration", 0)
                 error_msg = data.get("error", "")
 
+                # Build phase data for broadcast + Valkey storage
+                phase_data = {
+                    "name": name,
+                    "label": _agent_step_label(name),
+                    "required": name != "post_deploy",
+                }
+
                 if step_status == "running":
                     await deployment_log_broadcaster.add_log(
                         deployment_id,
                         f"\n\033[1;36m\u2699\ufe0f {_agent_step_label(name)}\033[0m\n",
                     )
+                    phase_data.update({"status": "running", "duration": None})
                 elif step_status == "done":
                     dur_str = f"{int(duration)}s" if duration else ""
                     await deployment_log_broadcaster.add_log(
@@ -1048,6 +1067,7 @@ async def websocket_agent_callback(websocket: WebSocket):
                         f"\033[1;32m\u2713 {_agent_step_label(name)}\033[0m"
                         f" \033[0;90mcompleted in {dur_str}\033[0m\n\n",
                     )
+                    phase_data.update({"status": "success", "duration": round(duration, 1) if duration else None})
                 elif step_status == "failed":
                     dur_str = f"{int(duration)}s" if duration else ""
                     line = (
@@ -1057,6 +1077,25 @@ async def websocket_agent_callback(websocket: WebSocket):
                     if error_msg:
                         line += f"  Error: {error_msg}\n"
                     await deployment_log_broadcaster.add_log(deployment_id, line)
+                    phase_data.update({"status": "failed", "duration": round(duration, 1) if duration else None})
+
+                # Broadcast phase_update to frontend
+                await deployment_log_broadcaster.broadcast_phase_event(
+                    deployment_id, "phase_update", {"phase": phase_data}
+                )
+
+                # Store in Valkey so deployer can reconstruct final state
+                try:
+                    from app.valkey import get_valkey
+                    r = get_valkey()
+                    await r.hset(
+                        f"agent_phases:{deployment_id}",
+                        name,
+                        json.dumps(phase_data),
+                    )
+                    await r.expire(f"agent_phases:{deployment_id}", 3600)
+                except Exception:
+                    pass
 
             elif msg_type == "complete":
                 success = data.get("success", False)
@@ -1087,6 +1126,7 @@ async def websocket_agent_callback(websocket: WebSocket):
                 await r.publish(
                     f"agent_deploy_done:{deployment_id}", result
                 )
+
 
                 logger.info(
                     f"Agent deploy complete: deployment_id={deployment_id} "
