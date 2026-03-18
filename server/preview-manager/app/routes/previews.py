@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -294,6 +295,7 @@ async def create_mr_preview(
         user.org.id, org_slug, project_id, project_slug, project_path,
         preview_name, source_branch, commit_sha, user.email,
         body.mr_iid, False, mr_title, target_branch,
+        _expires=timedelta(hours=3),
     )
 
     return {
@@ -378,6 +380,7 @@ async def create_branch_preview(
         "task_deploy_preview",
         user.org.id, org_slug, project_id, project_slug, project_path,
         preview_name, body.branch, commit_sha, user.email,
+        _expires=timedelta(hours=3),
     )
 
     return {
@@ -863,6 +866,7 @@ async def rebuild_preview(
         "rebuild" if force_new else "update",
         state.get("mr_id"),
         force_new,
+        _expires=timedelta(hours=3),
     )
 
     return {

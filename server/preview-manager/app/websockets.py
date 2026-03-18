@@ -1095,7 +1095,7 @@ async def websocket_agent_callback(websocket: WebSocket):
                 if step_status == "running":
                     await deployment_log_broadcaster.add_log(
                         deployment_id,
-                        f"\n\033[1;36m\u2699\ufe0f {_agent_step_label(name)}\033[0m\n",
+                        f"\n\n\n\033[0;36m\u2699\ufe0f {_agent_step_label(name)}\033[0m\n\033[0;90m{'─' * 68}\033[0m\n\n",
                     )
                     phase_data.update({"status": "running", "duration": None})
                 elif step_status == "done":

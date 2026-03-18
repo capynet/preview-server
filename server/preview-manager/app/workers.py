@@ -68,11 +68,10 @@ async def _handle_interrupted_deploy(
 
 
 async def recover_interrupted_deployments():
-    """Startup recovery: find deployments left 'running' from a previous worker and re-enqueue them."""
+    """Startup recovery: find deployments left 'running' from a previous worker and mark them as failed."""
     from app.database import get_all_running_deployments, finish_deployment
     from app.state import PreviewStateManager
     from app.valkey import release_deploy_lock
-    from arq import create_pool as create_arq_pool
 
     running = await get_all_running_deployments()
     if not running:
@@ -80,14 +79,12 @@ async def recover_interrupted_deployments():
         return
 
     logger.info(f"Found {len(running)} interrupted deployment(s) — recovering")
-    arq_pool = await create_arq_pool(RedisSettings.from_dsn(settings.valkey_url))
 
     for dep in running:
         dep_id = dep["deployment_id"]
         preview_name = dep["preview_name"]
         project_slug = dep["project_slug"]
         deploy_key = f"{project_slug}/{preview_name}"
-        dep_type = dep.get("type", "deploy")
 
         # Mark deployment as failed
         await finish_deployment(dep_id, "failed", error="Interrupted by worker restart")
@@ -98,16 +95,8 @@ async def recover_interrupted_deployments():
             dep["project_id"], preview_name,
             status="failed",
             last_deployment_status="failed",
-            last_deployment_error="Interrupted by worker restart — re-deploying",
+            last_deployment_error="Interrupted by worker restart",
         )
-
-        # Only re-enqueue deploy-type tasks; others just mark as failed
-        if dep_type != "deploy":
-            continue
-
-        if not dep.get("gitlab_project_path"):
-            logger.warning(f"Cannot re-enqueue {deploy_key}: no gitlab_project_path")
-            continue
 
         # Release stale deploy lock
         try:
@@ -115,22 +104,7 @@ async def recover_interrupted_deployments():
         except Exception:
             pass
 
-        # Re-enqueue
-        await arq_pool.enqueue_job(
-            "task_deploy_preview",
-            dep["org_id"], dep["org_slug"],
-            dep["project_id"], dep["project_slug"],
-            dep["gitlab_project_path"],
-            preview_name, dep["branch"], dep["commit_sha"],
-            "recovery",
-            dep["mr_id"],
-            False,  # force_new
-            dep.get("mr_title"),
-        )
-        logger.info(f"Re-enqueued {deploy_key} for recovery")
-
-    await arq_pool.aclose()
-    logger.info(f"Recovery complete: {len(running)} deployment(s) processed")
+    logger.info(f"Recovery complete: {len(running)} deployment(s) marked as failed")
 
 
 # ---- Worker lifecycle ----
@@ -173,7 +147,17 @@ async def task_deploy_preview(
     target_branch: str | None = None,
 ):
     """Deploy a preview. Runs in arq worker with Valkey-backed log streaming."""
+    from app.database import get_preview
     from app.routes.webhooks import _clone_and_deploy
+
+    # On retry (worker restart), skip if the preview was deleted while queued
+    job_try = ctx.get("job_try", 1)
+    if job_try >= 2:
+        preview = await get_preview(project_id, preview_name)
+        if not preview:
+            logger.info(f"Skipping retry for deleted preview {project_slug}/{preview_name} (try={job_try})")
+            return
+
     try:
         await _clone_and_deploy(
             org_id, org_slug, project_id, project_slug, project_path,
@@ -181,16 +165,18 @@ async def task_deploy_preview(
             mr_iid, force_new, mr_title, target_branch,
         )
     except asyncio.CancelledError:
-        logger.warning(f"Deploy {project_slug}/{preview_name} cancelled (worker shutdown) — re-enqueueing")
+        logger.warning(f"Deploy {project_slug}/{preview_name} cancelled (worker shutdown)")
         try:
             await asyncio.shield(_handle_interrupted_deploy(
                 org_id, org_slug, project_id, project_slug, project_path,
                 preview_name, source_branch, commit_sha,
                 mr_iid, force_new, mr_title,
+                reason="Interrupted by worker shutdown",
             ))
         except asyncio.CancelledError:
-            pass  # shield was cancelled but inner task continues
-        raise
+            pass
+        # Do NOT re-raise — prevents arq from re-enqueueing zombie jobs.
+        # The user can manually rebuild if needed.
 
 
 async def task_run_post_deploy(
@@ -322,6 +308,7 @@ class WorkerSettings:
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
     max_jobs = 50
+    max_tries = 3
     job_timeout = 36000  # 10 hours — match TIMEOUT_DEPLOY_SCRIPT
     health_check_interval = 30
     cron_jobs = [

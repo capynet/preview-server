@@ -35,6 +35,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- Implemente el auto pr solo si ci pasa?
 - Necesito que los mr aborten el build actual cuando llega un nuevo hook. 
 - Necesito un boton para abortar el build actual. Es util por ejemplo si necesito añadir una env var. en lugar de esperar a que acabe puedo abortarlo y lanzarlo.
 - preview push files me obliga a iniciar sesion y a seleccionar una organizacion. necesito que el tema de las orgnaizaciones sea mas transparente para no tener que seleccionar la orgnizacion. 

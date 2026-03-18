@@ -66,6 +66,7 @@ async def main():
             rebuild,       # force_new: True for rebuild, False for update
             r["mr_title"],       # mr_title
             r["target_branch"],  # target_branch
+            _expires=10800,      # 3 hours TTL
         )
         print(f"  Enqueued ({mode}): {r['project_slug']}/{r['preview_name']} -> {job.job_id}")
 

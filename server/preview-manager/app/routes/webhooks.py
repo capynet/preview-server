@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -339,6 +340,7 @@ async def _handle_push_event(
         "task_deploy_preview",
         org_id, org_slug, project_id, project_slug, project_path,
         preview_name, branch, commit_sha, "webhook-push",
+        _expires=timedelta(hours=3),
     )
     return {"status": "ok", "action": "push_update", "project": project_path, "preview_name": preview_name}
 
@@ -404,6 +406,7 @@ async def _handle_mr_event(
                 org_id, org_slug, project_id, project_slug, project_path,
                 preview_name, source_branch, commit_sha, "webhook", mr_iid,
                 False, mr_title, target_branch,
+                _expires=timedelta(hours=3),
             )
     else:
         return {"status": "ignored", "reason": f"unhandled action: {action}"}
@@ -459,6 +462,7 @@ async def _handle_pipeline_event(
             preview_name, preview.get("branch", ref), preview.get("commit_sha", sha),
             "webhook-ci", preview.get("mr_id"), False,
             preview.get("mr_title"), preview.get("target_branch"),
+            _expires=timedelta(hours=3),
         )
         triggered.append(preview_name)
 
