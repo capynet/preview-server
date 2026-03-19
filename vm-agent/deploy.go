@@ -156,7 +156,6 @@ func (d *Deployer) deployNew() (bool, string) {
 		{"generate_settings", d.stepGenerateSettings},
 		{"docker_pull", d.stepDockerPull},
 		{"docker_up", d.stepDockerUp},
-		{"composer_install", d.stepComposerInstall},
 		{"wait_for_db", d.stepWaitForDB},
 		{"import_db", d.stepImportDB},
 		{"import_files", d.stepImportFiles},
@@ -176,7 +175,6 @@ func (d *Deployer) deployUpdate() (bool, string) {
 		{"generate_compose", d.stepGenerateCompose},
 		{"generate_settings", d.stepGenerateSettings},
 		{"docker_up", d.stepDockerUp},
-		{"composer_install", d.stepComposerInstall},
 		{"deploy_script", func() error { return d.stepDeployScript("update") }},
 		{"post_deploy", func() error { return d.stepPostDeploy("update") }},
 	}
@@ -331,26 +329,15 @@ func (d *Deployer) dockerExecArgs(extraEnv ...string) []string {
 		"-e", "COLUMNS=200",
 		"-e", "FORCE_COLOR=1",
 	}
+	if d.job.ProxyURL != "" {
+		args = append(args, "-e", "PREV_HTTP_PROXY="+d.job.ProxyURL)
+		args = append(args, "-e", "PREV_HTTPS_PROXY="+d.job.ProxyURL)
+	}
 	for _, e := range extraEnv {
 		args = append(args, "-e", e)
 	}
 	args = append(args, phpContainer)
 	return args
-}
-
-func (d *Deployer) stepComposerInstall() error {
-	var extraEnv []string
-	if d.job.ProxyURL != "" {
-		extraEnv = append(extraEnv,
-			"HTTP_PROXY="+d.job.ProxyURL,
-			"HTTPS_PROXY="+d.job.ProxyURL,
-		)
-	}
-
-	args := d.dockerExecArgs(extraEnv...)
-	args = append(args, "composer", "install", "--no-interaction", "--ansi")
-
-	return d.runCmd("", "docker", args...)
 }
 
 func (d *Deployer) stepDeployScript(phase string) error {
@@ -444,7 +431,6 @@ func (d *Deployer) stepStart(name string) {
 		"wait_for_db":       "Waiting for database",
 		"import_db":         "Importing database",
 		"import_files":      "Importing files",
-		"composer_install":  "Installing dependencies",
 		"deploy_script":     "Running deploy script",
 		"post_deploy":       "Running post-deploy script",
 	}
@@ -452,7 +438,7 @@ func (d *Deployer) stepStart(name string) {
 	if label == "" {
 		label = name
 	}
-	d.log(fmt.Sprintf("\n\n\n⚙️ %s\n────────────────────────────────────────────────────────────────────\n\n", label))
+	d.log(fmt.Sprintf("\n\n\n\033[1;36m⚙️ %s\033[0m\n\033[0;90m────────────────────────────────────────────────────────────────────\033[0m\n\n", label))
 }
 
 func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg string) {
@@ -462,7 +448,7 @@ func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg st
 		"generate_settings": "Generating settings", "docker_pull": "Pulling Docker images",
 		"docker_up": "Starting containers", "wait_for_db": "Waiting for database",
 		"import_db": "Importing database", "import_files": "Importing files",
-		"composer_install": "Installing dependencies", "deploy_script": "Running deploy script",
+		"deploy_script": "Running deploy script",
 		"post_deploy": "Running post-deploy script",
 	}
 	label := labels[name]
@@ -471,9 +457,9 @@ func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg st
 	}
 
 	if success {
-		d.log(fmt.Sprintf("✓ %s %ds\n", label, int(elapsed)))
+		d.log(fmt.Sprintf("\033[1;32m✓ %s\033[0m \033[0;90m%ds\033[0m\n", label, int(elapsed)))
 	} else {
-		d.log(fmt.Sprintf("✗ %s failed after %ds\n  Error: %s\n", label, int(elapsed), errMsg))
+		d.log(fmt.Sprintf("\033[1;31m✗ %s\033[0m \033[0;90mfailed after %ds\033[0m\n  Error: %s\n", label, int(elapsed), errMsg))
 	}
 }
 

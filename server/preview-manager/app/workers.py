@@ -150,8 +150,18 @@ async def task_deploy_preview(
     from app.database import get_preview
     from app.routes.webhooks import _clone_and_deploy
 
-    # On retry (worker restart), skip if the preview was deleted while queued
+    # Log job pickup with traceability info
     job_try = ctx.get("job_try", 1)
+    job_id = ctx.get("job_id", "?")
+    enqueue_time = ctx.get("enqueue_time")
+    enqueue_info = f" enqueued_at={enqueue_time.isoformat()}" if enqueue_time else ""
+    retry_info = f" RETRY try={job_try}" if job_try >= 2 else ""
+    logger.info(
+        f"Job picked up: {project_slug}/{preview_name} job_id={job_id}{retry_info} "
+        f"triggered_by={triggered_by} branch={source_branch} commit={commit_sha[:8]}{enqueue_info}"
+    )
+
+    # On retry (worker restart), skip if the preview was deleted while queued
     if job_try >= 2:
         preview = await get_preview(project_id, preview_name)
         if not preview:

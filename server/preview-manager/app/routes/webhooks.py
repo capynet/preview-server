@@ -280,6 +280,30 @@ async def gitlab_webhook(
     project_slug = project["slug"]
     project_path = project.get("gitlab_project_path", "")
 
+    # Log webhook payload summary for traceability
+    if object_kind == "merge_request":
+        attrs = payload.get("object_attributes", {})
+        logger.info(
+            f"Webhook received: kind=merge_request action={attrs.get('action')} "
+            f"mr_iid={attrs.get('iid')} branch={attrs.get('source_branch')} "
+            f"project={project_slug} state={attrs.get('state')}"
+        )
+    elif object_kind == "push":
+        ref = payload.get("ref", "")
+        branch = ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ref
+        logger.info(
+            f"Webhook received: kind=push branch={branch} "
+            f"commit={payload.get('after', '')[:8]} project={project_slug}"
+        )
+    elif object_kind == "pipeline":
+        p_attrs = payload.get("object_attributes", {})
+        logger.info(
+            f"Webhook received: kind=pipeline status={p_attrs.get('status')} "
+            f"ref={p_attrs.get('ref')} sha={p_attrs.get('sha', '')[:8]} project={project_slug}"
+        )
+    else:
+        logger.info(f"Webhook received: kind={object_kind} project={project_slug}")
+
     if object_kind == "push":
         return await _handle_push_event(
             payload, request,
@@ -302,7 +326,6 @@ async def gitlab_webhook(
             project_path=project_path,
         )
     else:
-        logger.debug(f"Ignoring webhook event: {object_kind}")
         return {"status": "ignored", "reason": f"unhandled event: {object_kind}"}
 
 
@@ -335,7 +358,10 @@ async def _handle_push_event(
         return {"status": "ignored", "reason": "auto_update disabled"}
 
     preview_name = existing["preview_name"]
-    logger.info(f"Push event: updating {project_slug}/{preview_name}")
+    logger.info(
+        f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
+        f"triggered_by=webhook-push branch={branch} commit={commit_sha[:8]}"
+    )
     await request.app.state.arq.enqueue_job(
         "task_deploy_preview",
         org_id, org_slug, project_id, project_slug, project_path,
@@ -368,6 +394,7 @@ async def _handle_mr_event(
     state = attrs.get("state")
 
     if action in ("close", "merge") or state in ("closed", "merged"):
+        logger.info(f"Enqueued task_delete_preview: {project_slug}/{preview_name} action={action}")
         await request.app.state.arq.enqueue_job(
             "task_delete_preview",
             org_slug, project_slug, project_id, preview_name,
@@ -401,6 +428,10 @@ async def _handle_mr_event(
             await preview_list_manager.force_broadcast()
             logger.info(f"CI gating: {project_slug}/{preview_name} waiting for pipeline success")
         else:
+            logger.info(
+                f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
+                f"triggered_by=webhook action={action} branch={source_branch} commit={commit_sha[:8] if commit_sha else '?'}"
+            )
             await request.app.state.arq.enqueue_job(
                 "task_deploy_preview",
                 org_id, org_slug, project_id, project_slug, project_path,
@@ -456,6 +487,10 @@ async def _handle_pipeline_event(
         preview_name = preview["preview_name"]
         await update_preview_ci_status(project_id, preview_name, ci_status="success", status="creating")
 
+        logger.info(
+            f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
+            f"triggered_by=webhook-ci branch={preview.get('branch', ref)} commit={preview.get('commit_sha', sha)[:8]}"
+        )
         await request.app.state.arq.enqueue_job(
             "task_deploy_preview",
             org_id, org_slug, project_id, project_slug, project_path,

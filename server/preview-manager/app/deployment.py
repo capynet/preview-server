@@ -37,7 +37,6 @@ class DeployCancelled(Exception):
 
 # Timeouts per step (seconds)
 TIMEOUT_DOCKER_UP = 300
-TIMEOUT_COMPOSER = 600
 TIMEOUT_IMPORT_DB = 600
 TIMEOUT_IMPORT_FILES = 600
 TIMEOUT_DRUSH = 300
@@ -75,7 +74,6 @@ DEPLOY_PHASES: dict[str, list[dict]] = {
         {"name": "generate_settings", "label": "Generating settings",     "required": True},
         {"name": "docker_pull",       "label": "Pulling Docker images",   "required": True},
         {"name": "docker_up",         "label": "Starting containers",     "required": True},
-        {"name": "composer_install",  "label": "Installing dependencies", "required": True},
         {"name": "wait_for_db",       "label": "Waiting for database",    "required": True},
         {"name": "import_db",         "label": "Importing database",      "required": True},
         {"name": "import_files",      "label": "Importing files",         "required": True},
@@ -90,7 +88,6 @@ DEPLOY_PHASES: dict[str, list[dict]] = {
         {"name": "generate_compose",  "label": "Configuring environment", "required": True},
         {"name": "generate_settings", "label": "Generating settings",     "required": True},
         {"name": "docker_up",         "label": "Starting containers",     "required": True},
-        {"name": "composer_install",  "label": "Installing dependencies", "required": True},
         {"name": "deploy_script",     "label": "Running deploy script",   "required": True},
         {"name": "post_deploy",       "label": "Running post-deploy",     "required": False},
     ],
@@ -1022,10 +1019,7 @@ class PreviewDeployer:
         await self._import_db()
         await self._check_cancelled()
 
-        # 9. Composer install
-        await self._composer_install()
-
-        # 10. Import files from S3
+        # 9. Import files from S3
         await self._import_files()
         await self._check_cancelled()
 
@@ -1296,25 +1290,6 @@ class PreviewDeployer:
         await self._log_step_end(step, elapsed, False, "MySQL not ready after 60s")
         raise RuntimeError("[wait-for-db] MySQL not ready after 60s")
 
-    async def _composer_install(self):
-        env = {}
-        if self.org_id:
-            from app.database import get_organization_by_id
-            from config.settings import settings as app_settings
-            org = await get_organization_by_id(self.org_id)
-            proxy_enabled = org.get("composer_proxy_enabled", 0) if org else 0
-            proxy_url = app_settings.composer_proxy_url
-            if proxy_enabled and proxy_url:
-                env["HTTPS_PROXY"] = proxy_url
-                env["HTTP_PROXY"] = proxy_url
-                display_url = proxy_url.split("@")[-1] if "@" in proxy_url else proxy_url
-                await self._log_raw(f"{DIM}Using composer proxy: {display_url}{RESET}\n")
-        await self._docker_exec(
-            "composer", "install", "--no-interaction", "--no-progress",
-            step="composer-install",
-            timeout=TIMEOUT_COMPOSER,
-            env=env,
-        )
 
     async def _import_db(self):
         """Download base DB from storage and stream directly into MySQL."""
@@ -2078,7 +2053,6 @@ if (getenv('PREV_IS_PREVIEW')) {
         "configuring-env": "Configuring environment",
         "docker-up": "Starting containers",
         "wait-for-db": "Waiting for database",
-        "composer-install": "Installing dependencies",
         "import-db": "Importing database",
         "import-files": "Importing files",
         "restore-db-cache": "Restoring DB from cache",

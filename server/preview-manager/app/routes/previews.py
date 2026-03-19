@@ -290,6 +290,10 @@ async def create_mr_preview(
         target_branch=target_branch,
     )
 
+    logger.info(
+        f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
+        f"triggered_by={user.email} mr_iid={body.mr_iid} branch={source_branch} commit={commit_sha[:8]}"
+    )
     await request.app.state.arq.enqueue_job(
         "task_deploy_preview",
         user.org.id, org_slug, project_id, project_slug, project_path,
@@ -376,6 +380,10 @@ async def create_branch_preview(
         auto_update=0,
     )
 
+    logger.info(
+        f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
+        f"triggered_by={user.email} branch={body.branch} commit={commit_sha[:8]}"
+    )
     await request.app.state.arq.enqueue_job(
         "task_deploy_preview",
         user.org.id, org_slug, project_id, project_slug, project_path,
@@ -859,11 +867,16 @@ async def rebuild_preview(
         await request_deploy_cancel(deploy_key)
         logger.info(f"Cancelling active deploy for {deploy_key} — rebuild requested")
 
+    trigger_type = "rebuild" if force_new else "update"
+    logger.info(
+        f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
+        f"triggered_by={trigger_type} user={user.email} branch={state['branch']} force_new={force_new}"
+    )
     await request.app.state.arq.enqueue_job(
         "task_deploy_preview",
         user.org.id, user.org.slug, project_id, project_slug, project_path,
         preview_name, state["branch"], state.get("commit_sha", ""),
-        "rebuild" if force_new else "update",
+        trigger_type,
         state.get("mr_id"),
         force_new,
         _expires=timedelta(hours=3),

@@ -35,6 +35,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- ahora que tenemos bien identificadas las fases. cada fase va a poder tener su pre y post deploy script (solo si tiene sentido)
 - Implemente el auto pr solo si ci pasa?
 - Necesito que los mr aborten el build actual cuando llega un nuevo hook. 
 - Necesito un boton para abortar el build actual. Es util por ejemplo si necesito añadir una env var. en lugar de esperar a que acabe puedo abortarlo y lanzarlo.
@@ -170,3 +171,5 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Pre-cargar imágenes Docker en el snapshot de VM para eliminar el pull en la mayoría de deploys, manteniendo la phase 'Pulling Docker images' como fallback para imágenes no incluidas en el snapshot."
 - Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
 - Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm. 
+- los script de deploy tienen acceso a un toolkit visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit gradico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
+- 
