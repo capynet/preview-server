@@ -661,6 +661,53 @@ func (c *Client) ResolveProject(slug string) ([]ProjectMatch, error) {
 	return result.Matches, nil
 }
 
+// PreviewConfig holds the preview.yml configuration returned by the VM agent.
+type PreviewConfig struct {
+	DomainAliases []string `json:"domain_aliases"`
+	Docroot       string   `json:"docroot"`
+}
+
+// GetPreviewConfig fetches the preview.yml config from the VM agent via the coordinator.
+func (c *Client) GetPreviewConfig(project, previewName string) (*PreviewConfig, error) {
+	url := fmt.Sprintf("%s/previews/%s/preview-config", c.orgProjectPrefix(project), previewName)
+
+	resp, err := c.doRequest("GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	var result PreviewConfig
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode error: %w", err)
+	}
+	return &result, nil
+}
+
+// InjectSSHKey sends a public SSH key to the VM agent via the coordinator,
+// so the user can SSH directly into the preview container.
+func (c *Client) InjectSSHKey(project, previewName, publicKey string) error {
+	body := fmt.Sprintf(`{"public_key":%q}`, publicKey)
+	url := fmt.Sprintf("%s/previews/%s/ssh-keys", c.orgProjectPrefix(project), previewName)
+
+	resp, err := c.doRequest("POST", url, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
 func (c *Client) DownloadStream(project string, previewName string, kind string, w io.Writer) error {
 	url := fmt.Sprintf("%s/previews/%s/%s/download", c.orgProjectPrefix(project), previewName, kind)
 

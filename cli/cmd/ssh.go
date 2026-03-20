@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/url"
@@ -66,25 +67,57 @@ Examples:
 			return err
 		}
 
-		return execSSH(r, container, nil)
+		// For PHP container, SSH directly into the container on port 2222
+		if container == "php" {
+			if err := ensureSSHKeyOnPreview(r); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: could not inject SSH key: %v\n", err)
+			}
+			return execSSH(r, container, nil)
+		}
+
+		// For non-PHP containers (e.g. db), use the old jump host method
+		return execSSHLegacy(r, container, nil)
 	},
 }
 
-// execSSH connects to a container via SSH. If command is nil, opens interactive bash.
-// Returns error only if SSH binary not found or syscall.Exec fails.
+// execSSH connects directly to the PHP container via SSH on port 2222.
+// If command is nil, opens interactive bash in /var/www/html.
 func execSSH(r *resolvedPreview, container string, command []string) error {
+	sshBin, err := findSSHBinary()
+	if err != nil {
+		return err
+	}
+
+	var remoteCmd string
+	if len(command) > 0 {
+		remoteCmd = fmt.Sprintf("cd /var/www/html && %s", strings.Join(command, " "))
+	} else {
+		remoteCmd = "cd /var/www/html && bash"
+	}
+
+	sshArgs := []string{
+		"ssh",
+		"-t",
+		"-p", "2222",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		fmt.Sprintf("root@%s", r.VmIP),
+		remoteCmd,
+	}
+
+	return syscall.Exec(sshBin, sshArgs, os.Environ())
+}
+
+// execSSHLegacy connects to non-PHP containers via the jump host (old method).
+func execSSHLegacy(r *resolvedPreview, container string, command []string) error {
 	containerName := fmt.Sprintf("%s-%s-%s", r.PreviewName, r.Project, container)
 
 	var proxyCmd string
 	if len(command) > 0 {
-		// Non-interactive: run command
 		proxyCmd = fmt.Sprintf("%s %s /var/www/html %s", r.VmIP, containerName, strings.Join(command, " "))
 	} else {
-		// Interactive: open bash
 		proxyCmd = fmt.Sprintf("%s %s", r.VmIP, containerName)
-		if container == "php" {
-			proxyCmd += " /var/www/html"
-		}
 	}
 
 	sshBin, err := findSSHBinary()
@@ -105,24 +138,24 @@ func execSSH(r *resolvedPreview, container string, command []string) error {
 	return syscall.Exec(sshBin, sshArgs, os.Environ())
 }
 
-// runSSHCommand runs an SSH command and returns the exit code (without replacing the process).
+// runSSHCommand runs an SSH command via direct SSH to the PHP container and returns the exit code.
 func runSSHCommand(r *resolvedPreview, container string, command []string) int {
-	containerName := fmt.Sprintf("%s-%s-%s", r.PreviewName, r.Project, container)
-	proxyCmd := fmt.Sprintf("%s %s /var/www/html %s", r.VmIP, containerName, strings.Join(command, " "))
-
 	sshBin, err := findSSHBinary()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		return 1
 	}
 
+	remoteCmd := fmt.Sprintf("cd /var/www/html && %s", strings.Join(command, " "))
+
 	cmd := exec.Command(sshBin,
 		"-t",
+		"-p", "2222",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		fmt.Sprintf("preview-manager@%s", r.JumpHost),
-		proxyCmd,
+		fmt.Sprintf("root@%s", r.VmIP),
+		remoteCmd,
 	)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -189,6 +222,40 @@ func ensureSSHKeyRegistered() error {
 
 	fmt.Fprintf(os.Stderr, "SSH key registered: %s (%s)\n\n", result.Name, result.Fingerprint)
 	return nil
+}
+
+// ensureSSHKeyOnPreview injects the user's SSH public key into the preview VM's PHP container.
+// Caches per preview to avoid re-injecting every time.
+func ensureSSHKeyOnPreview(r *resolvedPreview) error {
+	pubKey := getLocalSSHPublicKey()
+	if pubKey == "" {
+		return fmt.Errorf("no SSH public key found in ~/.ssh/")
+	}
+
+	// Check cache: /tmp/preview-sshkey-{hash}.done
+	h := sha256.Sum256([]byte(r.Project + "/" + r.PreviewName + ":" + pubKey))
+	cacheFile := filepath.Join(os.TempDir(), fmt.Sprintf("preview-sshkey-%x.done", h[:8]))
+	if _, err := os.Stat(cacheFile); err == nil {
+		return nil // already injected
+	}
+
+	if err := apiClient.InjectSSHKey(r.Project, r.PreviewName, pubKey); err != nil {
+		return err
+	}
+
+	// Cache success
+	os.WriteFile(cacheFile, []byte("ok"), 0600)
+	return nil
+}
+
+// getLocalSSHPublicKey reads the first SSH public key found in ~/.ssh/.
+func getLocalSSHPublicKey() string {
+	sshDir := filepath.Join(os.Getenv("HOME"), ".ssh")
+	keys, err := findLocalSSHKeys(sshDir)
+	if err != nil || len(keys) == 0 {
+		return ""
+	}
+	return keys[0].content
 }
 
 type localSSHKey struct {

@@ -418,6 +418,90 @@ async def get_preview_endpoint(
     return _build_preview_info(state)
 
 
+@router.get("/previews/{preview_name}/preview-config")
+async def get_preview_config(
+    project: str,
+    preview_name: str,
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
+):
+    """Proxy to the VM agent's /config endpoint to get preview.yml config."""
+    import httpx
+
+    proj = await _resolve_project(user, project)
+    state = await PreviewStateManager.load_state(proj["id"], preview_name)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
+
+    vm_ip = state.get("vm_ip")
+    if not vm_ip:
+        raise HTTPException(status_code=400, detail="Preview has no VM assigned")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"http://{vm_ip}:8022/config")
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"VM agent returned HTTP {resp.status_code}: {resp.text}",
+                )
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=502, detail="Could not connect to VM agent")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="VM agent request timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error proxying to VM agent: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"VM agent error: {e}")
+
+
+class InjectSSHKeyRequest(BaseModel):
+    public_key: str
+
+
+@router.post("/previews/{preview_name}/ssh-keys")
+async def inject_ssh_key(
+    project: str,
+    preview_name: str,
+    body: InjectSSHKeyRequest,
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
+):
+    """Proxy SSH key injection to the VM agent."""
+    import httpx
+
+    proj = await _resolve_project(user, project)
+    state = await PreviewStateManager.load_state(proj["id"], preview_name)
+    if not state:
+        raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
+
+    vm_ip = state.get("vm_ip")
+    if not vm_ip:
+        raise HTTPException(status_code=400, detail="Preview has no VM assigned")
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"http://{vm_ip}:8022/ssh-keys",
+                json={"public_key": body.public_key},
+            )
+            if resp.status_code != 200:
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"VM agent returned HTTP {resp.status_code}: {resp.text}",
+                )
+            return resp.json()
+    except httpx.ConnectError:
+        raise HTTPException(status_code=502, detail="Could not connect to VM agent")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="VM agent request timed out")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error proxying SSH key to VM agent: {e}", exc_info=True)
+        raise HTTPException(status_code=502, detail=f"VM agent error: {e}")
+
+
 class UpdatePreviewRequest(BaseModel):
     auto_update: Optional[bool] = None
     pinned: Optional[bool] = None

@@ -131,11 +131,11 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 				"container_name": prefix + "-php",
 				"volumes":        []string{"./:/var/www/html"},
 				"environment":    phpEnv,
-				"ports":          []string{"80:80"},
+				"ports":          []string{"80:80", "2222:2222"},
 				"restart":        "unless-stopped",
 			},
 			"db": map[string]interface{}{
-				"image":          registryImage(job.DockerRegistry, dbImage),
+				"image":          dbImage,
 				"container_name": prefix + "-db",
 				"command":        "--innodb-flush-log-at-trx-commit=0",
 				"environment": map[string]string{
@@ -160,14 +160,14 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 	if isServiceEnabled(cfg.Valkey) {
 		ver := serviceVersion(cfg.Valkey, "8")
 		services["redis"] = map[string]interface{}{
-			"image":          registryImage(job.DockerRegistry, fmt.Sprintf("valkey/valkey:%s-alpine", ver)),
+			"image":          fmt.Sprintf("valkey/valkey:%s-alpine", ver),
 			"container_name": prefix + "-redis",
 			"restart":        "unless-stopped",
 		}
 	} else if isServiceEnabled(cfg.Redis) {
 		ver := serviceVersion(cfg.Redis, "7")
 		services["redis"] = map[string]interface{}{
-			"image":          registryImage(job.DockerRegistry, fmt.Sprintf("redis:%s-alpine", ver)),
+			"image":          fmt.Sprintf("redis:%s-alpine", ver),
 			"container_name": prefix + "-redis",
 			"restart":        "unless-stopped",
 		}
@@ -178,7 +178,7 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		ver := serviceVersion(cfg.Solr, "9")
 		solrVolumes := []string{"solr_data:/var/solr"}
 		solrService := map[string]interface{}{
-			"image":          registryImage(job.DockerRegistry, fmt.Sprintf("solr:%s", ver)),
+			"image":          fmt.Sprintf("solr:%s", ver),
 			"container_name": prefix + "-solr",
 			"restart":        "unless-stopped",
 			"environment": map[string]string{

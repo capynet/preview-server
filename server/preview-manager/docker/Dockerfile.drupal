@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         unzip \
         htop \
         default-mysql-client \
+        openssh-server \
     && rm -rf /var/lib/apt/lists/*
 
 # Install PECL extension: uploadprogress (not available as apt package)
@@ -285,6 +286,27 @@ module cache {\
 }' /usr/local/lsws/conf/httpd_config.conf
 fi
 
+# Start SSH server on port 2222 for direct access
+mkdir -p /run/sshd /root/.ssh
+chmod 700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+# Configure sshd to listen on 2222 and accept env vars
+cat > /etc/ssh/sshd_config.d/preview.conf <<'SSHD_EOF'
+Port 2222
+PermitRootLogin yes
+PubkeyAuthentication yes
+PasswordAuthentication no
+AcceptEnv LANG LC_*
+AuthorizedKeysFile /root/.ssh/authorized_keys
+PermitUserEnvironment yes
+SSHD_EOF
+# Set root home to /var/www/html so SSH commands run from the project dir
+sed -i 's|root:x:0:0:root:/root:|root:x:0:0:root:/var/www/html:|' /etc/passwd
+# Export container env vars so SSH sessions can access them (PREV_*, DRUSH_*, etc.)
+env | grep -E '^(PREV_|DRUSH_|DOCUMENT_ROOT|COMPOSER_AUTH|PATH)=' > /root/.ssh/environment
+/usr/sbin/sshd
+
 # Ensure runtime dirs exist
 mkdir -p /tmp/lshttpd/swap
 chown -R www-data:www-data /tmp/lshttpd
@@ -317,6 +339,6 @@ RUN chmod +x /entrypoint.sh
 
 WORKDIR /var/www/html
 ENV PATH="/var/www/html/vendor/bin:${PATH}"
-EXPOSE 80
+EXPOSE 80 2222
 
 CMD ["/entrypoint.sh"]

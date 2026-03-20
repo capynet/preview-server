@@ -29,8 +29,10 @@
         mode: '0644'
       register: dockerfile_changed
 
-    - name: Build Drupal base images
-      command: "docker build -t preview-drupal:php{{ item }} --build-arg PHP_VERSION={{ item }} /opt/preview-drupal"
+    - name: Build and push Drupal base images
+      shell: |
+        docker build -t localhost:5000/preview-drupal:php{{ item }} --build-arg PHP_VERSION={{ item }} /opt/preview-drupal
+        docker push localhost:5000/preview-drupal:php{{ item }}
       loop:
         - "8.1"
         - "8.2"
@@ -38,19 +40,9 @@
         - "8.4"
       when: dockerfile_changed.changed
 
-    - name: Pre-pull database and service images
-      command: "docker pull {{ item }}"
-      loop:
-        - "mysql:5.7"
-        - "mysql:8.0"
-        - "mysql:8.4"
-        - "mariadb:10.6"
-        - "mariadb:11.4"
-        - "percona:8.0"
-        - "redis:7"
-        - "solr:9"
-      register: pull_result
-      changed_when: "'Downloaded newer image' in pull_result.stdout or 'Pull complete' in pull_result.stdout"
+    - name: Clean up old images and build cache
+      shell: docker image prune -af && docker builder prune -af
+      when: dockerfile_changed.changed
 
     - name: Display results
       debug:
@@ -62,18 +54,13 @@
           Network: preview-network
           Caddy: running as Docker container (preview-caddy)
 
-          PHP images:
+          PHP images (private registry):
             - preview-drupal:php8.1
             - preview-drupal:php8.2
             - preview-drupal:php8.3
             - preview-drupal:php8.4
 
-          Database images:
-            - mysql:5.7, mysql:8.0, mysql:8.4
-            - mariadb:10.6, mariadb:11.4
-            - percona:8.0
-
-          Service images:
-            - redis:7, solr:9
+          Service images (pulled from Docker Hub by VMs):
+            - mysql, mariadb, percona, redis, valkey, solr
 
           ================================================

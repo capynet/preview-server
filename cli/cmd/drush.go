@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -31,7 +32,12 @@ Examples:
 			return err
 		}
 
-		drushArgs := append([]string{"drush"}, args...)
+		// Ensure SSH key is on the preview VM
+		if err := ensureSSHKeyOnPreview(r); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not inject SSH key: %v\n", err)
+		}
+
+		drushArgs := append([]string{"vendor/bin/drush"}, args...)
 		exitCode := runSSHCommand(r, "php", drushArgs)
 
 		if exitCode != 0 {
@@ -44,6 +50,10 @@ Examples:
 
 			// If the resolved info changed, retry the command
 			if r2.VmIP != r.VmIP || r2.PreviewName != r.PreviewName {
+				// Re-inject SSH key for new VM
+				if err := ensureSSHKeyOnPreview(r2); err != nil {
+					fmt.Fprintf(os.Stderr, "Warning: could not inject SSH key: %v\n", err)
+				}
 				exitCode = runSSHCommand(r2, "php", drushArgs)
 			}
 		}

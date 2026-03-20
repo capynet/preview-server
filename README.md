@@ -168,4 +168,23 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
 - Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm. 
 - los script de deploy tienen acceso a un toolkit visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit gradico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
-- 
+
+Pendiente de arreglar:
+Fix del playbook setup-docker-preview.yml línea 44:
+
+El docker image prune -af borra todas las imágenes sin containers activos, incluyendo las localhost:5000/preview-drupal:php8.x que se acaban de buildear y pushear. Si después necesitás
+re-pushear al registry, no están y hay que rebuiltear (~20min).
+
+Fix: Cambiar el prune para que excluya las imágenes del registry:
+
+# Antes (borra todo):
+docker image prune -af && docker builder prune -af
+
+# Después (preserva las imágenes Drupal):
+docker image prune -af --filter "label!=registry-image" && docker builder prune -af
+
+O más simple, solo limpiar el build cache y dangling images (sin -a):
+
+docker image prune -f && docker builder prune -af
+
+Sin -a, el prune solo borra imágenes dangling (sin tag), no las taggeadas como localhost:5000/preview-drupal:php8.x.   

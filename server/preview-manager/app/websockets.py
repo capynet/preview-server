@@ -449,6 +449,7 @@ async def system_resources_loop():
                     "type": "system_resources",
                     "resources": snapshot,
                     "stats": stats,
+                    "disk_usage": _disk_usage_cache,
                 }
                 await system_resources_manager.broadcast(message)
 
@@ -482,7 +483,7 @@ def get_disk_usage_cache() -> dict:
 
 
 async def disk_usage_loop():
-    """Background loop that calculates disk usage of key directories every 10 minutes."""
+    """Background loop that calculates disk usage of key directories every minute."""
     logger.info("Starting disk usage monitoring loop")
     while True:
         try:
@@ -510,7 +511,7 @@ async def disk_usage_loop():
             _disk_usage_cache["updated_at"] = datetime.utcnow().isoformat()
 
             logger.debug(f"Disk usage updated: {len(dirs)} directories")
-            await asyncio.sleep(600)  # 10 minutes
+            await asyncio.sleep(60)  # 1 minute
 
         except asyncio.CancelledError:
             logger.info("Disk usage loop cancelled")
@@ -663,7 +664,7 @@ async def websocket_system_resources(websocket: WebSocket):
     # Send buffered history so the client has a chart immediately
     if _resource_history:
         try:
-            await websocket.send_json({"type": "history", "snapshots": list(_resource_history)})
+            await websocket.send_json({"type": "history", "snapshots": list(_resource_history), "disk_usage": _disk_usage_cache})
         except Exception:
             pass
 

@@ -62,6 +62,12 @@ func main() {
 	http.HandleFunc("/ws", handleTerminal)
 	http.HandleFunc("/containers", handleContainers)
 
+	// SSH key injection
+	http.HandleFunc("/ssh-keys", handleSSHKeys)
+
+	// Config endpoint
+	http.HandleFunc("/config", handleConfig)
+
 	// Health
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -172,6 +178,29 @@ func handleDeployLogs(w http.ResponseWriter, r *http.Request) {
 		"result":  result,
 		"phase":   phase,
 	})
+}
+
+// --- Config endpoint ---
+
+func handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	cfg, err := ParsePreviewYML(codeDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to parse preview.yml: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	result := map[string]interface{}{
+		"domain_aliases": cfg.DomainAliases,
+		"docroot":        cfg.Docroot,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
 }
 
 // --- Terminal WebSocket (from vm-terminal-server) ---
@@ -376,6 +405,64 @@ func sendJSON(conn *websocket.Conn, msg wsMessage) error {
 	termWsMu.Lock()
 	defer termWsMu.Unlock()
 	return conn.WriteJSON(msg)
+}
+
+// --- SSH key injection ---
+
+func handleSSHKeys(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.PublicKey == "" {
+		http.Error(w, "public_key is required", http.StatusBadRequest)
+		return
+	}
+
+	// Find the PHP container using docker ps
+	out, err := exec.Command("docker", "ps", "--format", "{{.Names}}", "--filter", "name=-php").Output()
+	if err != nil {
+		http.Error(w, fmt.Sprintf("failed to find PHP container: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	containerName := strings.TrimSpace(string(out))
+	if containerName == "" {
+		http.Error(w, "no PHP container found", http.StatusNotFound)
+		return
+	}
+
+	// If multiple containers match, take the first one
+	if lines := strings.Split(containerName, "\n"); len(lines) > 1 {
+		containerName = strings.TrimSpace(lines[0])
+	}
+
+	// Inject the SSH key into the container's authorized_keys
+	// Uses grep -qF to avoid duplicates
+	shellCmd := fmt.Sprintf(
+		`mkdir -p /root/.ssh && chmod 700 /root/.ssh && grep -qF %q /root/.ssh/authorized_keys 2>/dev/null || echo %q >> /root/.ssh/authorized_keys`,
+		req.PublicKey, req.PublicKey,
+	)
+
+	injectCmd := exec.Command("docker", "exec", containerName, "bash", "-c", shellCmd)
+	if output, err := injectCmd.CombinedOutput(); err != nil {
+		http.Error(w, fmt.Sprintf("failed to inject SSH key: %v: %s", err, string(output)), http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("SSH key injected into container %s", containerName)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 }
 
 // loadEnvFile reads a simple KEY=VALUE env file and sets env vars.
