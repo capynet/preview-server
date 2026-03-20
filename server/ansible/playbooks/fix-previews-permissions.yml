@@ -1,22 +1,11 @@
+# DEPRECATED: /var/www/previews is no longer used.
+# Previews run on individual VMs managed by the VM Agent.
+# This playbook is kept for reference only.
 ---
-- name: Fix /var/www/previews permissions
+- name: "[DEPRECATED] Fix /var/www/previews permissions"
   hosts: preview-server
   become: yes
-
   tasks:
-    - name: Ensure /var/www/previews exists with correct ownership
-      file:
-        path: /var/www/previews
-        state: directory
-        mode: '0755'
-        owner: preview-user
-        group: preview-user
-
-    - name: Verify permissions
-      command: ls -ld /var/www/previews
-      register: dir_perms
-      changed_when: false
-
-    - name: Show directory permissions
+    - name: This playbook is deprecated
       debug:
-        msg: "{{ dir_perms.stdout }}"
+        msg: "/var/www/previews is no longer used — previews run on individual VMs"

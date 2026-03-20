@@ -29,7 +29,6 @@
 
     - name: Verify setup
       shell: |
-        echo "previews -> $(readlink /var/www/previews)"
         echo "backups  -> $(readlink /backups)"
         df -h {{ storage_volume_mount }} | tail -1
       register: result

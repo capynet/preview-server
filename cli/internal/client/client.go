@@ -117,14 +117,16 @@ func (c *Client) ListPreviews(includeStatus bool) (*PreviewListResult, error) {
 
 // PreviewDetail is the full preview info returned by the detail endpoint.
 type PreviewDetail struct {
-	PreviewName  string `json:"preview_name"`
-	ProjectSlug  string `json:"project_slug"`
-	OrgSlug      string `json:"org_slug"`
-	Status       string `json:"status"`
-	URL          string `json:"url"`
-	Branch       string `json:"branch"`
-	CommitSHA    string `json:"commit_sha"`
-	VmIP         string `json:"vm_ip"`
+	PreviewName    string            `json:"preview_name"`
+	ProjectSlug    string            `json:"project_slug"`
+	OrgSlug        string            `json:"org_slug"`
+	Status         string            `json:"status"`
+	URL            string            `json:"url"`
+	UrlHash        string            `json:"url_hash"`
+	Branch         string            `json:"branch"`
+	CommitSHA      string            `json:"commit_sha"`
+	VmIP           string            `json:"vm_ip"`
+	DomainAliases  map[string]string `json:"domain_aliases"`
 }
 
 func (c *Client) GetPreview(project, previewName string) (*PreviewDetail, error) {

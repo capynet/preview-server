@@ -147,6 +147,10 @@ func WriteSettings(repoPath string, job *DeployJob, cfg *PreviewConfig) error {
 		}
 
 		aliases := make(map[string]map[string]string)
+		// Default alias pointing to the base preview domain
+		aliases["default"] = map[string]string{
+			"uri": fmt.Sprintf("https://%s", job.Domain),
+		}
 		for _, prefix := range cfg.DomainAliases {
 			aliasDomain := fmt.Sprintf("%s--%s", prefix, job.Domain)
 			aliases[prefix] = map[string]string{

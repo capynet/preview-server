@@ -467,7 +467,7 @@ async def system_resources_loop():
 # ---------------------------------------------------------------------------
 
 _DISK_USAGE_DIRS = [
-    ("/var/www/previews", "Preview code"),
+    ("/var/www/preview-manager", "Preview Manager code"),
     ("/var/lib/docker", "Docker (coordinator)"),
     ("/var/log", "System logs"),
     ("/var/lib/containerd", "Container images (runtime)"),

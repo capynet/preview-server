@@ -275,7 +275,6 @@ async def create_mr_preview(
 
     url_hash = compute_url_hash(org_slug, project_slug, preview_name)
     preview_url = f"https://{url_hash}.mr.preview-mr.com"
-    preview_path_str = str(PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name))
 
     await PreviewStateManager.save_state(
         project_id, preview_name,
@@ -284,7 +283,6 @@ async def create_mr_preview(
         status="pending",
         url=preview_url,
         url_hash=url_hash,
-        path=preview_path_str,
         mr_id=body.mr_iid,
         mr_title=mr_title,
         target_branch=target_branch,
@@ -367,7 +365,6 @@ async def create_branch_preview(
     commit_sha = branch_data["commit"]["id"]
     url_hash = compute_url_hash(org_slug, project_slug, preview_name)
     preview_url = f"https://{url_hash}.mr.preview-mr.com"
-    preview_path = str(PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name))
 
     await PreviewStateManager.save_state(
         project_id, preview_name,
@@ -376,7 +373,6 @@ async def create_branch_preview(
         status="pending",
         url=preview_url,
         url_hash=url_hash,
-        path=preview_path,
         auto_update=0,
     )
 
@@ -581,13 +577,6 @@ async def delete_preview_internal(
         await caddy_manager.remove_preview_route(domain)
     except Exception as e:
         logger.warning(f"Error removing Caddy route for {org_slug}/{project_slug}/{preview_name}: {e}")
-
-    # Clean up local preview directory (compose files etc.)
-    preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
-    if preview_path.exists():
-        import shutil
-        shutil.rmtree(preview_path, ignore_errors=True)
-        logger.info(f"Cleaned up local directory: {preview_path}")
 
     from app.websockets import preview_list_manager
     await preview_list_manager.force_broadcast()

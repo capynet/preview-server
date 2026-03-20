@@ -17,17 +17,13 @@ This dir contains the server app itself
 /www/previews/server/preview-manager
 ```
 
-#### Deployed previews at
+#### Previews
 
-```
-/var/www/previews/
-```
+Cada preview corre en su propia VM (Hetzner Cloud). El código se clona y ejecuta directamente en la VM mediante el VM Agent.
 
 #### Resources (base db and files)
 
-```
-/backups
-```
+Almacenados en Hetzner Object Storage (S3).
 
 # UI [ui](ui)
 Is the UI of preview manager ([server](server))

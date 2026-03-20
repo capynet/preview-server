@@ -8,7 +8,6 @@
 #   storage_volume_mount: mount point of the volume (e.g. /mnt/HC_Volume_104801015)
 #
 # After running:
-#   /var/www/previews → {{ storage_volume_mount }}/previews
 #   /backups          → {{ storage_volume_mount }}/backups
 #   Docker root       → {{ storage_volume_mount }}/docker
 
@@ -42,7 +41,6 @@
     path: "{{ item }}"
     state: absent
   loop:
-    - /var/www/previews
     - /backups
 
 - name: Create symlinks
@@ -51,7 +49,6 @@
     dest: "{{ item.dest }}"
     state: link
   loop:
-    - { name: previews, dest: /var/www/previews }
     - { name: backups,  dest: /backups }
 
 # --- Docker data root ---

@@ -106,13 +106,6 @@ async def _clone_and_deploy(
             await deployment_log_broadcaster.register(early_deployment_id)
             await preview_list_manager.force_broadcast()
 
-        # Ensure local preview directory exists (for state management)
-        preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
-        preview_path.mkdir(parents=True, exist_ok=True)
-
-        # Note: git clone is now handled by the VM agent.
-        # The local preview_path is kept for state management only.
-
         deployer = PreviewDeployer(
             org_id=org_id,
             org_slug=org_slug,
