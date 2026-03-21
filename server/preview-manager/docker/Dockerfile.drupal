@@ -299,12 +299,22 @@ PubkeyAuthentication yes
 PasswordAuthentication no
 AcceptEnv LANG LC_*
 AuthorizedKeysFile /root/.ssh/authorized_keys
-PermitUserEnvironment yes
+ForceCommand /usr/local/bin/ssh-shell
 SSHD_EOF
 # Set root home to /var/www/html so SSH commands run from the project dir
 sed -i 's|root:x:0:0:root:/root:|root:x:0:0:root:/var/www/html:|' /etc/passwd
-# Export container env vars so SSH sessions can access them (PREV_*, DRUSH_*, etc.)
-env | grep -E '^(PREV_|DRUSH_|DOCUMENT_ROOT|COMPOSER_AUTH|PATH)=' > /root/.ssh/environment
+# Export container env vars for SSH sessions and create login wrapper
+xargs -0 -n1 < /proc/self/environ | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT= -e ^COMPOSER_AUTH= | sed 's/^/export /' > /etc/preview-env.sh || true
+cat > /usr/local/bin/ssh-shell <<'SHELL_EOF'
+#!/bin/bash
+. /etc/preview-env.sh 2>/dev/null
+if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
+    exec bash -l
+else
+    exec bash -c "$SSH_ORIGINAL_COMMAND"
+fi
+SHELL_EOF
+chmod +x /usr/local/bin/ssh-shell
 /usr/sbin/sshd
 
 # Ensure runtime dirs exist

@@ -232,7 +232,17 @@ func (d *Deployer) stepGenerateSettings() error {
 }
 
 func (d *Deployer) stepDockerPull() error {
-	return d.runCmd(codeDir, "docker", "compose", "pull", "--quiet")
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		err = d.runCmd(codeDir, "docker", "compose", "pull", "--quiet")
+		if err == nil {
+			return nil
+		}
+		if attempt < 3 {
+			d.log(fmt.Sprintf("Pull attempt %d failed, retrying...", attempt))
+		}
+	}
+	return err
 }
 
 func (d *Deployer) stepDockerUp() error {
@@ -282,6 +292,15 @@ func (d *Deployer) stepImportDB() error {
 		return fmt.Errorf("download failed: %w", err)
 	}
 
+	d.log("Dropping and recreating database...\n")
+	dropCmd := fmt.Sprintf(
+		"docker exec -e MYSQL_PWD=drupal %s mysql -u drupal -e 'DROP DATABASE drupal; CREATE DATABASE drupal;'",
+		dbContainer,
+	)
+	if err := d.runShell(dropCmd); err != nil {
+		return fmt.Errorf("drop/recreate database failed: %w", err)
+	}
+
 	d.log("Importing database...\n")
 	importCmd := fmt.Sprintf(
 		"gunzip < %s | docker exec -e MYSQL_PWD=drupal -i %s mysql -u drupal drupal && rm -f %s",
@@ -311,8 +330,8 @@ func (d *Deployer) stepImportFiles() error {
 
 	downloadCmd := S3DownloadStreamCmd(d.job.Storage, d.job.Storage.BaseFilesKey)
 	importCmd := fmt.Sprintf(
-		"mkdir -p %s && %s | tar xzf - -C %s && chown -R 33:33 %s",
-		filesDir, downloadCmd, filesDir, filesDir,
+		"rm -rf %s && mkdir -p %s && %s | tar xzf - -C %s && chown -R 33:33 %s",
+		filesDir, filesDir, downloadCmd, filesDir, filesDir,
 	)
 	return d.runShell(importCmd)
 }

@@ -161,7 +161,6 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos.
 - estaria bien ver en el listado de preview o en su detalle cual es el destino de un MR (a master u otra rama). Includo esto me da la idea de agrupar por destinations onda arbol. 
 - Tengo storage box medio imlementado. es un poco mas lento pero mucho mas barato que r2. claude tiene memoria: por ahora el output sale mal codigicado y prev server se satura al procesar el output. 
-- VM warm pool: Mantener siempre 1 VM pre-creada lista para asignar al instante en deploys nuevos, y reponer automáticamente tras cada uso. 
 - el preview agent podria abrover cualquier cosa que suceda en la vm. por ejemplo el uso de cpu ram y disco que veo en la preview detail page.
 -  "Usar estadísticas semanales de imágenes Docker más usadas para regenerar automáticamente el snapshot de VM con las imágenes con mayor probabilidad de uso, reduciendo el tiempo de pull en deploys."
 - Pre-cargar imágenes Docker en el snapshot de VM para eliminar el pull en la mayoría de deploys, manteniendo la phase 'Pulling Docker images' como fallback para imágenes no incluidas en el snapshot."
