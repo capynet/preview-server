@@ -210,7 +210,13 @@ func (d *Deployer) runSteps(steps []struct {
 
 func (d *Deployer) stepGitClone() error {
 	os.MkdirAll(codeDir, 0755)
-	return GitClone(codeDir, d.job.GitCloneURL, d.job.Branch, d.job.CommitSHA, d.job.ProxyURL, d.log)
+	if err := GitClone(codeDir, d.job.GitCloneURL, d.job.Branch, d.job.CommitSHA, d.job.ProxyURL, d.log); err != nil {
+		return err
+	}
+	// Make files group-writable so the 'preview' SSH user (in www-data group) can access them
+	exec.Command("chgrp", "-R", "www-data", codeDir).Run()
+	exec.Command("chmod", "-R", "g+rwX", codeDir).Run()
+	return nil
 }
 
 func (d *Deployer) stepParseConfig() error {
@@ -232,17 +238,27 @@ func (d *Deployer) stepGenerateSettings() error {
 }
 
 func (d *Deployer) stepDockerPull() error {
-	var err error
-	for attempt := 1; attempt <= 3; attempt++ {
-		err = d.runCmd(codeDir, "docker", "compose", "pull", "--quiet")
-		if err == nil {
-			return nil
+	// Pull each service individually with retries to avoid parallel pull failures
+	compose := GenerateDockerCompose(d.job, d.config)
+	services, _ := compose["services"].(map[string]interface{})
+
+	for svcName := range services {
+		var err error
+		for attempt := 1; attempt <= 3; attempt++ {
+			err = d.runCmd(codeDir, "docker", "compose", "pull", "--quiet", svcName)
+			if err == nil {
+				break
+			}
+			if attempt < 3 {
+				d.log(fmt.Sprintf("Pull %s failed (attempt %d/3), retrying...\n", svcName, attempt))
+				time.Sleep(3 * time.Second)
+			}
 		}
-		if attempt < 3 {
-			d.log(fmt.Sprintf("Pull attempt %d failed, retrying...", attempt))
+		if err != nil {
+			return fmt.Errorf("pull %s failed after 3 attempts: %w", svcName, err)
 		}
 	}
-	return err
+	return nil
 }
 
 func (d *Deployer) stepDockerUp() error {

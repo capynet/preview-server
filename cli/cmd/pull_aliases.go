@@ -111,7 +111,7 @@ Examples:
 			buf.WriteString(fmt.Sprintf("  uri: '%s'\n", a.uri))
 			buf.WriteString(fmt.Sprintf("  root: %s\n", drupalRoot))
 			buf.WriteString(fmt.Sprintf("  host: %s\n", detail.VmIP))
-			buf.WriteString("  user: root\n")
+			buf.WriteString("  user: preview\n")
 			buf.WriteString("  ssh:\n")
 			buf.WriteString(fmt.Sprintf("    options: '%s'\n", sshOpts))
 			buf.WriteString("  paths:\n")

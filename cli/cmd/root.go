@@ -247,7 +247,7 @@ func checkPreviewReady(detail *client.PreviewDetail, project, previewName string
 	}
 
 	if status == "creating" {
-		return fmt.Errorf("preview %s/%s has a deploy in progress. Wait for it to finish before running commands", project, previewName)
+		fmt.Fprintf(os.Stderr, "Warning: preview %s/%s has a deploy in progress. Containers may not be fully ready.\n", project, previewName)
 	}
 
 	return nil

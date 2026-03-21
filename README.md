@@ -167,7 +167,9 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
 - Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm. 
 - los script de deploy tienen acceso a un toolkit visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit gradico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
-
+-  Quiero que eliminnemos preview drush. Ahora con los alias ya podemos usar drush nativo.   
+- Vamos a cambiar la numeracion de los build. Ahora mismo se comparte entre todas las vm de todos los orgs. necesito que sea a nivel org o user o project. 
+- 
 Pendiente de arreglar:
 Fix del playbook setup-docker-preview.yml línea 44:
 

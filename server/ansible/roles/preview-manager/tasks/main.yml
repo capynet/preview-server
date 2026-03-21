@@ -145,6 +145,24 @@
     mode: '0755'
   tags: [code]
 
+- name: Build VM agent binary (local)
+  delegate_to: localhost
+  become: no
+  shell: >
+    cd {{ playbook_dir }}/../../../vm-agent &&
+    GOOS=linux GOARCH=amd64 go build -o bin/vm-agent .
+  changed_when: true
+  tags: [code]
+
+- name: Deploy VM agent binary
+  copy:
+    src: "{{ playbook_dir }}/../../../vm-agent/bin/vm-agent"
+    dest: /var/www/preview-manager/cli/preview-agent
+    owner: preview-manager
+    group: preview-manager
+    mode: '0755'
+  tags: [code]
+
 - name: Read SSH public key
   slurp:
     src: /home/preview-manager/.ssh/preview-vm.pub

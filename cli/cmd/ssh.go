@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"fmt"
 	"net"
 	"net/url"
@@ -102,7 +101,7 @@ func execSSH(r *resolvedPreview, container string, command []string) error {
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		fmt.Sprintf("root@%s", r.VmIP),
+		fmt.Sprintf("preview@%s", r.VmIP),
 		remoteCmd,
 	}
 
@@ -154,7 +153,7 @@ func runSSHCommand(r *resolvedPreview, container string, command []string) int {
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		fmt.Sprintf("root@%s", r.VmIP),
+		fmt.Sprintf("preview@%s", r.VmIP),
 		remoteCmd,
 	)
 	cmd.Stdin = os.Stdin
@@ -225,27 +224,13 @@ func ensureSSHKeyRegistered() error {
 }
 
 // ensureSSHKeyOnPreview injects the user's SSH public key into the preview VM's PHP container.
-// Caches per preview to avoid re-injecting every time.
 func ensureSSHKeyOnPreview(r *resolvedPreview) error {
 	pubKey := getLocalSSHPublicKey()
 	if pubKey == "" {
 		return fmt.Errorf("no SSH public key found in ~/.ssh/")
 	}
 
-	// Check cache: /tmp/preview-sshkey-{hash}.done
-	h := sha256.Sum256([]byte(r.Project + "/" + r.PreviewName + ":" + pubKey))
-	cacheFile := filepath.Join(os.TempDir(), fmt.Sprintf("preview-sshkey-%x.done", h[:8]))
-	if _, err := os.Stat(cacheFile); err == nil {
-		return nil // already injected
-	}
-
-	if err := apiClient.InjectSSHKey(r.Project, r.PreviewName, pubKey); err != nil {
-		return err
-	}
-
-	// Cache success
-	os.WriteFile(cacheFile, []byte("ok"), 0600)
-	return nil
+	return apiClient.InjectSSHKey(r.Project, r.PreviewName, pubKey)
 }
 
 // getLocalSSHPublicKey reads the first SSH public key found in ~/.ssh/.

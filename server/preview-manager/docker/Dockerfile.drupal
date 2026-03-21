@@ -13,6 +13,14 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN groupadd -g 33 www-data 2>/dev/null || true \
     && useradd -u 33 -g 33 -s /usr/sbin/nologin -d /var/www www-data 2>/dev/null || true
 
+# Create preview user for SSH access (member of www-data group for file access)
+RUN useradd -m -d /home/preview -s /bin/bash -G www-data preview \
+    && mkdir -p /home/preview/.ssh \
+    && chmod 700 /home/preview/.ssh \
+    && touch /home/preview/.ssh/authorized_keys \
+    && chmod 600 /home/preview/.ssh/authorized_keys \
+    && chown -R preview:preview /home/preview
+
 # Install OpenLiteSpeed and lsphp from official repo
 # Note: gd, mbstring, xml, zip, bcmath, bz2, sodium, gmp, exif, soap
 # are included in lsphp-common or the base lsphp package
@@ -286,28 +294,22 @@ module cache {\
 }' /usr/local/lsws/conf/httpd_config.conf
 fi
 
-# Start SSH server on port 2222 for direct access
-mkdir -p /run/sshd /root/.ssh
-chmod 700 /root/.ssh
-touch /root/.ssh/authorized_keys
-chmod 600 /root/.ssh/authorized_keys
-# Configure sshd to listen on 2222 and accept env vars
+# Start SSH server on port 2222 for direct access via 'preview' user
+mkdir -p /run/sshd && chmod 755 /run/sshd
 cat > /etc/ssh/sshd_config.d/preview.conf <<'SSHD_EOF'
 Port 2222
-PermitRootLogin yes
+PermitRootLogin no
 PubkeyAuthentication yes
 PasswordAuthentication no
 AcceptEnv LANG LC_*
-AuthorizedKeysFile /root/.ssh/authorized_keys
 ForceCommand /usr/local/bin/ssh-shell
 SSHD_EOF
-# Set root home to /var/www/html so SSH commands run from the project dir
-sed -i 's|root:x:0:0:root:/root:|root:x:0:0:root:/var/www/html:|' /etc/passwd
 # Export container env vars for SSH sessions and create login wrapper
 xargs -0 -n1 < /proc/self/environ | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT= -e ^COMPOSER_AUTH= | sed 's/^/export /' > /etc/preview-env.sh || true
 cat > /usr/local/bin/ssh-shell <<'SHELL_EOF'
 #!/bin/bash
 . /etc/preview-env.sh 2>/dev/null
+cd /var/www/html
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
     exec bash -l
 else
