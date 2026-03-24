@@ -308,7 +308,7 @@ AcceptEnv LANG LC_*
 ForceCommand /usr/local/bin/ssh-shell
 SSHD_EOF
 # Export container env vars for SSH sessions and create login wrapper
-xargs -0 -n1 < /proc/self/environ | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT= -e ^COMPOSER_AUTH= | sed 's/^/export /' > /etc/preview-env.sh || true
+printenv | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT= -e ^COMPOSER_AUTH= | sed 's/^/export /' > /etc/preview-env.sh || true
 cat > /usr/local/bin/ssh-shell <<'SHELL_EOF'
 #!/bin/bash
 . /etc/preview-env.sh 2>/dev/null
