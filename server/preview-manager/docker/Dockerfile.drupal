@@ -80,7 +80,8 @@ RUN mkdir -p $NVM_DIR \
     && nvm install 20 \
     && nvm install --lts \
     && nvm alias default lts/* \
-    && nvm cache clear
+    && nvm cache clear \
+    && chmod -R a+w $NVM_DIR
 
 # Create wrapper scripts so nvm/node/npm/npx work from #!/bin/sh scripts.
 # nvm is a bash function, so sh scripts cannot source it directly.
