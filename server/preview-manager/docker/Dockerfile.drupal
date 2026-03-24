@@ -294,6 +294,9 @@ module cache {\
 }' /usr/local/lsws/conf/httpd_config.conf
 fi
 
+# Ensure /var/www and all its contents belong to www-data
+chown -R www-data:www-data /var/www
+
 # Start SSH server on port 2222 for direct access via 'preview' user
 mkdir -p /run/sshd && chmod 755 /run/sshd
 cat > /etc/ssh/sshd_config.d/preview.conf <<'SSHD_EOF'
@@ -309,6 +312,9 @@ xargs -0 -n1 < /proc/self/environ | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT=
 cat > /usr/local/bin/ssh-shell <<'SHELL_EOF'
 #!/bin/bash
 . /etc/preview-env.sh 2>/dev/null
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=safe.directory
+export GIT_CONFIG_VALUE_0=/var/www/html
 cd /var/www/html
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
     exec bash -l

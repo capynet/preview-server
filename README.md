@@ -169,7 +169,7 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - los script de deploy tienen acceso a un toolkit visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit gradico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
 -  Quiero que eliminnemos preview drush. Ahora con los alias ya podemos usar drush nativo.   
 - Vamos a cambiar la numeracion de los build. Ahora mismo se comparte entre todas las vm de todos los orgs. necesito que sea a nivel org o user o project. 
-- 
+- añadir autocompletado al hacer tab en la cli.
 Pendiente de arreglar:
 Fix del playbook setup-docker-preview.yml línea 44:
 

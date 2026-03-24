@@ -266,7 +266,8 @@ func handleTerminal(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("Terminal session started for container %s", container)
 
-	cmd := exec.Command("docker", "exec", "-it", container, "bash")
+	cmd := exec.Command("docker", "exec", "-it", "-w", "/var/www/html", container, "bash")
+	cmd.Dir = "/"
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
 		log.Printf("Failed to start PTY: %v", err)
@@ -453,7 +454,7 @@ func handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 		req.PublicKey, req.PublicKey,
 	)
 
-	injectCmd := exec.Command("docker", "exec", containerName, "bash", "-c", shellCmd)
+	injectCmd := exec.Command("docker", "exec", "-w", "/", containerName, "bash", "-c", shellCmd)
 	if output, err := injectCmd.CombinedOutput(); err != nil {
 		http.Error(w, fmt.Sprintf("failed to inject SSH key: %v: %s", err, string(output)), http.StatusInternalServerError)
 		return

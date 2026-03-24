@@ -320,11 +320,17 @@ class PreviewDeployer:
     async def deploy(self) -> bool:
         """Entry point. Returns True on success."""
         if await self.is_creating():
-            logger.warning(
-                f"Skipping deploy for {self.project_slug}/{self.preview_name}: "
-                "already creating"
-            )
-            return False
+            # Another deploy is in progress — cancel it and take over
+            logger.info(f"Taking over from previous deploy for {self.project_slug}/{self.preview_name}")
+            preview = await get_preview(self.project_id, self.preview_name)
+            if preview:
+                from app.database import get_running_deployment
+                existing = await get_running_deployment(preview["id"])
+                if existing and existing["id"] != self._deployment_id:
+                    await finish_deployment(
+                        existing["id"], "cancelled",
+                        error="Superseded by new deploy",
+                    )
 
         await self._save_state("creating")
         self._log_buffer = []
@@ -855,6 +861,7 @@ class PreviewDeployer:
                 return None
 
         while time.monotonic() < deadline:
+            await self._check_cancelled()
             data = await asyncio.to_thread(_poll, log_offset)
 
             if data:

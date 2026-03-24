@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -62,9 +61,10 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		dbImage = "mysql:" + dbImage
 	}
 
-	// Host UID/GID for www-data remapping
-	hostUID := strconv.Itoa(os.Getuid())
-	hostGID := strconv.Itoa(os.Getgid())
+	// Host UID/GID for www-data remapping — always 33 (www-data convention)
+	// so the entrypoint does NOT remap www-data to root's UID.
+	hostUID := "33"
+	hostGID := "33"
 
 	// PHP environment
 	phpEnv := map[string]string{
@@ -88,6 +88,11 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		"PREV_FILE_TEMP_PATH":        "/tmp",
 		"PREV_FILE_TRANSLATIONS_PATH": "sites/default/files/translations",
 		"DOCUMENT_ROOT":              fmt.Sprintf("/var/www/html/%s", cfg.Docroot),
+	}
+
+	if job.ProxyURL != "" {
+		phpEnv["PREV_HTTP_PROXY"] = job.ProxyURL
+		phpEnv["PREV_HTTPS_PROXY"] = job.ProxyURL
 	}
 
 	if cfg.LitespeedCache {

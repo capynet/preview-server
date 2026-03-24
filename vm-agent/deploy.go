@@ -213,8 +213,9 @@ func (d *Deployer) stepGitClone() error {
 	if err := GitClone(codeDir, d.job.GitCloneURL, d.job.Branch, d.job.CommitSHA, d.job.ProxyURL, d.log); err != nil {
 		return err
 	}
-	// Make files group-writable so the 'preview' SSH user (in www-data group) can access them
-	exec.Command("chgrp", "-R", "www-data", codeDir).Run()
+	// Set ownership to www-data (UID 33) so PHP and the 'preview' SSH user
+	// (member of www-data group) can read and write files inside the container.
+	exec.Command("chown", "-R", "33:33", codeDir).Run()
 	exec.Command("chmod", "-R", "g+rwX", codeDir).Run()
 	return nil
 }
@@ -262,7 +263,18 @@ func (d *Deployer) stepDockerPull() error {
 }
 
 func (d *Deployer) stepDockerUp() error {
-	return d.runCmd(codeDir, "docker", "compose", "up", "-d", "--pull", "missing")
+	if err := d.runCmd(codeDir, "docker", "compose", "up", "-d", "--force-recreate", "--pull", "always"); err != nil {
+		return err
+	}
+
+	// Log image digests for traceability
+	prefix := makeContainerPrefix(d.job.ProjectSlug, d.job.PreviewName)
+	out, _ := exec.Command("docker", "inspect", "--format",
+		"{{.Config.Image}} {{.Image}}", prefix+"-php").CombinedOutput()
+	if len(out) > 0 {
+		d.log(fmt.Sprintf("PHP image: %s", string(out)))
+	}
+	return nil
 }
 
 func (d *Deployer) stepWaitForDB() error {
@@ -278,6 +290,7 @@ func (d *Deployer) stepWaitForDB() error {
 
 		cmd := exec.Command("docker", "exec", dbContainer,
 			"mysql", "-u", "drupal", "-pdrupal", "drupal", "-e", "SELECT 1")
+		cmd.Dir = "/"
 		if err := cmd.Run(); err == nil {
 			d.log("Database is ready.\n")
 			return nil
@@ -359,10 +372,14 @@ func (d *Deployer) dockerExecArgs(extraEnv ...string) []string {
 
 	args := []string{"exec",
 		"-t",
+		"-u", "www-data",
 		"-w", "/var/www/html",
 		"-e", "TERM=xterm-256color",
 		"-e", "COLUMNS=200",
 		"-e", "FORCE_COLOR=1",
+		"-e", "GIT_CONFIG_COUNT=1",
+		"-e", "GIT_CONFIG_KEY_0=safe.directory",
+		"-e", "GIT_CONFIG_VALUE_0=/var/www/html",
 	}
 	if d.job.ProxyURL != "" {
 		args = append(args, "-e", "PREV_HTTP_PROXY="+d.job.ProxyURL)
@@ -433,6 +450,8 @@ func (d *Deployer) runCmd(dir string, name string, args ...string) error {
 	cmd := exec.CommandContext(d.ctx, name, args...)
 	if dir != "" {
 		cmd.Dir = dir
+	} else {
+		cmd.Dir = "/"
 	}
 	cmd.Stdout = &logWriter{d: d}
 	cmd.Stderr = &logWriter{d: d}
@@ -441,6 +460,7 @@ func (d *Deployer) runCmd(dir string, name string, args ...string) error {
 
 func (d *Deployer) runShell(shell string) error {
 	cmd := exec.CommandContext(d.ctx, "bash", "-c", shell)
+	cmd.Dir = "/"
 	cmd.Stdout = &logWriter{d: d}
 	cmd.Stderr = &logWriter{d: d}
 	return cmd.Run()

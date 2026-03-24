@@ -24,6 +24,8 @@ from app.database import (
     compute_url_hash,
     update_last_accessed,
     list_user_organizations,
+    get_running_deployment,
+    finish_deployment,
 )
 from app.auth.dependencies import require_project_role, get_current_user
 from app.auth.models import OrgRole, UserWithContext
@@ -939,6 +941,30 @@ async def rebuild_preview(
     if await is_deploy_locked(deploy_key):
         await request_deploy_cancel(deploy_key)
         logger.info(f"Cancelling active deploy for {deploy_key} — rebuild requested")
+
+        # Also cancel the deploy on the VM agent directly
+        vm_ip = state.get("vm_ip")
+        if vm_ip:
+            import httpx
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    await client.post(f"http://{vm_ip}:8022/deploy/cancel")
+                    logger.info(f"Sent cancel to VM agent at {vm_ip}")
+            except Exception as e:
+                logger.warning(f"Failed to cancel on VM agent: {e}")
+
+        # Mark any running deployment as cancelled in DB
+        preview = await get_preview(project_id, preview_name)
+        if preview:
+            from app.database import get_running_deployment
+            existing = await get_running_deployment(preview["id"])
+            if existing:
+                await finish_deployment(
+                    existing["id"], "cancelled",
+                    error="Cancelled by new deploy request",
+                )
+                from app.websockets import deployment_log_broadcaster
+                await deployment_log_broadcaster.complete(existing["id"], False)
 
     trigger_type = "rebuild" if force_new else "update"
     logger.info(
