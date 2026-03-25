@@ -526,6 +526,9 @@ func (d *Deployer) writeResult(success bool, duration int, errMsg string) {
 		"error":            errMsg,
 		"had_post_deploy":  d.phase == "post_deploy",
 	}
+	if d.config != nil {
+		result["stack"] = d.config.StackInfo()
+	}
 	data, _ := json.Marshal(result)
 	resultPath := filepath.Join(logsDir, fmt.Sprintf("%d.result.json", d.job.DeploymentID))
 	os.WriteFile(resultPath, data, 0644)

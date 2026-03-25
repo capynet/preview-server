@@ -65,8 +65,8 @@ func main() {
 	// SSH key injection
 	http.HandleFunc("/ssh-keys", handleSSHKeys)
 
-	// Config endpoint
-	http.HandleFunc("/config", handleConfig)
+	// Info endpoint (VM metadata: stack, domain aliases, expose, docroot)
+	http.HandleFunc("/info", handleInfo)
 
 	// Health
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
@@ -180,9 +180,9 @@ func handleDeployLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- Config endpoint ---
+// --- Info endpoint ---
 
-func handleConfig(w http.ResponseWriter, r *http.Request) {
+func handleInfo(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -195,7 +195,9 @@ func handleConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result := map[string]interface{}{
+		"stack":          cfg.StackInfo(),
 		"domain_aliases": cfg.DomainAliases,
+		"expose":         cfg.Expose,
 		"docroot":        cfg.Docroot,
 	}
 

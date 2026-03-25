@@ -8,6 +8,8 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+import urllib.request
+import urllib.error
 from urllib.parse import urlparse
 
 from app.state import PreviewStateManager
@@ -374,6 +376,10 @@ class PreviewDeployer:
             # Use agent-based deployment
             logger.info(f"{deploy_type} deploy (agent): {self.project_slug}/{self.preview_name}")
             agent_result = await self._deploy_via_agent(is_new)
+
+            # Save stack info from agent result (fallback if mid-deploy fetch missed it)
+            if agent_result and agent_result.get("stack"):
+                self._agent_stack = agent_result["stack"]
 
             deploy_duration = int((datetime.now(timezone.utc) - start).total_seconds())
 
@@ -835,8 +841,6 @@ class PreviewDeployer:
 
     async def _wait_for_agent_completion(self, timeout: int = 36000):
         """Poll the agent for deploy logs and completion status."""
-        import urllib.request
-        import urllib.error
 
         log_offset = 0
         current_phase = "deploy"
@@ -845,6 +849,8 @@ class PreviewDeployer:
         poll_interval = 2  # seconds
         poll_url = f"http://{self._vm_ip}:8022/deploy/logs/{self._deployment_id}"
         status_url = f"http://{self._vm_ip}:8022/deploy/status"
+        info_url = f"http://{self._vm_ip}:8022/info"
+        fetched_info = False
 
         def _poll(offset: int) -> dict | None:
             try:
@@ -918,6 +924,12 @@ class PreviewDeployer:
                         # Previous step finished successfully, new step started
                         if current_step:
                             await self._phase_tracker.end_phase(current_step, True)
+
+                        # Fetch VM info once agent is past generate_compose
+                        post_compose_steps = {"generate_settings", "docker_pull", "docker_up", "wait_for_db", "import_db", "import_files", "deploy_script", "post_deploy"}
+                        if not fetched_info and step in post_compose_steps:
+                            fetched_info = await self._fetch_and_save_vm_info(info_url)
+
                         current_step = step
                         await self._phase_tracker.start_phase(step)
                     elif agent_status in ("success", "failed") and current_step:
@@ -930,6 +942,40 @@ class PreviewDeployer:
             await asyncio.sleep(poll_interval)
 
         raise RuntimeError(f"Agent deploy timed out after {timeout}s")
+
+    async def _fetch_and_save_vm_info(self, info_url: str) -> bool:
+        """Fetch /info from VM agent and save stack + domain_aliases to DB."""
+        try:
+            def _fetch():
+                req = urllib.request.urlopen(info_url, timeout=5)
+                return json.loads(req.read())
+
+            data = await asyncio.to_thread(_fetch)
+            fields = {}
+
+            stack = data.get("stack")
+            if stack:
+                fields["stack_info"] = json.dumps(stack)
+                self._agent_stack = stack
+
+            aliases = data.get("domain_aliases")
+            if aliases:
+                fields["domain_aliases"] = json.dumps(aliases)
+
+            if fields:
+                await PreviewStateManager.save_state(
+                    self.project_id, self.preview_name, **fields
+                )
+                logger.info(f"Saved VM info mid-deploy for {self.project_slug}/{self.preview_name}")
+                try:
+                    from app.valkey import publish_event
+                    await publish_event("previews:global", {"type": "preview_updated"})
+                except Exception:
+                    pass
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to fetch VM info mid-deploy: {e}")
+            return False
 
     def _generate_callback_token(self) -> str:
         """Generate a short-lived HMAC token for agent WebSocket auth."""
@@ -1358,9 +1404,11 @@ class PreviewDeployer:
             fields["last_deployed_at"] = now
             # Save expose config so the middleware can route exposed services
             if self._preview_config:
-                import json
                 expose = self._preview_config.get("expose") or {}
                 fields["expose_config"] = json.dumps(expose)
+            # Save stack info (fallback — may already be saved mid-deploy)
+            if hasattr(self, '_agent_stack') and self._agent_stack:
+                fields["stack_info"] = json.dumps(self._agent_stack)
         if status in ("active", "failed"):
             fields["last_deployment_status"] = status
             fields["last_deployment_completed_at"] = now

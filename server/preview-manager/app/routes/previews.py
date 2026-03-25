@@ -5,7 +5,6 @@ import logging
 import re
 import time
 from datetime import timedelta
-from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -115,70 +114,36 @@ def _build_preview_info(state: dict) -> PreviewInfo:
     project_slug = state.get("project_slug", state.get("project", ""))
     url_hash = state.get("url_hash", "")
 
-    # Extract stack info from docker-compose.yml (local copy)
-    exposed_services: dict[str, str] = {}
+    # Stack info from DB (saved by VM agent during deploy)
     stack: dict[str, str] = {}
-    preview_path = state.get("path", "")
-    if preview_path:
-        compose_file = Path(preview_path) / "docker-compose.yml"
-        if compose_file.exists():
-            try:
-                import yaml
-                compose = yaml.safe_load(compose_file.read_text()) or {}
-                services = compose.get("services", {})
-                preview_domain = f"{url_hash}.mr.preview-mr.com"
-
-                # Exposed services (port mappings on non-php services)
-                for svc_name, svc in services.items():
-                    if svc_name == "php":
-                        continue
-                    if svc.get("ports"):
-                        for port_map in svc["ports"]:
-                            port = str(port_map).split(":")[0]
-                            exposed_services[svc_name] = f"https://{svc_name}--{preview_domain}"
-
-                # Stack: PHP version
-                php_image = (services.get("php") or {}).get("image", "")
-                if ":php" in php_image:
-                    stack["PHP"] = php_image.split(":php")[-1]
-                    stack["Webserver"] = "OpenLiteSpeed"
-
-                # Stack: Database — strip registry prefix (e.g. "91.99.157.66:5000/mysql:5.7" -> "mysql:5.7")
-                db_image = (services.get("db") or {}).get("image", "")
-                if db_image:
-                    stack["Database"] = db_image.split("/")[-1]
-
-                # Stack: Redis/Valkey
-                redis_image = (services.get("redis") or {}).get("image", "")
-                if redis_image:
-                    if "valkey" in redis_image:
-                        ver = redis_image.split(":")[-1].replace("-alpine", "") if ":" in redis_image else ""
-                        stack["Valkey"] = ver or redis_image
-                    else:
-                        ver = redis_image.split(":")[-1].replace("-alpine", "") if ":" in redis_image else ""
-                        stack["Redis"] = ver or redis_image
-
-                # Stack: Solr
-                solr_image = (services.get("solr") or {}).get("image", "")
-                if solr_image and ":" in solr_image:
-                    stack["Solr"] = solr_image.split(":")[-1]
-
-                # Stack: LiteSpeed Cache
-                php_env = (services.get("php") or {}).get("environment", {})
-                if php_env.get("PREV_LITESPEED_CACHE") == "1":
-                    stack["LSCache"] = "Enabled"
-            except Exception:
-                pass
-
-    # Domain aliases: extract from preview.yml
-    domain_aliases: dict[str, str] = {}
-    if preview_path:
+    stack_info_raw = state.get("stack_info")
+    if stack_info_raw:
         try:
-            from app.docker_compose import parse_preview_yml
-            config = parse_preview_yml(Path(preview_path))
-            for prefix in config.get("domain_aliases", []):
+            stack = json.loads(stack_info_raw) if isinstance(stack_info_raw, str) else stack_info_raw
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Exposed services from expose_config in DB
+    exposed_services: dict[str, str] = {}
+    expose_config_raw = state.get("expose_config")
+    if expose_config_raw and url_hash:
+        try:
+            expose_config = json.loads(expose_config_raw) if isinstance(expose_config_raw, str) else expose_config_raw
+            preview_domain = f"{url_hash}.mr.preview-mr.com"
+            for svc_name in expose_config:
+                exposed_services[svc_name] = f"https://{svc_name}--{preview_domain}"
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Domain aliases from DB (saved by VM agent during deploy)
+    domain_aliases: dict[str, str] = {}
+    aliases_raw = state.get("domain_aliases")
+    if aliases_raw and url_hash:
+        try:
+            aliases_list = json.loads(aliases_raw) if isinstance(aliases_raw, str) else aliases_raw
+            for prefix in aliases_list:
                 domain_aliases[prefix] = f"https://{prefix}--{url_hash}.mr.preview-mr.com"
-        except Exception:
+        except (json.JSONDecodeError, TypeError):
             pass
 
     return PreviewInfo(

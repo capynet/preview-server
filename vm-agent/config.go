@@ -240,6 +240,36 @@ func serviceVersion(v interface{}, defaultVer string) string {
 	return defaultVer
 }
 
+// StackInfo returns the technology stack as a map suitable for the UI.
+func (cfg *PreviewConfig) StackInfo() map[string]string {
+	stack := map[string]string{}
+
+	if cfg.PHPVersion != "" {
+		stack["PHP"] = cfg.PHPVersion
+		stack["Webserver"] = "OpenLiteSpeed"
+	}
+
+	if cfg.Database != "" {
+		stack["Database"] = cfg.Database
+	}
+
+	if isServiceEnabled(cfg.Valkey) {
+		stack["Valkey"] = serviceVersion(cfg.Valkey, "8")
+	} else if isServiceEnabled(cfg.Redis) {
+		stack["Redis"] = serviceVersion(cfg.Redis, "7")
+	}
+
+	if isServiceEnabled(cfg.Solr) {
+		stack["Solr"] = serviceVersion(cfg.Solr, "9")
+	}
+
+	if cfg.LitespeedCache {
+		stack["LSCache"] = "Enabled"
+	}
+
+	return stack
+}
+
 func detectDocroot(repoPath string) string {
 	for _, candidate := range []string{"web", "docroot"} {
 		if info, err := os.Stat(filepath.Join(repoPath, candidate)); err == nil && info.IsDir() {

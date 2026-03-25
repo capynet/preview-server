@@ -457,8 +457,8 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
                 created_at, last_deployed_at,
                 last_deployment_status, last_deployment_error,
                 last_deployment_duration, last_deployment_completed_at,
-                auto_update, pinned, env_vars)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                auto_update, pinned, env_vars, stack_info, domain_aliases)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
                RETURNING *""",
             project_id,
             preview_name,
@@ -479,6 +479,8 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
             fields.get("auto_update", 1),
             fields.get("pinned", 0),
             fields.get("env_vars", "{}"),
+            fields.get("stack_info"),
+            fields.get("domain_aliases"),
         )
         return _row_to_dict(row)
 
