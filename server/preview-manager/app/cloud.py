@@ -219,7 +219,7 @@ class HetznerCloudManager:
         # Phase 2: Wait for SSH
         remaining = max(30, timeout - int(time.monotonic() - start))
         from app.remote import RemoteExecutor
-        executor = RemoteExecutor(ip)
+        executor = RemoteExecutor(ip, user="root")
         await executor.wait_for_ssh(timeout=remaining)
         return ip
 

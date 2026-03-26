@@ -29,6 +29,8 @@ LOCATION="fsn1"
 SERVER_TYPE="cx23"
 SERVER_NAME="snapshot-builder-$(date +%s)"
 IMAGE="ubuntu-24.04"
+SSH_KEY_PATH="${SSH_KEY_PATH:-/home/preview-manager/.ssh/preview-vm}"
+SSH_CMD="ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # Collect existing preview-base-image snapshot IDs (only ours, not unrelated snapshots)
 OLD_SNAPSHOT_IDS=$(hcloud image list --type snapshot --selector "$SNAPSHOT_LABEL" -o noheader -o columns=id 2>/dev/null | tr '\n' ' ')
@@ -52,14 +54,14 @@ echo "==> VM created: $SERVER_IP"
 # Wait for SSH
 echo "==> Waiting for SSH..."
 for i in $(seq 1 30); do
-    if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@"$SERVER_IP" true 2>/dev/null; then
+    if $SSH_CMD -o ConnectTimeout=5 root@"$SERVER_IP" true 2>/dev/null; then
         break
     fi
     sleep 2
 done
 
 echo "==> Installing Docker + tools"
-ssh -o StrictHostKeyChecking=no root@"$SERVER_IP" bash <<'REMOTE'
+$SSH_CMD root@"$SERVER_IP" bash <<'REMOTE'
 set -euo pipefail
 
 # Install Docker
@@ -79,6 +81,26 @@ systemctl start docker
 # Configure insecure registry for private image pulls
 echo '{"insecure-registries": ["91.99.157.66:5000"]}' > /etc/docker/daemon.json
 systemctl restart docker
+
+# Create 'preview' user with UID 33 (same as www-data inside containers)
+# This eliminates all chown operations — files created by the agent are already
+# owned by the correct UID for PHP containers.
+userdel www-data 2>/dev/null || true
+groupadd -g 33 www-data 2>/dev/null || true
+useradd -u 33 -g 33 -m -d /var/www/preview -s /bin/bash preview
+usermod -aG docker preview
+
+# Create working directories
+mkdir -p /var/www/preview/{code,logs,bin,.ssh}
+chown -R preview:www-data /var/www/preview
+chmod 700 /var/www/preview/.ssh
+
+# Copy root's SSH authorized_keys so the coordinator can SSH as preview
+cp /root/.ssh/authorized_keys /var/www/preview/.ssh/authorized_keys
+chown preview:www-data /var/www/preview/.ssh/authorized_keys
+
+# Create Docker network used by preview containers
+docker network create preview-network 2>/dev/null || true
 
 # Clean up apt cache
 apt-get clean

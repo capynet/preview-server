@@ -213,10 +213,6 @@ func (d *Deployer) stepGitClone() error {
 	if err := GitClone(codeDir, d.job.GitCloneURL, d.job.Branch, d.job.CommitSHA, d.job.ProxyURL, d.log); err != nil {
 		return err
 	}
-	// Set ownership to www-data (UID 33) so PHP and the 'preview' SSH user
-	// (member of www-data group) can read and write files inside the container.
-	exec.Command("chown", "-R", "33:33", codeDir).Run()
-	exec.Command("chmod", "-R", "g+rwX", codeDir).Run()
 	return nil
 }
 
@@ -359,8 +355,8 @@ func (d *Deployer) stepImportFiles() error {
 
 	downloadCmd := S3DownloadStreamCmd(d.job.Storage, d.job.Storage.BaseFilesKey)
 	importCmd := fmt.Sprintf(
-		"rm -rf %s && mkdir -p %s && %s | tar xzf - -C %s && chown -R 33:33 %s",
-		filesDir, filesDir, downloadCmd, filesDir, filesDir,
+		"rm -rf %s && mkdir -p %s && %s | tar xzf - -C %s",
+		filesDir, filesDir, downloadCmd, filesDir,
 	)
 	return d.runShell(importCmd)
 }

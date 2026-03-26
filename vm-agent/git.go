@@ -14,8 +14,7 @@ func GitClone(repoPath, cloneURL, branch, commitSHA, proxyURL string, log func(s
 	gitDir := filepath.Join(repoPath, ".git")
 
 	env := os.Environ()
-	// Ensure HOME is set (systemd services may not have it)
-	// so git can find ~/.gitconfig for safe.directory
+	// Ensure HOME is set so git can find config files
 	hasHome := false
 	for _, e := range env {
 		if strings.HasPrefix(e, "HOME=") {
@@ -24,7 +23,7 @@ func GitClone(repoPath, cloneURL, branch, commitSHA, proxyURL string, log func(s
 		}
 	}
 	if !hasHome {
-		env = append(env, "HOME=/root")
+		env = append(env, "HOME=/var/www/preview")
 	}
 	if proxyURL != "" {
 		env = append(env, "HTTP_PROXY="+proxyURL, "HTTPS_PROXY="+proxyURL)
@@ -33,11 +32,6 @@ func GitClone(repoPath, cloneURL, branch, commitSHA, proxyURL string, log func(s
 	if info, err := os.Stat(gitDir); err == nil && info.IsDir() {
 		// Incremental update
 		log("Fetching latest changes...\n")
-
-		// Mark directory as safe (agent runs as root, repo owned by www-data)
-		safeCmd := exec.Command("git", "config", "--global", "--add", "safe.directory", repoPath)
-		safeCmd.Env = env
-		safeCmd.Run()
 
 		// Update remote URL (token may have changed)
 		if err := runGit(repoPath, env, "remote", "set-url", "origin", cloneURL); err != nil {

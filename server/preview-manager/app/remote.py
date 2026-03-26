@@ -19,7 +19,7 @@ SSH_OPTS = [
 class RemoteExecutor:
     """Execute commands on a remote VM via SSH."""
 
-    def __init__(self, ip: str, user: str = "root"):
+    def __init__(self, ip: str, user: str = "preview"):
         self.ip = ip
         self.user = user
         self._key_path = settings.hetzner_ssh_private_key_path

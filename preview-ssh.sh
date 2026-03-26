@@ -79,7 +79,7 @@ echo "→ ${PROJECT}/${PREVIEW} @ ${VM_IP}"
 # Connect to VM through main server
 # The SSH key lives on the main server, so we SSH there first and then hop to the VM
 if [[ $# -gt 0 ]]; then
-    ssh_main "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@${VM_IP} $*"
+    ssh_main "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR preview@${VM_IP} $*"
 else
-    ssh -t "root@${MAIN_SERVER}" "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -t root@${VM_IP}"
+    ssh -t "root@${MAIN_SERVER}" "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -t preview@${VM_IP}"
 fi

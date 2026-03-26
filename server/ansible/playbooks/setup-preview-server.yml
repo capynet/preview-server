@@ -40,6 +40,12 @@
         state: present
         update_cache: yes
 
+    - name: Install hcloud CLI
+      shell: |
+        curl -sL https://github.com/hetznercloud/cli/releases/latest/download/hcloud-linux-amd64.tar.gz | tar xz -C /usr/local/bin hcloud
+      args:
+        creates: /usr/local/bin/hcloud
+
     - name: Resumen de instalacion
       debug:
         msg: |

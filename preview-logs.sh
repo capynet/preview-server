@@ -34,7 +34,7 @@ ssh_vm() {
     # Base64-encode the command to avoid quoting hell in double SSH hop
     local encoded
     encoded=$(echo "$*" | base64 -w0)
-    ssh_main "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR root@${vm_ip} \"echo ${encoded} | base64 -d | bash\""
+    ssh_main "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR preview@${vm_ip} \"echo ${encoded} | base64 -d | bash\""
 }
 
 db_query() {

@@ -64,4 +64,4 @@ else
     DOCKER_CMD="$DOCKER_CMD $CONTAINER bash"
 fi
 
-exec ssh -t -i "$KEY" $SSH_OPTS "root@$VM_IP" "$DOCKER_CMD"
+exec ssh -t -i "$KEY" $SSH_OPTS "preview@$VM_IP" "$DOCKER_CMD"

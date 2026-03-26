@@ -643,8 +643,8 @@ class PreviewDeployer:
             async with httpx.AsyncClient(timeout=5) as client:
                 resp = await client.get(f"http://{self._vm_ip}:8022/health")
                 if resp.status_code == 200:
-                    # Agent running — restart to update binary
-                    executor = RemoteExecutor(self._vm_ip)
+                    # Agent running — restart to update binary (needs root for systemctl)
+                    executor = RemoteExecutor(self._vm_ip, user="root")
                     proc = await executor.run_shell("systemctl restart preview-agent")
                     await proc.communicate()
                     elapsed = time.monotonic() - t0
@@ -653,30 +653,36 @@ class PreviewDeployer:
         except Exception:
             pass
 
-        # Agent not running — wait for SSH first
-        executor = RemoteExecutor(self._vm_ip)
+        # Agent not running — wait for SSH first (needs root for install)
+        executor = RemoteExecutor(self._vm_ip, user="root")
         await executor.wait_for_ssh(timeout=120)
 
         # Install the agent: download binary + create systemd service
         api_url = f"https://api.preview-mr.com"
+        agent_bin = "/var/www/preview/bin/preview-agent"
         install_cmd = (
+            # Create directories
+            f"mkdir -p /var/www/preview/bin && "
             # Download agent binary
-            f"curl -sf -o /usr/local/bin/preview-agent {api_url}/api/internal/agent/download && "
-            f"chmod +x /usr/local/bin/preview-agent && "
+            f"curl -sf -o {agent_bin} {api_url}/api/internal/agent/download && "
+            f"chmod +x {agent_bin} && "
+            f"chown -R preview:www-data /var/www/preview/bin && "
             # Write env config
             f"echo 'PREVIEW_SERVER_URL={api_url}' > /etc/preview-agent.env && "
             # Create update script
-            f"cat > /usr/local/bin/preview-agent-update << 'UPDATESCRIPT'\n"
+            f"cat > /var/www/preview/bin/preview-agent-update << 'UPDATESCRIPT'\n"
             f"#!/bin/bash\n"
             f"set -euo pipefail\n"
             f"source /etc/preview-agent.env 2>/dev/null || true\n"
             f"AGENT_URL=\"${{PREVIEW_SERVER_URL:-{api_url}}}/api/internal/agent/download\"\n"
-            f"curl -sf -o /usr/local/bin/preview-agent.new \"$AGENT_URL\" && "
-            f"chmod +x /usr/local/bin/preview-agent.new && "
-            f"mv /usr/local/bin/preview-agent.new /usr/local/bin/preview-agent || true\n"
+            f"AGENT_BIN=/var/www/preview/bin/preview-agent\n"
+            f"curl -sf -o \"${{AGENT_BIN}}.new\" \"$AGENT_URL\" && "
+            f"chmod +x \"${{AGENT_BIN}}.new\" && "
+            f"mv \"${{AGENT_BIN}}.new\" \"$AGENT_BIN\" || true\n"
             f"UPDATESCRIPT\n"
-            f"chmod +x /usr/local/bin/preview-agent-update && "
-            # Create systemd service
+            f"chmod +x /var/www/preview/bin/preview-agent-update && "
+            f"chown -R preview:www-data /var/www/preview/bin && "
+            # Create systemd service (runs agent as preview user)
             f"cat > /etc/systemd/system/preview-agent.service << 'SERVICEFILE'\n"
             f"[Unit]\n"
             f"Description=Preview Agent\n"
@@ -685,11 +691,14 @@ class PreviewDeployer:
             f"\n"
             f"[Service]\n"
             f"Type=simple\n"
-            f"ExecStartPre=/usr/local/bin/preview-agent-update\n"
-            f"ExecStart=/usr/local/bin/preview-agent\n"
+            f"User=preview\n"
+            f"Group=www-data\n"
+            f"ExecStartPre=/var/www/preview/bin/preview-agent-update\n"
+            f"ExecStart=/var/www/preview/bin/preview-agent\n"
             f"Restart=always\n"
             f"RestartSec=5\n"
             f"Environment=PORT=8022\n"
+            f"Environment=HOME=/var/www/preview\n"
             f"EnvironmentFile=-/etc/preview-agent.env\n"
             f"\n"
             f"[Install]\n"
