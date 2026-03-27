@@ -125,6 +125,7 @@ func (d *Deployer) run() {
 	var deployErr string
 
 	d.phase = "deploy"
+	d.log(fmt.Sprintf("\x1b[0;90mAgent v%s\x1b[0m\n", Version))
 
 	if d.job.Phase == "new" || d.job.ForceNew {
 		success, deployErr = d.deployNew()

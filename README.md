@@ -128,6 +128,7 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 - En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja. 
 - Usar github actions para compilar el cli, la ui
 - en la visualizacion de uso del cpu me gustaria saber el indice de carga en los ultimos mins
+- Necesito qeu el comando preview de forma automatica tenga autocompletado. Que se actualice al instalar y hacer self update y deprecar el comando especifico-
 - pregunta: se podria tener un snapshot de una imagen de docker preparada para ser reutilizada en segundos? por ejemplo el docker de la db siempre es el mismo en cada rebuild hasta que se     
   carga una nueva db. RESPUESTA:
   -  Sí, hay varias opciones. Para el caso de la DB:

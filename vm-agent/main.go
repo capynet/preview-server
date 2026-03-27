@@ -21,6 +21,9 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Version is set at build time via -ldflags.
+var Version = "dev"
+
 var (
 	terminalSecret  string
 	containerPrefix string
@@ -70,11 +73,11 @@ func main() {
 
 	// Health
 	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "ok")
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, Version)
 	})
 
-	log.Printf("Preview agent listening on :%s", port)
+	log.Printf("Preview agent v%s listening on :%s", Version, port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 

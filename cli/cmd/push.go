@@ -14,6 +14,7 @@ import (
 )
 
 var stripHeavyFiles string
+var noImageStyles bool
 var autoYes bool
 
 var pushCmd = &cobra.Command{
@@ -502,15 +503,27 @@ func generateAndUploadFiles(slug string) error {
 		}
 	}
 
-	// Subtract always-excluded dirs (css, js, php) from sourceSize
-	for _, excl := range []string{"css", "js", "php"} {
+	// Always-excluded dirs
+	excludeDirs := []string{"css", "js", "php"}
+	if noImageStyles {
+		excludeDirs = append(excludeDirs, "styles")
+		if stylesSize, err := dirSize(filepath.Join(filesDir, "styles")); err == nil && stylesSize > 0 {
+			fmt.Fprintf(os.Stderr, "Excluding image styles (%s) — Drupal will regenerate them on demand\n", formatBytesShort(stylesSize))
+		}
+	}
+
+	// Subtract excluded dirs from sourceSize
+	for _, excl := range excludeDirs {
 		if exclSize, err := dirSize(filepath.Join(filesDir, excl)); err == nil {
 			sourceSize -= exclSize
 		}
 	}
 
 	// Build tar args (no compression — piped to external compressor)
-	tarArgs := []string{"cf", "-", "--exclude=./css", "--exclude=./js", "--exclude=./php"}
+	tarArgs := []string{"cf", "-"}
+	for _, excl := range excludeDirs {
+		tarArgs = append(tarArgs, "--exclude=./"+excl)
+	}
 
 	// If --strip-heavy-files is set, write excludes to a temp file to avoid
 	// "argument list too long" when there are thousands of large files.
@@ -521,8 +534,11 @@ func generateAndUploadFiles(slug string) error {
 			return err
 		}
 
-		findCmd := exec.Command("find", ".", "-type", "f", "-size", fmt.Sprintf("+%dc", maxBytes),
-			"-not", "-path", "./css/*", "-not", "-path", "./js/*", "-not", "-path", "./php/*")
+		findArgs := []string{".", "-type", "f", "-size", fmt.Sprintf("+%dc", maxBytes)}
+		for _, excl := range excludeDirs {
+			findArgs = append(findArgs, "-not", "-path", "./"+excl+"/*")
+		}
+		findCmd := exec.Command("find", findArgs...)
 		findCmd.Dir = filesDir
 		findOut, err := findCmd.Output()
 		if err != nil {
@@ -608,6 +624,7 @@ func generateAndUploadFiles(slug string) error {
 func init() {
 	pushCmd.PersistentFlags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
 	pushFilesCmd.Flags().StringVar(&stripHeavyFiles, "strip-heavy-files", "", "Exclude files larger than this size, e.g. --strip-heavy-files 10mb")
+	pushFilesCmd.Flags().BoolVar(&noImageStyles, "no-image-styles", false, "Exclude Drupal image styles (styles/ directory) — they regenerate on demand")
 	pushCmd.AddCommand(pushDBCmd)
 	pushCmd.AddCommand(pushFilesCmd)
 	rootCmd.AddCommand(pushCmd)

@@ -150,7 +150,8 @@
   become: no
   shell: >
     cd {{ playbook_dir }}/../../../vm-agent &&
-    GOOS=linux GOARCH=amd64 go build -o bin/vm-agent .
+    VERSION=$(date +%Y%m%d)-$(git -C .. rev-parse --short HEAD) &&
+    GOOS=linux GOARCH=amd64 go build -ldflags "-X main.Version=$VERSION" -o bin/vm-agent .
   changed_when: true
   tags: [code]
 

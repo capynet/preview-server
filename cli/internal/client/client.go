@@ -708,20 +708,4 @@ func (c *Client) InjectSSHKey(project, previewName, publicKey string) error {
 	return nil
 }
 
-func (c *Client) DownloadStream(project string, previewName string, kind string, w io.Writer) error {
-	url := fmt.Sprintf("%s/previews/%s/%s/download", c.orgProjectPrefix(project), previewName, kind)
 
-	resp, err := c.doRequest("GET", url, nil)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
-	}
-
-	_, err = io.Copy(w, resp.Body)
-	return err
-}
