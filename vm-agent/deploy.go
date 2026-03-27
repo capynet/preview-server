@@ -214,6 +214,8 @@ func (d *Deployer) stepGitClone() error {
 	if err := GitClone(codeDir, d.job.GitCloneURL, d.job.Branch, d.job.CommitSHA, d.job.ProxyURL, d.log); err != nil {
 		return err
 	}
+	// Ensure group write so preview user (member of www-data) can write in /var/www/html
+	exec.Command("chmod", "-R", "g+w", codeDir).Run()
 	return nil
 }
 
@@ -260,7 +262,14 @@ func (d *Deployer) stepDockerPull() error {
 }
 
 func (d *Deployer) stepDockerUp() error {
-	if err := d.runCmd(codeDir, "docker", "compose", "up", "-d", "--force-recreate", "--pull", "always"); err != nil {
+	var err error
+	if d.job.Phase == "new" || d.job.ForceNew {
+		err = d.runCmd(codeDir, "docker", "compose", "up", "-d", "--force-recreate", "--pull", "always")
+	} else {
+		// Update: containers already running, just ensure they're up
+		err = d.runCmd(codeDir, "docker", "compose", "up", "-d")
+	}
+	if err != nil {
 		return err
 	}
 
@@ -356,8 +365,8 @@ func (d *Deployer) stepImportFiles() error {
 
 	downloadCmd := S3DownloadStreamCmd(d.job.Storage, d.job.Storage.BaseFilesKey)
 	importCmd := fmt.Sprintf(
-		"rm -rf %s && mkdir -p %s && %s | tar xzf - -C %s",
-		filesDir, filesDir, downloadCmd, filesDir,
+		"rm -rf %s && mkdir -p %s && %s | tar xzf - -C %s && chmod -R g+w %s",
+		filesDir, filesDir, downloadCmd, filesDir, filesDir,
 	)
 	return d.runShell(importCmd)
 }

@@ -2,12 +2,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-REGISTRY="${REGISTRY:-91.99.157.66:5000}"
-OUTPUT_DIR="../cli/dist"  # same dir as CLI binaries (copied by Ansible)
-
 echo "Building preview-agent (linux/amd64)..."
-mkdir -p "$OUTPUT_DIR"
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o "${OUTPUT_DIR}/preview-agent" .
+mkdir -p bin
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/vm-agent .
 
-echo "Done! Binary: ${OUTPUT_DIR}/preview-agent"
-echo "Deploy with Ansible --tags cli"
+echo "Done! Binary: bin/vm-agent"
+echo "Deploy with: cd ../server/ansible && ansible-playbook -i inventory/hosts.yml playbooks/deploy-preview-manager.yml --tags code"

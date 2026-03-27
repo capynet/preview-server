@@ -18,8 +18,9 @@ type DeployJob struct {
 	OrgSlug     string `json:"org_slug"`
 	ProjectSlug string `json:"project_slug"`
 	PreviewName string `json:"preview_name"`
-	Branch      string `json:"branch"`
-	CommitSHA   string `json:"commit_sha"`
+	Branch       string `json:"branch"`
+	CommitSHA    string `json:"commit_sha"`
+	TargetBranch string `json:"target_branch"`
 
 	GitCloneURL string `json:"git_clone_url"`
 	ProxyURL    string `json:"composer_proxy_url"`
@@ -75,6 +76,7 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		"PREV_PREVIEW_NAME":          job.PreviewName,
 		"PREV_MR_IID":                "", // set below if applicable
 		"PREV_BRANCH":                job.Branch,
+		"PREV_TARGET_BRANCH":         job.TargetBranch,
 		"PREV_COMMIT_SHA":            job.CommitSHA,
 		"PREV_URL":                   url,
 		"DRUSH_OPTIONS_URI":          url,

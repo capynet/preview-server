@@ -61,4 +61,22 @@ case ":$PATH:" in
     ;;
 esac
 
+# Install shell completions
+SHELL_NAME=$(basename "$SHELL" 2>/dev/null || echo "")
+case "$SHELL_NAME" in
+  bash)
+    COMP_DIR="${HOME}/.local/share/bash-completion/completions"
+    mkdir -p "$COMP_DIR"
+    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/preview" 2>/dev/null && \
+      echo "Bash completions installed. Run 'source ${COMP_DIR}/preview' or restart your shell."
+    ;;
+  zsh)
+    COMP_DIR="${HOME}/.local/share/zsh/site-functions"
+    mkdir -p "$COMP_DIR"
+    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_preview" 2>/dev/null && \
+      echo "Zsh completions installed. Restart your shell to activate."
+    ;;
+esac
+
+echo ""
 echo "Get started with: preview login"
