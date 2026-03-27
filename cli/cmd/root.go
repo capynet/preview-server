@@ -18,7 +18,6 @@ import (
 )
 
 var apiClient *client.Client
-var orgFlag string
 
 // Version is set by main.go from the embedded VERSION file.
 var Version = "dev"
@@ -34,7 +33,9 @@ var rootCmd = &cobra.Command{
 		// Refresh version cache if stale (every 24h, max 1.5s)
 		if cfg.APIURL != "" {
 			refreshVersionCache(&cfg)
-			printVersionWarning(cfg)
+			if cmd.Name() != "self-update" {
+				printVersionWarning(cfg)
+			}
 		}
 
 		// Commands that don't require auth
@@ -55,8 +56,7 @@ var rootCmd = &cobra.Command{
 		}
 
 		// Org is resolved per-command via resolveOrgForProject.
-		// Only use --org flag as explicit override.
-		apiClient = client.New(cfg.APIURL, cfg.Token, orgFlag)
+		apiClient = client.New(cfg.APIURL, cfg.Token, "")
 	},
 }
 
@@ -150,7 +150,6 @@ func saveConfig(cfg config) error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringVar(&orgFlag, "org", "", "Organization slug (overrides config)")
 }
 
 // detectGitBranch returns the current git branch name.

@@ -943,6 +943,8 @@ async def rebuild_preview(
         trigger_type,
         state.get("mr_id"),
         force_new,
+        state.get("mr_title"),
+        state.get("target_branch"),
         _expires=timedelta(hours=3),
     )
 

@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     hetzner_ssh_public_key: str = ""
 
     # Warm pool — pre-created VMs ready for instant assignment
-    warm_pool_size: int = 1  # Number of VMs to keep ready in the pool
+    warm_pool_size: int = 1  # Default only — actual value set via WARM_POOL_SIZE in .env (Ansible template)
 
     # Uvicorn
     uvicorn_workers: int = 2

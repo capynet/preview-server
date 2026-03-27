@@ -26,7 +26,7 @@ var pushCmd = &cobra.Command{
 var pushDBCmd = &cobra.Command{
 	Use:   "db [file.sql.gz]",
 	Short: "Export and upload the base database",
-	Long: `Export the database using mysqldump (via ddev) and upload it as the base
+	Long: `Export the database using mariadb-dump/mysqldump (via ddev) and upload it as the base
 database for previews. Cache tables (cache_*) are excluded automatically.
 
 If a file path is given, upload that file instead of generating a dump.
@@ -302,7 +302,7 @@ func getDrupalFilesDir() (string, error) {
 }
 
 func generateAndUploadDB(slug string) error {
-	fmt.Fprintln(os.Stderr, "Generating database dump via mysqldump...")
+	fmt.Fprintln(os.Stderr, "Generating database dump...")
 
 	// Ensure ddev is running before piping stdout, so startup messages
 	// don't get mixed into the SQL dump
@@ -347,12 +347,14 @@ func generateAndUploadDB(slug string) error {
 		fmt.Fprintf(os.Stderr, "Dumping %d cache tables as structure-only (no data)\n", len(cacheTables))
 	}
 
-	// Two mysqldump passes concatenated into a single stream:
+	// Two dump passes concatenated into a single stream:
 	// 1. Full dump minus cache tables (structure + data)
 	// 2. Cache tables structure only (--no-data)
+	// Use mariadb-dump if available (avoids deprecation warning), else mysqldump
 	mysqlAuth := fmt.Sprintf("-u%s", dbUser)
 	mysqlEnv := fmt.Sprintf("MYSQL_PWD=%s", dbPass)
 	baseFlags := fmt.Sprintf("--single-transaction --quick --no-tablespaces")
+	dumpBin := "$(command -v mariadb-dump || command -v mysqldump)"
 
 	var ignoreArgs string
 	for _, t := range cacheTables {
@@ -360,13 +362,13 @@ func generateAndUploadDB(slug string) error {
 	}
 
 	shellCmd := fmt.Sprintf(
-		"%s mysqldump %s %s%s %s",
-		mysqlEnv, mysqlAuth, baseFlags, ignoreArgs, creds.Database,
+		"%s %s %s %s%s %s",
+		mysqlEnv, dumpBin, mysqlAuth, baseFlags, ignoreArgs, creds.Database,
 	)
 	if len(cacheTables) > 0 {
 		shellCmd += fmt.Sprintf(
-			" && %s mysqldump %s %s --no-data %s %s",
-			mysqlEnv, mysqlAuth, baseFlags, creds.Database, strings.Join(cacheTables, " "),
+			" && %s %s %s %s --no-data %s %s",
+			mysqlEnv, dumpBin, mysqlAuth, baseFlags, creds.Database, strings.Join(cacheTables, " "),
 		)
 	}
 
@@ -396,7 +398,7 @@ func generateAndUploadDB(slug string) error {
 	}
 
 	if err := dumper.Start(); err != nil {
-		return fmt.Errorf("failed to start mysqldump: %w", err)
+		return fmt.Errorf("failed to start database dump: %w", err)
 	}
 	if err := compressor.Start(); err != nil {
 		return fmt.Errorf("failed to start %s: %w", compressorName, err)
@@ -413,7 +415,7 @@ func generateAndUploadDB(slug string) error {
 		return fmt.Errorf("%s failed: %w", compressorName, err)
 	}
 	if err := dumper.Wait(); err != nil {
-		return fmt.Errorf("mysqldump failed: %w", err)
+		return fmt.Errorf("database dump failed: %w", err)
 	}
 
 	fmt.Fprintf(os.Stderr, "Done! Base database for %q updated.\n", slug)

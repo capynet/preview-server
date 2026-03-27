@@ -45,9 +45,30 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         lsphp${LSPHP_VER}-dev \
         git \
         unzip \
+        zip \
         htop \
         default-mysql-client \
         openssh-server \
+        rsync \
+        patch \
+        vim \
+        nano \
+        wget \
+        jq \
+        sqlite3 \
+        net-tools \
+        iputils-ping \
+        dnsutils \
+        telnet \
+        bzip2 \
+        less \
+        file \
+        imagemagick \
+        procps \
+    && LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
+    && for ext in gd mbstring xml soap bcmath zip ldap memcached pgsql tidy imap sodium; do \
+        apt-get install -y --no-install-recommends lsphp${LSPHP_VER}-${ext} 2>/dev/null || true; \
+    done \
     && rm -rf /var/lib/apt/lists/*
 
 # Install PECL extension: uploadprogress (not available as apt package)

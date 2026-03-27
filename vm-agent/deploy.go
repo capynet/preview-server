@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -283,6 +284,15 @@ func (d *Deployer) stepDockerUp() error {
 	return nil
 }
 
+// dbClient returns the CLI binary name inside the DB container.
+// MariaDB 11+ removed the "mysql" symlink; the binary is "mariadb".
+func (d *Deployer) dbClient() string {
+	if strings.HasPrefix(d.config.Database, "mariadb") {
+		return "mariadb"
+	}
+	return "mysql"
+}
+
 func (d *Deployer) stepWaitForDB() error {
 	prefix := makeContainerPrefix(d.job.ProjectSlug, d.job.PreviewName)
 	dbContainer := prefix + "-db"
@@ -295,7 +305,7 @@ func (d *Deployer) stepWaitForDB() error {
 		}
 
 		cmd := exec.Command("docker", "exec", dbContainer,
-			"mysql", "-u", "drupal", "-pdrupal", "drupal", "-e", "SELECT 1")
+			d.dbClient(), "-u", "drupal", "-pdrupal", "drupal", "-e", "SELECT 1")
 		cmd.Dir = "/"
 		if err := cmd.Run(); err == nil {
 			d.log("Database is ready.\n")
@@ -329,8 +339,8 @@ func (d *Deployer) stepImportDB() error {
 
 	d.log("Dropping and recreating database...\n")
 	dropCmd := fmt.Sprintf(
-		"docker exec -e MYSQL_PWD=drupal %s mysql -u drupal -e 'DROP DATABASE drupal; CREATE DATABASE drupal;'",
-		dbContainer,
+		"docker exec -e MYSQL_PWD=drupal %s %s -u drupal -e 'DROP DATABASE drupal; CREATE DATABASE drupal;'",
+		dbContainer, d.dbClient(),
 	)
 	if err := d.runShell(dropCmd); err != nil {
 		return fmt.Errorf("drop/recreate database failed: %w", err)
@@ -338,8 +348,8 @@ func (d *Deployer) stepImportDB() error {
 
 	d.log("Importing database...\n")
 	importCmd := fmt.Sprintf(
-		"gunzip < %s | docker exec -e MYSQL_PWD=drupal -i %s mysql -u drupal drupal && rm -f %s",
-		tmpDB, dbContainer, tmpDB,
+		"gunzip < %s | docker exec -e MYSQL_PWD=drupal -i %s %s -u drupal drupal && rm -f %s",
+		tmpDB, dbContainer, d.dbClient(), tmpDB,
 	)
 	return d.runShell(importCmd)
 }

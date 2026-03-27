@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
 )
@@ -87,9 +86,6 @@ var selfUpdateCmd = &cobra.Command{
 			return fmt.Errorf("update failed: %w", err)
 		}
 
-		// Update shell completions
-		installCompletions()
-
 		// Update cache
 		cfg.LatestVersion = versionInfo.Version
 		cfg.LastVersionCheck = 0
@@ -97,38 +93,6 @@ var selfUpdateCmd = &cobra.Command{
 
 		return nil
 	},
-}
-
-// installCompletions regenerates shell completion files after an update.
-func installCompletions() {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	shell := filepath.Base(os.Getenv("SHELL"))
-	switch shell {
-	case "bash":
-		dir := filepath.Join(home, ".local", "share", "bash-completion", "completions")
-		os.MkdirAll(dir, 0755)
-		f, err := os.Create(filepath.Join(dir, "preview"))
-		if err != nil {
-			return
-		}
-		rootCmd.GenBashCompletionV2(f, true)
-		f.Close()
-		fmt.Println("Bash completions updated.")
-	case "zsh":
-		dir := filepath.Join(home, ".local", "share", "zsh", "site-functions")
-		os.MkdirAll(dir, 0755)
-		f, err := os.Create(filepath.Join(dir, "_preview"))
-		if err != nil {
-			return
-		}
-		rootCmd.GenZshCompletion(f)
-		f.Close()
-		fmt.Println("Zsh completions updated.")
-	}
 }
 
 func init() {

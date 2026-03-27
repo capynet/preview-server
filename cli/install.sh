@@ -67,16 +67,18 @@ case "$SHELL_NAME" in
   bash)
     COMP_DIR="${HOME}/.local/share/bash-completion/completions"
     mkdir -p "$COMP_DIR"
-    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/preview" 2>/dev/null && \
-      echo "Bash completions installed. Run 'source ${COMP_DIR}/preview' or restart your shell."
+    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/preview" 2>/dev/null
     ;;
   zsh)
     COMP_DIR="${HOME}/.local/share/zsh/site-functions"
     mkdir -p "$COMP_DIR"
-    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_preview" 2>/dev/null && \
-      echo "Zsh completions installed. Restart your shell to activate."
+    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_preview" 2>/dev/null
     ;;
 esac
 
-echo ""
-echo "Get started with: preview login"
+# Only show login hint if not already authenticated
+CONFIG_FILE="${HOME}/.preview-manager.json"
+if ! grep -q '"token"' "$CONFIG_FILE" 2>/dev/null; then
+  echo ""
+  echo "Get started with: preview login"
+fi
