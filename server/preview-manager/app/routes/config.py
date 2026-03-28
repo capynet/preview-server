@@ -215,6 +215,57 @@ async def save_project_env_vars(
 
 
 # ---------------------------------------------------------------------------
+# Project public paths (bypass forward_auth)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/projects/{project}/settings/public-paths")
+async def get_project_public_paths(
+    project: str,
+    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+):
+    """Get public paths for a project (paths that bypass preview auth)."""
+    proj = await get_project_by_slug(user.org.id, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail=f"Project '{project}' not found")
+    try:
+        paths = json.loads(proj["public_paths"]) if proj.get("public_paths") else []
+    except (json.JSONDecodeError, TypeError):
+        paths = []
+    return {"public_paths": paths}
+
+
+@router.put("/api/orgs/{org}/projects/{project}/settings/public-paths")
+async def save_project_public_paths(
+    project: str,
+    request: Request,
+    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+):
+    """Save public paths for a project.
+
+    These paths bypass forward_auth on preview domains, allowing external
+    access (e.g. for Drupal OAuth server endpoints).
+    """
+    body = await request.json()
+    paths = body.get("public_paths", [])
+    if not isinstance(paths, list):
+        raise HTTPException(status_code=400, detail="public_paths must be an array")
+    for p in paths:
+        if not isinstance(p, str) or not p.startswith("/"):
+            raise HTTPException(
+                status_code=400, detail="Each path must be a string starting with /"
+            )
+
+    await upsert_project(user.org.id, project, public_paths=json.dumps(paths))
+
+    # Rebuild Caddy routes for active previews of this project
+    from app.caddy_api import caddy_manager
+    await caddy_manager.refresh_project_public_paths(user.org.id, project, paths)
+
+    return {"success": True, "public_paths": paths}
+
+
+# ---------------------------------------------------------------------------
 # API tokens (per user, scoped to org)
 # ---------------------------------------------------------------------------
 

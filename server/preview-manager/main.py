@@ -55,6 +55,7 @@ async def lifespan(app: FastAPI):
     from app.caddy_api import caddy_manager
     from app.database import get_previews_with_active_vms, compute_url_hash
     try:
+        import json as _json
         active = await get_previews_with_active_vms()
         for p in active:
             if p.get("vm_ip"):
@@ -64,6 +65,15 @@ async def lifespan(app: FastAPI):
                 url_hash = p.get("url_hash") or compute_url_hash(org_slug, project_slug, preview_name)
                 domain = f"{url_hash}.mr.preview-mr.com"
                 caddy_manager._preview_upstreams[domain] = (p["vm_ip"], 80)
+                # Load project public_paths
+                raw_pp = p.get("project_public_paths")
+                if raw_pp:
+                    try:
+                        pp = _json.loads(raw_pp)
+                        if pp:
+                            caddy_manager.set_domain_public_paths(domain, pp)
+                    except (ValueError, TypeError):
+                        pass
         await caddy_manager._apply_routes()
         logger.info(f"Caddy routes ready: {len(active)} preview(s) + wildcard fallback")
     except Exception as e:

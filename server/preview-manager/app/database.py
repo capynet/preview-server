@@ -504,7 +504,8 @@ async def update_last_accessed(preview_id: int):
 async def get_previews_with_active_vms() -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(
-        """SELECT p.*, proj.slug as project_slug, o.slug as org_slug
+        """SELECT p.*, proj.slug as project_slug, proj.public_paths as project_public_paths,
+                  o.slug as org_slug
            FROM previews p
            JOIN projects proj ON p.project_id = proj.id
            JOIN organizations o ON proj.organization_id = o.id

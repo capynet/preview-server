@@ -410,8 +410,16 @@ class PreviewDeployer:
             if self._vm_ip:
                 try:
                     url_hash = compute_url_hash(self.org_slug, self.project_slug, self.preview_name)
+                    # Fetch project public_paths for Caddy bypass
+                    public_paths = None
+                    proj = await get_project(self.project_id)
+                    if proj and proj.get("public_paths"):
+                        try:
+                            public_paths = json.loads(proj["public_paths"]) or None
+                        except (ValueError, TypeError):
+                            pass
                     await caddy_manager.add_preview_routes(
-                        url_hash, self._vm_ip,
+                        url_hash, self._vm_ip, public_paths=public_paths,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route for {self.domain}: {e}")

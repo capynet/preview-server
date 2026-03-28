@@ -360,14 +360,24 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
                 # Re-register Caddy routes (main + expose services)
                 from app.caddy_api import caddy_manager
+                from app.database import get_project
                 url_hash = compute_url_hash(org_slug, project_slug, preview_name)
                 try:
                     import json
                     expose_raw = preview.get("expose_config", "{}")
                     expose = json.loads(expose_raw) if expose_raw else {}
+                    # Fetch project public_paths for Caddy bypass
+                    public_paths = None
+                    proj = await get_project(preview["project_id"])
+                    if proj and proj.get("public_paths"):
+                        try:
+                            public_paths = json.loads(proj["public_paths"]) or None
+                        except (ValueError, TypeError):
+                            pass
                     await caddy_manager.add_preview_routes(
                         url_hash, vm_ip,
                         expose_services=expose or None,
+                        public_paths=public_paths,
                     )
                 except Exception as e:
                     logger.warning(f"Failed to add Caddy route after wake: {e}")

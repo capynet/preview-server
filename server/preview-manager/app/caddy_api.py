@@ -41,6 +41,7 @@ class CaddyRouteManager:
 
     def __init__(self):
         self._preview_upstreams: dict[str, tuple[str, int]] = {}
+        self._domain_public_paths: dict[str, list[str]] = {}
         self._wildcard_route_index: int | None = None
 
     def _find_wildcard_route_index(self, routes: list[dict]) -> int | None:
@@ -62,94 +63,107 @@ class CaddyRouteManager:
         """Build a subroute for a specific preview domain.
 
         Static assets -> direct to VM (no auth).
+        Public paths -> direct to VM (no auth, for OAuth/API endpoints).
         HTML documents -> forward_auth check -> direct to VM.
         """
         dial = f"{upstream_ip}:{port}"
         proxy_handler = self._build_upstream_proxy(dial, port)
         terminal_dial = f"{upstream_ip}:8022"
+        public_paths = self._domain_public_paths.get(domain, [])
+
+        routes = [
+            # Terminal WebSocket: proxy to terminal server on VM port 8022
+            # Auth is handled by the terminal server itself via HMAC token
+            {
+                "match": [{"path": ["/_terminal/*"]}],
+                "handle": [
+                    {
+                        "handler": "rewrite",
+                        "strip_path_prefix": "/_terminal",
+                    },
+                    {
+                        "handler": "reverse_proxy",
+                        "upstreams": [{"dial": terminal_dial}],
+                    },
+                ],
+            },
+            # Static assets: bypass auth, proxy directly to VM
+            {
+                "match": [{"path": _STATIC_PATTERNS}],
+                "handle": [proxy_handler],
+            },
+        ]
+
+        # Public paths: bypass auth, proxy directly to VM (e.g. OAuth endpoints)
+        if public_paths:
+            routes.append({
+                "match": [{"path": public_paths}],
+                "handle": [proxy_handler],
+            })
+
+        # HTML/other: forward_auth then proxy to VM.
+        # We save the original URI in a header, rewrite to the
+        # auth endpoint, and on 2xx restore the original URI
+        # so the next handler proxies the real request to the VM.
+        routes.append({
+            "handle": [
+                # Save original URI before rewrite
+                {
+                    "handler": "headers",
+                    "request": {
+                        "set": {
+                            "X-Forwarded-Host": ["{http.request.host}"],
+                            "X-Forwarded-Uri": ["{http.request.uri}"],
+                            "X-Forwarded-Method": ["{http.request.method}"],
+                        },
+                    },
+                },
+                {
+                    "handler": "reverse_proxy",
+                    "upstreams": [{"dial": "host.docker.internal:8000"}],
+                    "rewrite": {
+                        "method": "GET",
+                        "uri": "/api/auth/verify-preview",
+                    },
+                    "handle_response": [
+                        {
+                            "match": {"status_code": [2]},
+                            "routes": [{
+                                "handle": [
+                                    # Restore original method + URI
+                                    {
+                                        "handler": "rewrite",
+                                        "method": "{http.request.header.X-Forwarded-Method}",
+                                        "uri": "{http.request.header.X-Forwarded-Uri}",
+                                    },
+                                    # Proxy to VM
+                                    proxy_handler,
+                                ],
+                            }],
+                        },
+                        {
+                            "match": {"status_code": [3]},
+                            "routes": [{"handle": [{
+                                "handler": "static_response",
+                                "status_code": "{http.reverse_proxy.status_code}",
+                                "headers": {"Location": ["{http.reverse_proxy.header.Location}"]},
+                            }]}],
+                        },
+                        {"routes": [{"handle": [{
+                            "handler": "static_response",
+                            "status_code": "{http.reverse_proxy.status_code}",
+                            "body": "Access denied",
+                        }]}]},
+                    ],
+                },
+            ],
+        })
+
         return {
             "match": [{"host": [domain]}],
             "handle": [{
                 "handler": "subroute",
-                "routes": [
-                    # Terminal WebSocket: proxy to terminal server on VM port 8022
-                    # Auth is handled by the terminal server itself via HMAC token
-                    {
-                        "match": [{"path": ["/_terminal/*"]}],
-                        "handle": [
-                            {
-                                "handler": "rewrite",
-                                "strip_path_prefix": "/_terminal",
-                            },
-                            {
-                                "handler": "reverse_proxy",
-                                "upstreams": [{"dial": terminal_dial}],
-                            },
-                        ],
-                    },
-                    # Static assets: bypass auth, proxy directly to VM
-                    {
-                        "match": [{"path": _STATIC_PATTERNS}],
-                        "handle": [proxy_handler],
-                    },
-                    # HTML/other: forward_auth then proxy to VM.
-                    # We save the original URI in a header, rewrite to the
-                    # auth endpoint, and on 2xx restore the original URI
-                    # so the next handler proxies the real request to the VM.
-                    {
-                        "handle": [
-                            # Save original URI before rewrite
-                            {
-                                "handler": "headers",
-                                "request": {
-                                    "set": {
-                                        "X-Forwarded-Host": ["{http.request.host}"],
-                                        "X-Forwarded-Uri": ["{http.request.uri}"],
-                                        "X-Forwarded-Method": ["{http.request.method}"],
-                                    },
-                                },
-                            },
-                            {
-                                "handler": "reverse_proxy",
-                                "upstreams": [{"dial": "host.docker.internal:8000"}],
-                                "rewrite": {
-                                    "method": "GET",
-                                    "uri": "/api/auth/verify-preview",
-                                },
-                                "handle_response": [
-                                    {
-                                        "match": {"status_code": [2]},
-                                        "routes": [{
-                                            "handle": [
-                                                # Restore original method + URI
-                                                {
-                                                    "handler": "rewrite",
-                                                    "method": "{http.request.header.X-Forwarded-Method}",
-                                                    "uri": "{http.request.header.X-Forwarded-Uri}",
-                                                },
-                                                # Proxy to VM
-                                                proxy_handler,
-                                            ],
-                                        }],
-                                    },
-                                    {
-                                        "match": {"status_code": [3]},
-                                        "routes": [{"handle": [{
-                                            "handler": "static_response",
-                                            "status_code": "{http.reverse_proxy.status_code}",
-                                            "headers": {"Location": ["{http.reverse_proxy.header.Location}"]},
-                                        }]}],
-                                    },
-                                    {"routes": [{"handle": [{
-                                        "handler": "static_response",
-                                        "status_code": "{http.reverse_proxy.status_code}",
-                                        "body": "Access denied",
-                                    }]}]},
-                                ],
-                            },
-                        ],
-                    },
-                ],
+                "routes": routes,
             }],
         }
 
@@ -220,6 +234,7 @@ class CaddyRouteManager:
         """Remove a preview domain mapping and update Caddy."""
         if domain in self._preview_upstreams:
             del self._preview_upstreams[domain]
+            self._domain_public_paths.pop(domain, None)
             await self._apply_routes()
             logger.info("Removed Caddy route: %s", domain)
         else:
@@ -237,14 +252,20 @@ class CaddyRouteManager:
         upstream_ip: str,
         alias_domains: list[str] | None = None,
         expose_services: dict[str, int] | None = None,
+        public_paths: list[str] | None = None,
     ) -> None:
         """Add all routes for a preview: main domain + aliases + exposed services."""
         domain = f"{url_hash}.mr.preview-mr.com"
         self._preview_upstreams[domain] = (upstream_ip, 80)
 
+        if public_paths:
+            self._domain_public_paths[domain] = public_paths
+
         if alias_domains:
             for alias in alias_domains:
                 self._preview_upstreams[alias] = (upstream_ip, 80)
+                if public_paths:
+                    self._domain_public_paths[alias] = public_paths
 
         if expose_services:
             for svc_name, port in expose_services.items():
@@ -262,10 +283,12 @@ class CaddyRouteManager:
         """Remove all routes for a preview."""
         domain = f"{url_hash}.mr.preview-mr.com"
         self._preview_upstreams.pop(domain, None)
+        self._domain_public_paths.pop(domain, None)
 
         if alias_domains:
             for alias in alias_domains:
                 self._preview_upstreams.pop(alias, None)
+                self._domain_public_paths.pop(alias, None)
 
         if expose_services:
             for svc_name in expose_services:
@@ -273,6 +296,44 @@ class CaddyRouteManager:
                 self._preview_upstreams.pop(svc_domain, None)
 
         await self._apply_routes()
+
+
+    def set_domain_public_paths(self, domain: str, paths: list[str]) -> None:
+        """Set public paths for a domain (no Caddy apply, batch with _apply_routes)."""
+        if paths:
+            self._domain_public_paths[domain] = paths
+        else:
+            self._domain_public_paths.pop(domain, None)
+
+    async def refresh_project_public_paths(
+        self, org_id: int, project_slug: str, paths: list[str]
+    ) -> None:
+        """Update public_paths for all active previews of a project and rebuild Caddy."""
+        from app.database import get_all_previews, compute_url_hash, get_organization_by_id
+
+        org = await get_organization_by_id(org_id)
+        if not org:
+            return
+        org_slug = org["slug"]
+
+        previews = await get_all_previews(org_id=org_id)
+        changed = False
+        for p in previews:
+            if p.get("project_slug") != project_slug or not p.get("vm_ip"):
+                continue
+            url_hash = p.get("url_hash") or compute_url_hash(
+                org_slug, project_slug, p["preview_name"]
+            )
+            domain = f"{url_hash}.mr.preview-mr.com"
+            if domain in self._preview_upstreams:
+                self.set_domain_public_paths(domain, paths)
+                changed = True
+
+        if changed:
+            await self._apply_routes()
+            logger.info(
+                "Refreshed public_paths for project %s: %s", project_slug, paths
+            )
 
 
 # Singleton
