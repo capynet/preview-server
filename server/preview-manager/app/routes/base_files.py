@@ -43,7 +43,7 @@ async def _resolve_project(user: UserWithContext, slug: str) -> dict:
 @router.get("")
 async def get_base_files_status(
     slug: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.viewer)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
     project = await _resolve_project(user, slug)
     status = await storage_manager.get_base_files_status(project["slug"])
@@ -70,7 +70,7 @@ async def get_base_files_status(
 @router.get("/db")
 async def download_base_db(
     slug: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     from fastapi.responses import StreamingResponse
 
@@ -93,7 +93,7 @@ async def download_base_db(
 @router.get("/files")
 async def download_base_files(
     slug: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     from fastapi.responses import StreamingResponse
 
@@ -123,7 +123,7 @@ async def presign_upload(
     slug: str,
     kind: str,
     body: dict,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Generate presigned URL(s) for direct upload to S3.
 
@@ -170,7 +170,7 @@ async def complete_upload(
     slug: str,
     kind: str,
     body: dict,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Complete an upload — finalize multipart if needed, set metadata, invalidate caches."""
     if kind not in ("db", "files"):
@@ -216,7 +216,7 @@ async def proxy_upload(
     request: Request,
     slug: str,
     kind: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Accept file upload and forward to storage backend.
 

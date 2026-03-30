@@ -194,7 +194,7 @@ async def get_project_context(
         user.org_role = OrgRole(membership["role"])
 
     # Resolve project context if available
-    project_slug = request.path_params.get("project")
+    project_slug = request.path_params.get("project") or request.path_params.get("slug")
     if project_slug:
         project = await get_project_by_slug(org["id"], project_slug)
         if not project:
