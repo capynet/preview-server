@@ -162,6 +162,7 @@ func (d *Deployer) deployNew() (bool, string) {
 		{"import_db", d.stepImportDB},
 		{"import_files", d.stepImportFiles},
 		{"deploy_script", func() error { return d.stepDeployScript("new") }},
+		{"restart_webserver", d.stepRestartWebserver},
 		{"post_deploy", func() error { return d.stepPostDeploy("new") }},
 	}
 	return d.runSteps(steps)
@@ -178,6 +179,7 @@ func (d *Deployer) deployUpdate() (bool, string) {
 		{"generate_settings", d.stepGenerateSettings},
 		{"docker_up", d.stepDockerUp},
 		{"deploy_script", func() error { return d.stepDeployScript("update") }},
+		{"restart_webserver", d.stepRestartWebserver},
 		{"post_deploy", func() error { return d.stepPostDeploy("update") }},
 	}
 	return d.runSteps(steps)
@@ -431,6 +433,27 @@ func (d *Deployer) stepDeployScript(phase string) error {
 	return d.runCmd("", "docker", args...)
 }
 
+func (d *Deployer) stepRestartWebserver() error {
+	prefix := d.job.URLHash
+	phpContainer := prefix + "-php"
+
+	// Send SIGUSR1 to OLS master process for graceful restart.
+	// We avoid "lswsctrl restart" because it kills the OLS PID,
+	// which causes the container entrypoint (PID monitor loop) to exit.
+	d.log("Reloading OpenLiteSpeed...\n")
+	cmd := exec.CommandContext(d.ctx, "docker", "exec", phpContainer,
+		"bash", "-c", "kill -USR1 $(cat /tmp/lshttpd/lshttpd.pid)")
+	cmd.Dir = "/"
+	if out, err := cmd.CombinedOutput(); err != nil {
+		d.log(fmt.Sprintf("OLS reload output: %s\n", string(out)))
+		return fmt.Errorf("OLS reload failed: %w", err)
+	}
+
+	// Give OLS a moment to reload config and .htaccess
+	time.Sleep(2 * time.Second)
+	return nil
+}
+
 func (d *Deployer) stepPostDeploy(phase string) error {
 	if d.config == nil {
 		return nil
@@ -502,8 +525,9 @@ func (d *Deployer) stepStart(name string) {
 		"wait_for_db":       "Waiting for database",
 		"import_db":         "Importing database",
 		"import_files":      "Importing files",
-		"deploy_script":     "Running deploy script",
-		"post_deploy":       "Running post-deploy script",
+		"deploy_script":      "Running deploy script",
+		"restart_webserver":  "Restarting webserver",
+		"post_deploy":        "Running post-deploy script",
 	}
 	label := labels[name]
 	if label == "" {
@@ -519,8 +543,9 @@ func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg st
 		"generate_settings": "Generating settings", "docker_pull": "Pulling Docker images",
 		"docker_up": "Starting containers", "wait_for_db": "Waiting for database",
 		"import_db": "Importing database", "import_files": "Importing files",
-		"deploy_script": "Running deploy script",
-		"post_deploy": "Running post-deploy script",
+		"deploy_script":      "Running deploy script",
+		"restart_webserver":  "Restarting webserver",
+		"post_deploy":        "Running post-deploy script",
 	}
 	label := labels[name]
 	if label == "" {

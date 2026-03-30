@@ -63,8 +63,9 @@ DEPLOY_PHASES: dict[str, list[dict]] = {
         {"name": "wait_for_db",       "label": "Waiting for database",    "required": True},
         {"name": "import_db",         "label": "Importing database",      "required": True},
         {"name": "import_files",      "label": "Importing files",         "required": True},
-        {"name": "deploy_script",     "label": "Running deploy script",   "required": True},
-        {"name": "post_deploy",       "label": "Running post-deploy",     "required": False},
+        {"name": "deploy_script",        "label": "Running deploy script",   "required": True},
+        {"name": "restart_webserver",    "label": "Restarting webserver",    "required": True},
+        {"name": "post_deploy",          "label": "Running post-deploy",    "required": False},
     ],
     "update": [
         {"name": "provision_agent",   "label": "Provisioning agent",      "required": True},
@@ -74,8 +75,9 @@ DEPLOY_PHASES: dict[str, list[dict]] = {
         {"name": "generate_compose",  "label": "Configuring environment", "required": True},
         {"name": "generate_settings", "label": "Generating settings",     "required": True},
         {"name": "docker_up",         "label": "Starting containers",     "required": True},
-        {"name": "deploy_script",     "label": "Running deploy script",   "required": True},
-        {"name": "post_deploy",       "label": "Running post-deploy",     "required": False},
+        {"name": "deploy_script",        "label": "Running deploy script",   "required": True},
+        {"name": "restart_webserver",    "label": "Restarting webserver",    "required": True},
+        {"name": "post_deploy",          "label": "Running post-deploy",    "required": False},
     ],
 }
 
@@ -943,7 +945,7 @@ class PreviewDeployer:
                             await self._phase_tracker.end_phase(current_step, True)
 
                         # Fetch VM info once agent is past generate_compose
-                        post_compose_steps = {"generate_settings", "docker_pull", "docker_up", "wait_for_db", "import_db", "import_files", "deploy_script", "post_deploy"}
+                        post_compose_steps = {"generate_settings", "docker_pull", "docker_up", "wait_for_db", "import_db", "import_files", "deploy_script", "restart_webserver", "post_deploy"}
                         if not fetched_info and step in post_compose_steps:
                             fetched_info = await self._fetch_and_save_vm_info(info_url)
 

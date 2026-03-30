@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app.auth.dependencies import require_org_role
+from app.auth.dependencies import require_org_role, require_project_role
 from app.auth.models import OrgRole, UserWithContext
 from app.database import get_project_by_slug
 from app.storage import storage_manager

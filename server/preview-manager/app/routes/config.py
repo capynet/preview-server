@@ -5,7 +5,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.auth.dependencies import require_org_role, get_org_context, require_superadmin
+from app.auth.dependencies import require_org_role, require_project_role, get_org_context, require_superadmin
 from app.auth.models import OrgRole, UserWithContext, CreateTokenRequest
 from app.database import (
     update_organization,
@@ -115,7 +115,7 @@ async def save_org_require_ci(
 @router.get("/api/orgs/{org}/projects/{project}/settings/require-ci")
 async def get_project_require_ci(
     project: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Get project-level require-ci-success configuration."""
     proj = await get_project_by_slug(user.org.id, project)
@@ -136,7 +136,7 @@ async def get_project_require_ci(
 async def save_project_require_ci(
     project: str,
     request: Request,
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Save project-level require-ci-success configuration.
 
@@ -165,7 +165,7 @@ async def save_project_require_ci(
 @router.get("/api/orgs/{org}/projects/{project}/env-vars")
 async def get_project_env_vars(
     project: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Get environment variables for a project."""
     proj = await get_project_by_slug(user.org.id, project)
@@ -181,7 +181,7 @@ async def get_project_env_vars(
 async def save_project_env_vars(
     project: str,
     request: Request,
-    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Save environment variables for a project."""
     body = await request.json()
@@ -222,7 +222,7 @@ async def save_project_env_vars(
 @router.get("/api/orgs/{org}/projects/{project}/settings/public-paths")
 async def get_project_public_paths(
     project: str,
-    user: UserWithContext = Depends(require_org_role(OrgRole.member)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Get public paths for a project (paths that bypass preview auth)."""
     proj = await get_project_by_slug(user.org.id, project)
@@ -239,7 +239,7 @@ async def get_project_public_paths(
 async def save_project_public_paths(
     project: str,
     request: Request,
-    user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
 ):
     """Save public paths for a project.
 

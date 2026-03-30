@@ -30,26 +30,61 @@ Is the UI of preview manager ([server](server))
 
 
 
-# TODO
-- NEcesito poder correr toda la solucion en un servidor alternativo para desarrollar las nuevas funcionalidades. O por lo mejos poder correrlo integramente en local. 
-- Todavia tengo pendiente proporcional info util del preview en el MR de gitlab. 
-- ahora que tenemos bien identificadas las fases. cada fase va a poder tener su pre y post deploy script (solo si tiene sentido)
+# TODO antes de prod. 
+- Si un preview se borra (por ejempl por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen. Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. No hace falta que cierres esta pestaña, tan rponto como acabe el build la pagina se va a mostrar"
+- Todavia tengo pendiente proporcional info util del preview en el MR de gitlab.
 - Implemente el auto pr solo si ci pasa?
+- Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
+- Agregar cron a los preview.
+- Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos. ademas deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
+- Esto va a los casos de uso para publicitar: Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos.
+- 
+# TODO
+- cada tenant u organizacion podria configurar sus propios dominios? la url de preview seguiria siendo funcionar. lo del dominio custom seria añadirlo encima. Ojo. solo puedo permitir subdominios de su dominio registrado en la organizacion. A lo sumo puedo permitir subdominios de un sitio alternativo pero nunca dominuios base apra que no lo usen como pagina web.
+- El backend ya tiene los endpoints (/api/config/cloud-resources y /api/config/cloud-costs), pero falta la UI en el frontend para mostrarlos
+- Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?
+- Voy a neceitar algun check que evite que el servidor colapse si el espacio en disco se acaba.
+- El dia uqe salgamos a prod necesito desactivar las herrmaientas de desarrollo de next. productionBrowserSourceMaps
+- Necesito estadisticas de cuantos preview se crean en un proyecto, cuantos rebuild y updates. Cualquier info que me permita hacer estadisticas de uso.
+- NEcesito poder correr toda la solucion en un servidor alternativo para desarrollar las nuevas funcionalidades. O por lo mejos poder correrlo integramente en local. 
 - Necesito que los mr aborten el build actual cuando llega un nuevo hook. 
 - Necesito un boton para abortar el build actual. Es util por ejemplo si necesito añadir una env var. en lugar de esperar a que acabe puedo abortarlo y lanzarlo.
-- preview push files me obliga a iniciar sesion y a seleccionar una organizacion. necesito que el tema de las orgnaizaciones sea mas transparente para no tener que seleccionar la orgnizacion. 
-- Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
 - 2fa necesario sobre todo para mi que soy superadmin y en realidad para cualquiera porque las DB son tema sensible.
 - NEcesito tener tier free y paid one. el free permite crear una sola preview por poryecto sin limites en nada mas. (ampliar mas la idea)  
-- Drush aliases para los preview para poder lanzar comando "preview drush"
 - Extraer toda la configuracion sensible (claves token etc) a lugar seguro y configurable para poder actualizarlos en el futuro sin tanto ptoblema. 
 - Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace cargo el desarrolladdor?
 - creo que esto ya existe: Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
-- Acceso por consola via ui y posibilidad de configurar pu key para acceder a los ddev? (creo que no porque se puede acceder sin mas)
-- IDEA cuando un preview acabe de generarse necesitamos proporcionar la url del preview en el MR de gitlab.
-- Necesito reescribir los logs de los preview. Ahroa mismo preview server procesa los logs pro deberian hacerse cargo de eso las VM ya que todo viene desde ahi y si se usa micro y ram deberia ser el de ellas.
 - Cuando este todo estable hay que quitar el debug "set -x"
-- soporte multisite.
+- soporte multisite. ya esta implementado pero soudal es un bicho raro. Necesito un multisite real.
+- Un caso de uso que me gustaria tener cubierto: si alguien tiene una plataofrma custom como la de DXP de dropsolid, si quieren dar opciones de link, uli y demas, con el cli me basta verdad? (hablo a nivel de integracion)
+- idea: descviar los logs a dodne podas mos accederlos vusuaoment.e Tal we no herramientas titanicas pero si visualizadoews que permitab ver y  uu un comando cli que permitea estrimeo de los y un linx de deecarga.
+- Voy a necesitar que los drupal almacenen sus logs junto a los de apache, php etc en un lugar centralizado facil de revisar. elk o algo mas simple?
+- Voy a necesitar ram, cpu y disco stats simples para tener un overview facil.
+- - necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada preview (hay casos en lls que los email necesitan ser cofirmados).
+- Soporte Drupal decoupled (container Node.js adicional) — para competir con Upsun en ese nicho
+- Si quiero qeu esto funcione. Los usuarios freelance deberiantener esto gratis o por lo menos la opcion de hostearselo ellos mismos o un tier que sea 0€
+- preview autocompletion deberia hacerse automaticamente en lugar de necesitar lanzar el comando a mano.
+- Es posible permirir el uso de apache o OpenLiteSpeed indistintamente?
+- Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
+- En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja.
+- Usar github actions para compilar el cli, la ui
+- Deberia dar algun soporte para MCP para poder conectar con las previews desde local
+- voy a necesitar poder especificar en preview push db/files un db o dir files arbitrario y un .sql o .sql.hz o files.tgz o tar.gz
+- Cuando dse crea el cache de la db se hace a la hora de crear el primer preview. Me pregunto si es posible sacar ese caso a un proceso en backgrround para no bloquear la generacion del preview. Y si no es posible por lo menos dar un poco mas de info "creando cache de esta db apras er usadaen las siguientes preview." ademas si se puede informar el progreso mejor que mejor.
+- necesito integrar ia en lugares donde tenga sentido: "activa los proyectos que mas actividad tienen", "Si vas viendo previews que ninca se visitan despues de ser creadas en un proyeco en particular mejor no crees previews e informa al usuario que no se estan creando previews por falta de uso". Permite dejar un proment de lo que se espera a la hrtoa de hacer un erase automatico como por ejenmplo "en este proyecto por lo general revisamos las preview en un dia concreto aSI QUE NO TIENE SENTIDO QUE LAS CREES AUTOMATICAMENTE. MEJOR CREALAS CUANDO CREE UN mr A MASTER QUE SE LLAME "rELEASE XXX""""
+- Quiero poder marcar como favoritos algunso preview de rama o mr. Cuando se borre el preview esta desaparece silencionamente.
+- Visualizacion parent y sus hijos? por ejemplo todas las que apuntan a master se ven colgando de master, las de d11, colganod de d11, etc.
+- Tengo storage box medio imlementado. es un poco mas lento pero mucho mas barato que r2. claude tiene memoria: por ahora el output sale mal codigicado y prev server se satura al procesar el output.
+- el preview agent podria abrover cualquier cosa que suceda en la vm. por ejemplo el uso de cpu ram y disco que veo en la preview detail page.
+-  "Usar estadísticas semanales de imágenes Docker más usadas para regenerar automáticamente el snapshot de VM con las imágenes con mayor probabilidad de uso, reduciendo el tiempo de pull en deploys."
+- Pre-cargar imágenes Docker en el snapshot de VM para eliminar el pull en la mayoría de deploys, manteniendo la phase 'Pulling Docker images' como fallback para imágenes no incluidas en el snapshot."
+- Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
+- Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm.
+- los script de deploy tienen acceso a un toolkit TUI visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit grafico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
+- Vamos a cambiar la numeracion de los build. Ahora mismo se comparte entre todas las vm de todos los orgs. necesito que sea a nivel org o user o project.
+- me gustaria poder hacer upload a las variables de entorno desde la ui para por ejemplo subir un json el lugar de copiarlo y pegarlo. Tiene sentido?
+
+
 - Para guiar al usuario hay documentar como conectar gitlab a la app de previews:
    Ir a https://gitlab.com/oauth/applications
    Añadir aplicacion
@@ -57,7 +92,6 @@ Is the UI of preview manager ([server](server))
    "User login"
    Callback: https://api.preview-mr.com/api/gitlab/auth/callback
    Scopes: read_user
-   
    
    Luego crear una nueva app para conectar la api:
    "Previews API"
@@ -76,9 +110,6 @@ Is the UI of preview manager ([server](server))
    Callback: https://api.preview-mr.com/api/gitlab/connect/callback
    Scopes: api
 
-- Un caso de uso que me gustaria tener cubierto: si alguien tiene una plataofrma custom como la de DXP de dropsolid, si quieren dar opciones de link, uli y demas, con el cli me basta verdad? (hablo a nivel de integracion)
-- idea: descviar los logs a dodne podas mos accederlos vusuaoment.e Tal we no herramientas titanicas pero si visualizadoews que permitab ver y  uu un comando cli que permitea estrimeo de los y un linx de deecarga.
-- necesito dar la posibilidad de definir la ssh key a un usuario para usarla a la hora de hacer ssh a un preview. quiero crear un nuevo comando en la cli que permita hacer "ssh" al contenedor web de una preview. si un usuario quiere suar ese comando y no tiene su ssh key podemos dalr un link a su cuentta y comentarle que primero tiene que poner su clave alli. Tengo entendido que no necesito ssh para acceder a los contenedores. 
 
 Otro asunto para resolver:
    Problema
@@ -113,24 +144,7 @@ Otro asunto para resolver:
      - Cada preview puede tener la DB que quieras sin afectar las demás
      - Retrocompatible: preview push db sin --target sigue funcionando como antes
 
-- Voy a necesitar que los drupal almacenen sus logs junto a los de apache, php etc en un lugar centralizado facil de revisar. elk o algo mas simple?
-- Voy a necesitar ram, cpu y disco stats simples para tener un overview facil.
-- ssh y stats.
-necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada preview (hay casos en lls que los email necesitan ser cofirmados). 
-- . Soporte Drupal decoupled (container Node.js adicional) — para competir con Upsun en ese nicho  
-- el cache estilo varnish que tiene el servidor web que reemplaza a apache en los preview se puede activar y desactivar? hace falta algun modulo en drupal? (so voy para adelante con esto deberia poder activarlo y desactivarlo desde la ui mas que desde drupal)
-- - Si quiero qeu esto funcione. Los usuarios freelance deberiantener esto gratis o por lo menos la opcion de hostearselo ellos mismos o un tier que sea 0€
-- Voy a neceitar algun check que evite que el servidor colapse si el espacio en disco se acaba.
-- Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?
-- preview autocompletion deberia hacerse automaticamente en lugar de necesitar lanzar el comando a mano. 
-- Es posible permirir el uso de apache o OpenLiteSpeed indistintamente?
-- Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
-- Deberia automatizar el deploy de ansible o la generacion de version del cli cuando pusheo a master?
-- Agregar cron a los preview. 
-- En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja. 
-- Usar github actions para compilar el cli, la ui
-- en la visualizacion de uso del cpu me gustaria saber el indice de carga en los ultimos mins
-- Necesito qeu el comando preview de forma automatica tenga autocompletado. Que se actualice al instalar y hacer self update y deprecar el comando especifico-
+
 - pregunta: se podria tener un snapshot de una imagen de docker preparada para ser reutilizada en segundos? por ejemplo el docker de la db siempre es el mismo en cada rebuild hasta que se     
   carga una nueva db. RESPUESTA:
   -  Sí, hay varias opciones. Para el caso de la DB:
@@ -151,49 +165,6 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
     2. Importa el dump
     3. Hace docker commit → preview-db:{project}:latest
     4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
-- Deberia dar algun soporte para MCP para poder conectar con las previews desde local
-- voy a necesitar poder especificar en preview push db/files un db o dir files arbitrario y un .sql o .sql.hz o files.tgz o tar.gz 
-- Cuando dse crea el cache de la db se hace a la hora de crear el primer preview. Me pregunto si es posible sacar ese caso a un proceso en backgrround para no bloquear la generacion del preview. Y si no es posible por lo menos dar un poco mas de info "creando cache de esta db apras er usadaen las siguientes preview." ademas si se puede informar el progreso mejor que mejor.
-- El backend ya tiene los endpoints (/api/config/cloud-resources y /api/config/cloud-costs), pero falta la UI en el frontend para mostrarlos
-- viste que tengo estadisticas de cpu ram y disco en el server principal? podriamos suar ese widget dentro de los detalles de cada preview para ver los recursos usados en cada uno?  
-- cada tenant u organizacion podria configurar sus propios dominios? la url de preview seguiria siendo funcionar. lo del dominio custom seria añadirlo encima. Ojo. solo puedo permitir subdominios de su dominio registrado en la organizacion. A lo sumo puedo permitir subdominios de un sitio alternativo pero nunca dominuios base apra que no lo usen como pagina web. 
-- Necesito en los scrip de deploy un step mas que se ejecute despues de los script de deploy normales. cuando un deploy acaba (yq ueda en verde y accesible) recien ahi se lanza el script post deploy que se puede usar para indexar contenidos o tareas que son muy pesadas ocmo cron run o cosas asi.
-- necesito integrar ia en lugares donde tenga sentido: "activa los proyectos que mas actividad tienen", "Si vas viendo previews que ninca se visitan despues de ser creadas en un proyeco en particular mejor no crees previews e informa al usuario que no se estan creando previews por falta de uso". Permite dejar un proment de lo que se espera a la hrtoa de hacer un erase automatico como por ejenmplo "en este proyecto por lo general revisamos las preview en un dia concreto aSI QUE NO TIENE SENTIDO QUE LAS CREES AUTOMATICAMENTE. MEJOR CREALAS CUANDO CREE UN mr A MASTER QUE SE LLAME "rELEASE XXX""""
-- en el detalle de un preview el widget de uso de recursos de la vm aparece y desaparece cuando esta transiocnando de estaods o reiniciando. MNo hay drama con eso pero en lugar de ocultarlo a lo mejor podemos simplemente dejarlo grisado.
-- Quiero poder marcar como favoritos algunso preview de rama o mr. Cuando se borre el preview esta desaparece silencionamente.
-- Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos.
-- estaria bien ver en el listado de preview o en su detalle cual es el destino de un MR (a master u otra rama). Includo esto me da la idea de agrupar por destinations onda arbol. 
-- Tengo storage box medio imlementado. es un poco mas lento pero mucho mas barato que r2. claude tiene memoria: por ahora el output sale mal codigicado y prev server se satura al procesar el output. 
-- el preview agent podria abrover cualquier cosa que suceda en la vm. por ejemplo el uso de cpu ram y disco que veo en la preview detail page.
--  "Usar estadísticas semanales de imágenes Docker más usadas para regenerar automáticamente el snapshot de VM con las imágenes con mayor probabilidad de uso, reduciendo el tiempo de pull en deploys."
-- Pre-cargar imágenes Docker en el snapshot de VM para eliminar el pull en la mayoría de deploys, manteniendo la phase 'Pulling Docker images' como fallback para imágenes no incluidas en el snapshot."
-- Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
-- Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm. 
-- los script de deploy tienen acceso a un toolkit visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit gradico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
--  Quiero que eliminnemos preview drush. Ahora con los alias ya podemos usar drush nativo.   
-- Vamos a cambiar la numeracion de los build. Ahora mismo se comparte entre todas las vm de todos los orgs. necesito que sea a nivel org o user o project. 
-- añadir autocompletado al hacer tab en la cli.
-- me gustaria poder hacer upload a las variables de entorno desde la ui para por ejemplo subir un json el lugar de copiarlo y pegarlo. Tiene sentido?
-Pendiente de arreglar:
-Fix del playbook setup-docker-preview.yml línea 44:
-
-El docker image prune -af borra todas las imágenes sin containers activos, incluyendo las localhost:5000/preview-drupal:php8.x que se acaban de buildear y pushear. Si después necesitás
-re-pushear al registry, no están y hay que rebuiltear (~20min).
-
-Fix: Cambiar el prune para que excluya las imágenes del registry:
-
-# Antes (borra todo):
-docker image prune -af && docker builder prune -af
-
-# Después (preserva las imágenes Drupal):
-docker image prune -af --filter "label!=registry-image" && docker builder prune -af
-
-O más simple, solo limpiar el build cache y dangling images (sin -a):
-
-docker image prune -f && docker builder prune -af
-
-Sin -a, el prune solo borra imágenes dangling (sin tag), no las taggeadas como localhost:5000/preview-drupal:php8.x.
 
 
-
-Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos. 
+ 

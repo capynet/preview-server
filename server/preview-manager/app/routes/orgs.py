@@ -48,6 +48,7 @@ from app.database import (
     delete_invitation,
     get_invitation_by_email,
     list_org_invitations,
+    list_project_invitations,
 )
 from app.auth.email import send_invitation_email, send_added_to_org_email, send_added_to_project_email
 
@@ -335,6 +336,12 @@ async def delete_proj(slug: str, user: UserWithContext = Depends(require_org_rol
 
 # ---- Project Members ----
 
+@router.get("/{org}/projects/{project}/my-role")
+async def get_my_project_role(user: UserWithContext = Depends(require_project_role(OrgRole.viewer))):
+    """Return the current user's effective role in this project."""
+    return {"role": user.effective_role.value if user.effective_role else None}
+
+
 @router.get("/{org}/projects/{slug}/members")
 async def list_proj_members(slug: str, user: UserWithContext = Depends(require_org_role(OrgRole.viewer))):
     """List project members. Returns org_members (access via org) and project_members (direct)."""
@@ -344,8 +351,9 @@ async def list_proj_members(slug: str, user: UserWithContext = Depends(require_o
 
     org_members = await list_org_members(user.org.id)
     proj_members = await list_project_members(project["id"])
+    invitations = await list_project_invitations(user.org.id, project["id"])
 
-    return {"org_members": org_members, "project_members": proj_members}
+    return {"org_members": org_members, "project_members": proj_members, "invitations": invitations}
 
 
 @router.post("/{org}/projects/{slug}/members")

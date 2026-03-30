@@ -302,6 +302,19 @@ async def list_org_invitations(org_id: int) -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+async def list_project_invitations(org_id: int, project_id: int) -> list[dict]:
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT i.*, u.name as invited_by_name
+           FROM org_invitations i
+           JOIN users u ON i.invited_by = u.id
+           WHERE i.organization_id = $1 AND i.project_id = $2 AND i.status = 'pending'
+           ORDER BY i.id DESC""",
+        org_id, project_id,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 async def delete_invitation(invitation_id: int):
     pool = await get_pool()
     await pool.execute("DELETE FROM org_invitations WHERE id = $1", invitation_id)
