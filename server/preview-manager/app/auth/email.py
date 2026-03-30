@@ -81,7 +81,7 @@ def send_magic_link_email(to_email: str, token: str):
         return
 
     resend.api_key = settings.resend_api_key
-    magic_url = f"{APP_URL}/auth/magic?token={token}"
+    magic_url = f"https://api.preview-mr.com/api/auth/magic/verify?token={token}"
 
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">

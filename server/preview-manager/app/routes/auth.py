@@ -348,17 +348,19 @@ async def magic_link_request(body: MagicLinkRequestBody):
 
 @router.get("/magic/verify")
 async def magic_link_verify(token: str):
-    """Verify a magic link token and create a session."""
+    """Verify a magic link token, set session cookie, and redirect to app."""
+    frontend = settings.frontend_url
+
     result = await db.validate_and_consume_magic_link_token(token)
     if not result:
-        raise HTTPException(status_code=400, detail="This link is invalid or has expired")
+        return RedirectResponse(f"{frontend}/auth/login?error=magic_expired")
 
     user = await db.get_user_by_id(result["user_id"])
     if not user:
-        raise HTTPException(status_code=400, detail="This link is invalid or has expired")
+        return RedirectResponse(f"{frontend}/auth/login?error=magic_expired")
 
     session_id = await db.create_session(user["id"])
-    response = Response(content='{"success": true}', media_type="application/json")
+    response = RedirectResponse(frontend, status_code=302)
     _set_session_cookie(response, session_id)
     return response
 

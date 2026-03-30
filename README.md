@@ -31,6 +31,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- Todavia tengo pendiente proporcional info util del preview en el MR de gitlab. 
 - ahora que tenemos bien identificadas las fases. cada fase va a poder tener su pre y post deploy script (solo si tiene sentido)
 - Implemente el auto pr solo si ci pasa?
 - Necesito que los mr aborten el build actual cuando llega un nuevo hook. 
