@@ -31,6 +31,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO
+- NEcesito poder correr toda la solucion en un servidor alternativo para desarrollar las nuevas funcionalidades. O por lo mejos poder correrlo integramente en local. 
 - Todavia tengo pendiente proporcional info util del preview en el MR de gitlab. 
 - ahora que tenemos bien identificadas las fases. cada fase va a poder tener su pre y post deploy script (solo si tiene sentido)
 - Implemente el auto pr solo si ci pasa?
