@@ -329,6 +329,40 @@ async def accept_invitation(body: AcceptInviteBody):
     return response
 
 
+# ---- Magic Link ----
+
+class MagicLinkRequestBody(BaseModel):
+    email: str
+
+
+@router.post("/magic/request")
+async def magic_link_request(body: MagicLinkRequestBody):
+    """Send a magic link email. Always returns success to prevent email enumeration."""
+    user = await db.get_user_by_email(body.email.strip().lower())
+    if user:
+        token = await db.create_magic_link_token(user["id"])
+        from app.auth.email import send_magic_link_email
+        send_magic_link_email(user["email"], token)
+    return {"success": True}
+
+
+@router.get("/magic/verify")
+async def magic_link_verify(token: str):
+    """Verify a magic link token and create a session."""
+    result = await db.validate_and_consume_magic_link_token(token)
+    if not result:
+        raise HTTPException(status_code=400, detail="This link is invalid or has expired")
+
+    user = await db.get_user_by_id(result["user_id"])
+    if not user:
+        raise HTTPException(status_code=400, detail="This link is invalid or has expired")
+
+    session_id = await db.create_session(user["id"])
+    response = Response(content='{"success": true}', media_type="application/json")
+    _set_session_cookie(response, session_id)
+    return response
+
+
 # ---- SSH Keys ----
 
 AUTHORIZED_KEYS_PATH = "/home/preview-manager/.ssh/authorized_keys"

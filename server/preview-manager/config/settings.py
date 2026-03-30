@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # GitLab API access (Personal Access Token)
     gitlab_oauth_access_token: Optional[str] = None
-    session_max_age_seconds: int = 604800  # 7 days
+    session_max_age_seconds: int = 2592000  # 30 days
     frontend_url: str = "https://app.preview-mr.com"
 
     # Resend (email)

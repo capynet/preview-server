@@ -74,6 +74,45 @@ def send_added_to_project_email(to_email: str, project_name: str, role: str):
         logger.error(f"Failed to send added-to-project email to {to_email}: {e}")
 
 
+def send_magic_link_email(to_email: str, token: str):
+    """Send a magic link sign-in email."""
+    if not settings.resend_api_key:
+        logger.warning("RESEND_API_KEY not configured, skipping magic link email")
+        return
+
+    resend.api_key = settings.resend_api_key
+    magic_url = f"{APP_URL}/auth/magic?token={token}"
+
+    html = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+      <h2 style="margin: 0 0 16px; font-size: 20px; color: #111;">
+        Sign in to Preview Manager
+      </h2>
+      <p style="margin: 0 0 24px; color: #666; font-size: 14px;">
+        Click the button below to sign in. This link expires in 15 minutes.
+      </p>
+      <a href="{magic_url}"
+         style="display: inline-block; background: #111; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-size: 14px; font-weight: 500;">
+        Sign in
+      </a>
+      <p style="margin: 24px 0 0; color: #999; font-size: 12px;">
+        If you didn't request this, you can safely ignore this email.
+      </p>
+    </div>
+    """
+
+    try:
+        resend.Emails.send({
+            "from": settings.invitation_from_email,
+            "to": [to_email],
+            "subject": "Sign in to Preview Manager",
+            "html": html,
+        })
+        logger.info(f"Magic link email sent to {to_email}")
+    except Exception as e:
+        logger.error(f"Failed to send magic link email to {to_email}: {e}")
+
+
 # Keep backward compat alias for invitation emails (same as org add)
 def send_invitation_email(to_email: str, invite_token: str, role: str, invited_by_name: str):
     """Legacy invitation email — now sends the same 'added' email."""

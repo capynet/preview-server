@@ -112,6 +112,13 @@ async def get_session(session_id: str) -> Optional[dict]:
     if session["expires_at"] < _now():
         await pool.execute("DELETE FROM sessions WHERE id = $1", session_id)
         return None
+    # Renew session on each access (sliding window)
+    new_expires = datetime.fromtimestamp(
+        time.time() + settings.session_max_age_seconds, tz=timezone.utc
+    ).isoformat()
+    await pool.execute(
+        "UPDATE sessions SET expires_at = $1 WHERE id = $2", new_expires, session_id,
+    )
     return session
 
 
@@ -226,3 +233,31 @@ async def get_all_ssh_keys() -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch("SELECT public_key FROM ssh_keys ORDER BY id")
     return [dict(r) for r in rows]
+
+
+# ---- Magic Link Tokens ----
+
+async def create_magic_link_token(user_id: int, expires_minutes: int = 15) -> str:
+    token = secrets.token_urlsafe(32)
+    now = _now()
+    expires = datetime.fromtimestamp(
+        time.time() + expires_minutes * 60, tz=timezone.utc
+    ).isoformat()
+    pool = await get_pool()
+    await pool.execute(
+        "INSERT INTO magic_link_tokens (user_id, token, created_at, expires_at) VALUES ($1, $2, $3, $4)",
+        user_id, token, now, expires,
+    )
+    return token
+
+
+async def validate_and_consume_magic_link_token(token: str) -> Optional[dict]:
+    pool = await get_pool()
+    row = await pool.fetchrow(
+        """UPDATE magic_link_tokens
+           SET used_at = $1
+           WHERE token = $2 AND used_at IS NULL AND expires_at > $1
+           RETURNING user_id""",
+        _now(), token,
+    )
+    return _row_to_dict(row) if row else None
