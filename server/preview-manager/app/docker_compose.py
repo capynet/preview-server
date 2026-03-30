@@ -148,8 +148,9 @@ def parse_preview_yml(preview_path: Path) -> dict:
     return config
 
 
-def _container_prefix(project_name: str, preview_name: str) -> str:
-    return f"{preview_name}-{project_name}"
+def container_prefix(url_hash: str) -> str:
+    """Container name prefix based on the deterministic URL hash."""
+    return url_hash
 
 
 def _registry_image(image: str) -> str:
@@ -171,7 +172,7 @@ def generate_docker_compose(
     org_slug: str = "",
 ) -> dict:
     """Generate a docker-compose.yml dict for a preview environment."""
-    prefix = _container_prefix(project_name, preview_name)
+    prefix = container_prefix(url_hash) if url_hash else f"{preview_name}-{project_name}"
     domain = f"{url_hash}.mr.preview-mr.com" if url_hash else f"{prefix}.mr.preview-mr.com"
     url = f"https://{domain}"
 

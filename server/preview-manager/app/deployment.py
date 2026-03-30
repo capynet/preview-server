@@ -275,10 +275,10 @@ class PreviewDeployer:
         self.target_branch = target_branch
 
         self.force_new = False
-        self.container_prefix = f"{preview_name}-{self.project_slug}"
 
-        # Hash-based domain
+        # Hash-based domain and container prefix
         url_hash = compute_url_hash(self.org_slug, self.project_slug, preview_name)
+        self.container_prefix = url_hash
         self.domain = f"{url_hash}.mr.preview-mr.com"
         self.preview_url = f"https://{self.domain}"
 

@@ -52,7 +52,7 @@ type StorageConfig struct {
 
 // GenerateDockerCompose creates a docker-compose.yml dict from the config.
 func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interface{} {
-	prefix := makeContainerPrefix(job.ProjectSlug, job.PreviewName)
+	prefix := job.URLHash
 	domain := job.Domain
 	url := job.PreviewURL
 
@@ -238,10 +238,6 @@ func WriteDockerCompose(dir string, compose map[string]interface{}) error {
 		return fmt.Errorf("failed to marshal docker-compose.yml: %w", err)
 	}
 	return os.WriteFile(filepath.Join(dir, "docker-compose.yml"), data, 0644)
-}
-
-func makeContainerPrefix(projectSlug, previewName string) string {
-	return previewName + "-" + projectSlug
 }
 
 func registryImage(registry, image string) string {

@@ -275,7 +275,7 @@ func (d *Deployer) stepDockerUp() error {
 	}
 
 	// Log image digests for traceability
-	prefix := makeContainerPrefix(d.job.ProjectSlug, d.job.PreviewName)
+	prefix := d.job.URLHash
 	out, _ := exec.Command("docker", "inspect", "--format",
 		"{{.Config.Image}} {{.Image}}", prefix+"-php").CombinedOutput()
 	if len(out) > 0 {
@@ -294,7 +294,7 @@ func (d *Deployer) dbClient() string {
 }
 
 func (d *Deployer) stepWaitForDB() error {
-	prefix := makeContainerPrefix(d.job.ProjectSlug, d.job.PreviewName)
+	prefix := d.job.URLHash
 	dbContainer := prefix + "-db"
 
 	d.log("Waiting for database to be ready...\n")
@@ -327,7 +327,7 @@ func (d *Deployer) stepImportDB() error {
 		return fmt.Errorf("base database not found. Upload with: preview push db")
 	}
 
-	prefix := makeContainerPrefix(d.job.ProjectSlug, d.job.PreviewName)
+	prefix := d.job.URLHash
 	dbContainer := prefix + "-db"
 
 	tmpDB := "/tmp/base.sql.gz"
@@ -383,7 +383,7 @@ func (d *Deployer) stepImportFiles() error {
 
 // dockerExecArgs builds common docker exec arguments with color/terminal support.
 func (d *Deployer) dockerExecArgs(extraEnv ...string) []string {
-	prefix := makeContainerPrefix(d.job.ProjectSlug, d.job.PreviewName)
+	prefix := d.job.URLHash
 	phpContainer := prefix + "-php"
 
 	args := []string{"exec",

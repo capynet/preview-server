@@ -352,7 +352,8 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
                 await update_preview_vm(preview["id"], vm_id, vm_ip)
 
                 # Activate Redis cache backend (flag file is lost on VM reboot)
-                php_container = f"{preview_name}-{project_slug}-php"
+                url_hash = preview.get("url_hash", "")
+                php_container = f"{url_hash}-php"
                 touch_proc = await executor.run_shell(
                     f"docker exec {php_container} touch /tmp/.preview_redis_ready 2>/dev/null"
                 )

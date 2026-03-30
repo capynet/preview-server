@@ -330,7 +330,7 @@ AcceptEnv LANG LC_*
 ForceCommand /usr/local/bin/ssh-shell
 SSHD_EOF
 # Export container env vars for SSH sessions and create login wrapper
-printenv | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT= -e ^COMPOSER_AUTH= | sed 's/^/export /' > /etc/preview-env.sh || true
+printenv | grep -e ^PREV_ -e ^DRUSH_ -e ^DOCUMENT_ROOT= -e ^COMPOSER_AUTH= | awk '{i=index($0,"="); key=substr($0,1,i-1); val=substr($0,i+1); gsub(/\047/,"\047\\\047\047",val); print "export " key "=\047" val "\047"}' > /etc/preview-env.sh || true
 cat > /usr/local/bin/ssh-shell <<'SHELL_EOF'
 #!/bin/bash
 . /etc/preview-env.sh 2>/dev/null

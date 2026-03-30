@@ -171,6 +171,7 @@ necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada
 -  Quiero que eliminnemos preview drush. Ahora con los alias ya podemos usar drush nativo.   
 - Vamos a cambiar la numeracion de los build. Ahora mismo se comparte entre todas las vm de todos los orgs. necesito que sea a nivel org o user o project. 
 - añadir autocompletado al hacer tab en la cli.
+- me gustaria poder hacer upload a las variables de entorno desde la ui para por ejemplo subir un json el lugar de copiarlo y pegarlo. Tiene sentido?
 Pendiente de arreglar:
 Fix del playbook setup-docker-preview.yml línea 44:
 

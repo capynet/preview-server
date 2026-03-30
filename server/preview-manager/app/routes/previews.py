@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 
+from app.docker_compose import container_prefix
 from app.models import PreviewInfo
 from app.state import PreviewStateManager
 from app.database import (
@@ -829,12 +830,12 @@ async def drush_uli(
     executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
 
     # Use provided URI or fall back to default preview URL
+    url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
     drush_uri = body.get("uri") if body else None
     if not drush_uri:
-        url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
         drush_uri = f"https://{url_hash}.mr.preview-mr.com"
 
-    php_container = f"{preview_name}-{proj['slug']}-php"
+    php_container = f"{container_prefix(url_hash)}-php"
 
     proc = await executor.run_shell(
         f"docker exec {php_container} vendor/bin/drush uli --uri={drush_uri}"
@@ -863,7 +864,8 @@ async def drush_command(
 
     proj = await _resolve_project(user, project)
     executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
-    php_container = f"{preview_name}-{proj['slug']}-php"
+    url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
+    php_container = f"{container_prefix(url_hash)}-php"
 
     proc = await executor.run_shell(
         f"docker exec {php_container} vendor/bin/drush {args_str}"
@@ -1137,7 +1139,8 @@ async def download_db(
     """Stream a gzipped SQL dump from the preview VM."""
     proj = await _resolve_project(user, project)
     executor, preview = await _get_executor(proj["id"], preview_name, proj["slug"])
-    php_container = f"{preview_name}-{proj['slug']}-php"
+    url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
+    php_container = f"{container_prefix(url_hash)}-php"
 
     async def generate():
         proc = await executor.run_shell(

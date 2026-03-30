@@ -893,7 +893,9 @@ async def websocket_preview_action(
         vm_ip = preview.get("vm_ip")
 
         # Build command based on action
-        php_container = f"{preview_name}-{project_slug}-php"
+        from app.database import compute_url_hash
+        url_hash = preview.get("url_hash", compute_url_hash(org_slug, project_slug, preview_name))
+        php_container = f"{url_hash}-php"
         if action == "stop":
             # For cloud: use REST endpoint to destroy VM
             running_action = action_manager.start(action_key, action, "stop VM")
