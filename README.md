@@ -189,4 +189,8 @@ O más simple, solo limpiar el build cache y dangling images (sin -a):
 
 docker image prune -f && docker builder prune -af
 
-Sin -a, el prune solo borra imágenes dangling (sin tag), no las taggeadas como localhost:5000/preview-drupal:php8.x.   
+Sin -a, el prune solo borra imágenes dangling (sin tag), no las taggeadas como localhost:5000/preview-drupal:php8.x.
+
+
+
+Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos. 

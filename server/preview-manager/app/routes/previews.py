@@ -405,7 +405,7 @@ async def get_preview_config(
 
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(f"http://{vm_ip}:8022/config")
+            resp = await client.get(f"http://{vm_ip}:8022/info")
             if resp.status_code != 200:
                 raise HTTPException(
                     status_code=502,
