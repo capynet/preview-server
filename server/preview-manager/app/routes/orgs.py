@@ -79,7 +79,7 @@ async def list_my_orgs(user: UserWithContext = Depends(get_current_user)):
 
 
 @router.post("")
-async def create_org(body: CreateOrgBody, user: UserWithContext = Depends(get_current_user)):
+async def create_org(body: CreateOrgBody, user: UserWithContext = Depends(require_superadmin())):
     """Create a new organization. The creator becomes the owner."""
     slug = _validate_slug(body.slug)
 
