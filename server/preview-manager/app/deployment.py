@@ -430,6 +430,35 @@ class PreviewDeployer:
                 f"Deploy OK: {self.project_slug}/{self.preview_name} in {deploy_duration}s"
             )
 
+            # Post/update GitLab MR comment (non-fatal)
+            if self.mr_iid is not None and self.org_id is not None:
+                try:
+                    from app.gitlab_comment import post_or_update_mr_comment
+                    # Get domain_aliases from DB
+                    preview_data = await get_preview(self.project_id, self.preview_name)
+                    aliases = None
+                    if preview_data and preview_data.get("domain_aliases"):
+                        try:
+                            aliases = json.loads(preview_data["domain_aliases"])
+                        except (ValueError, TypeError):
+                            pass
+                    url_hash = compute_url_hash(self.org_slug, self.project_slug, self.preview_name)
+                    await post_or_update_mr_comment(
+                        org_id=self.org_id,
+                        project_id=self.project_id,
+                        preview_name=self.preview_name,
+                        mr_iid=self.mr_iid,
+                        preview_url=self.preview_url,
+                        url_hash=url_hash,
+                        branch=self.branch,
+                        commit_sha=self.commit_sha,
+                        deploy_duration=deploy_duration,
+                        stack_info=self._agent_stack if hasattr(self, '_agent_stack') else None,
+                        domain_aliases=aliases,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to post MR comment: {e}")
+
             await preview_list_manager.force_broadcast()
             return True
 
