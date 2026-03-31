@@ -3,7 +3,7 @@
 # This playbook is kept for reference only.
 ---
 - name: "[DEPRECATED] Fix /var/www/previews permissions"
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
   tasks:
     - name: This playbook is deprecated

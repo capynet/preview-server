@@ -1,7 +1,7 @@
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: preview-postgres
+    container_name: druploy-postgres
     restart: unless-stopped
     volumes:
       - pgdata:/var/lib/postgresql/data
@@ -18,7 +18,7 @@ services:
 
   valkey:
     image: valkey/valkey:8-alpine
-    container_name: preview-valkey
+    container_name: druploy-valkey
     restart: unless-stopped
     volumes:
       - valkeydata:/data

@@ -1,20 +1,20 @@
 [Unit]
-Description=Preview Manager Worker (arq)
-After=network.target docker.service preview-manager.service
+Description=Druploy Worker (arq)
+After=network.target docker.service druploy.service
 Requires=docker.service
 
 [Service]
 Type=simple
-User=preview-manager
-Group=preview-manager
-WorkingDirectory=/home/preview-manager/www/previews/server/preview-manager
-Environment="PATH=/home/preview-manager/www/previews/server/preview-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/home/preview-manager/www/previews/server/preview-manager/venv/bin/arq app.workers.WorkerSettings
+User=druploy
+Group=druploy
+WorkingDirectory=/home/druploy/www/previews/server/preview-manager
+Environment="PATH=/home/druploy/www/previews/server/preview-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/druploy/www/previews/server/preview-manager/venv/bin/arq app.workers.WorkerSettings
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=preview-worker
+SyslogIdentifier=druploy-worker
 
 # Give running deploy jobs time to finish on restart (15 minutes)
 TimeoutStopSec=900

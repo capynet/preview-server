@@ -32,9 +32,9 @@
     group: "{{ item.group }}"
     mode: '0775'
   loop:
-    - { path: previews,             owner: preview-manager, group: preview-manager }
-    - { path: previews/.base-files, owner: preview-manager, group: preview-manager }
-    - { path: backups,              owner: preview-user,    group: preview-user }
+    - { path: previews,             owner: druploy, group: druploy }
+    - { path: previews/.base-files, owner: druploy, group: druploy }
+    - { path: backups,              owner: druploy-user,    group: druploy-user }
 
 - name: Remove existing directories (not symlinks)
   file:

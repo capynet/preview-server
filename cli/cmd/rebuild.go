@@ -15,7 +15,7 @@ var rebuildCmd = &cobra.Command{
 Auto-detects the project and preview from the current git branch.
 
 Examples:
-  preview rebuild`,
+  druploy rebuild`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := resolvePreview()

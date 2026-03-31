@@ -1,12 +1,12 @@
 ---
 # Preview Manager - Deployment Tasks
 
-- name: Create preview-manager user if not exists
+- name: Create druploy user if not exists
   user:
-    name: preview-manager
+    name: druploy
     shell: /bin/bash
     create_home: yes
-    home: /home/preview-manager
+    home: /home/druploy
     groups: docker
     append: yes
     state: present
@@ -20,39 +20,40 @@
     state: present
     update_cache: yes
 
-- name: Ensure preview-user is in preview-manager and docker groups
+- name: Ensure druploy-user is in druploy and docker groups
   user:
-    name: preview-user
-    groups: preview-manager,docker
+    name: druploy-user
+    groups: druploy,docker
     append: yes
 
-- name: Create preview-manager directory structure
+- name: Create druploy directory structure
   file:
     path: "{{ item }}"
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0775'
   loop:
-    - /home/preview-manager/www/previews/server/preview-manager
-    - /var/www/preview-manager
-    - /var/www/preview-manager/db-cache
-    - /var/www/preview-manager/infra
+    - /home/druploy/www/previews/server/preview-manager
+    - /var/www/druploy
+    - /var/www/druploy/db-cache
+    - /var/www/druploy/infra
+    - /var/www/druploy/cli
 
 # ---- Infrastructure: PostgreSQL + Valkey ----
 
 - name: Deploy infrastructure docker-compose
   template:
     src: infra-docker-compose.yml.j2
-    dest: /var/www/preview-manager/infra/docker-compose.yml
-    owner: preview-manager
-    group: preview-manager
+    dest: /var/www/druploy/infra/docker-compose.yml
+    owner: druploy
+    group: druploy
     mode: '0640'
   tags: [infra]
 
 - name: Start infrastructure containers (PostgreSQL + Valkey)
   community.docker.docker_compose_v2:
-    project_src: /var/www/preview-manager/infra
+    project_src: /var/www/druploy/infra
     state: present
   tags: [infra]
 
@@ -77,7 +78,7 @@
 - name: Copy preview-manager application files
   synchronize:
     src: "{{ playbook_dir }}/../../preview-manager/"
-    dest: /home/preview-manager/www/previews/server/preview-manager/
+    dest: /home/druploy/www/previews/server/preview-manager/
     delete: no
     rsync_opts:
       - "--exclude=__pycache__"
@@ -86,15 +87,15 @@
       - "--exclude=venv"
       - "--exclude=.git"
   notify:
-    - Restart preview-manager
-    - Restart preview-worker
+    - Restart druploy
+    - Restart druploy-worker
   tags: [code]
 
 - name: Set proper ownership on preview-manager files
   file:
-    path: /home/preview-manager/www/previews/server/preview-manager
-    owner: preview-manager
-    group: preview-manager
+    path: /home/druploy/www/previews/server/preview-manager
+    owner: druploy
+    group: druploy
     mode: '0775'
     recurse: yes
   tags: [code]
@@ -102,44 +103,44 @@
 - name: Create virtual environment
   shell: python3 -m venv venv
   args:
-    chdir: /home/preview-manager/www/previews/server/preview-manager
-    creates: /home/preview-manager/www/previews/server/preview-manager/venv/bin/python3
-  become_user: preview-manager
+    chdir: /home/druploy/www/previews/server/preview-manager
+    creates: /home/druploy/www/previews/server/preview-manager/venv/bin/python3
+  become_user: druploy
 
 - name: Upgrade pip in venv
   shell: venv/bin/python3 -m pip install --upgrade pip
   args:
-    chdir: /home/preview-manager/www/previews/server/preview-manager
-  become_user: preview-manager
+    chdir: /home/druploy/www/previews/server/preview-manager
+  become_user: druploy
 
 - name: Install requirements from requirements.txt
   pip:
-    requirements: /home/preview-manager/www/previews/server/preview-manager/requirements.txt
-    virtualenv: /home/preview-manager/www/previews/server/preview-manager/venv
+    requirements: /home/druploy/www/previews/server/preview-manager/requirements.txt
+    virtualenv: /home/druploy/www/previews/server/preview-manager/venv
     virtualenv_command: python3 -m venv
-  become_user: preview-manager
+  become_user: druploy
 
-- name: Create .ssh directory for preview-manager
+- name: Create .ssh directory for druploy
   file:
-    path: /home/preview-manager/.ssh
+    path: /home/druploy/.ssh
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0700'
 
 - name: Generate SSH key pair for VM access
   community.crypto.openssh_keypair:
-    path: /home/preview-manager/.ssh/preview-vm
+    path: /home/druploy/.ssh/druploy-vm
     type: ed25519
-    comment: "preview-manager VM access"
-    owner: preview-manager
-    group: preview-manager
+    comment: "druploy VM access"
+    owner: druploy
+    group: druploy
     mode: '0600'
 
-- name: Deploy preview-ssh-proxy script
+- name: Deploy druploy-ssh-proxy script
   copy:
-    src: "{{ playbook_dir }}/../../preview-manager/scripts/preview-ssh-proxy.sh"
-    dest: /usr/local/bin/preview-ssh-proxy
+    src: "{{ playbook_dir }}/../../preview-manager/scripts/druploy-ssh-proxy.sh"
+    dest: /usr/local/bin/druploy-ssh-proxy
     owner: root
     group: root
     mode: '0755'
@@ -158,33 +159,33 @@
 - name: Deploy VM agent binary
   copy:
     src: "{{ playbook_dir }}/../../../vm-agent/bin/vm-agent"
-    dest: /var/www/preview-manager/cli/preview-agent
-    owner: preview-manager
-    group: preview-manager
+    dest: /var/www/druploy/cli/druploy-agent
+    owner: druploy
+    group: druploy
     mode: '0755'
   tags: [code]
 
 - name: Read SSH public key
   slurp:
-    src: /home/preview-manager/.ssh/preview-vm.pub
+    src: /home/druploy/.ssh/druploy-vm.pub
   register: ssh_public_key_content
   tags: [code]
 
 - name: Create .env file
   template:
     src: env.j2
-    dest: /home/preview-manager/www/previews/server/preview-manager/.env
-    owner: preview-manager
-    group: preview-manager
+    dest: /home/druploy/www/previews/server/preview-manager/.env
+    owner: druploy
+    group: druploy
     mode: '0640'
   tags: [code]
 
 # ---- Systemd services ----
 
-- name: Create preview-manager systemd service
+- name: Create druploy systemd service
   template:
     src: preview-manager.service.j2
-    dest: /etc/systemd/system/preview-manager.service
+    dest: /etc/systemd/system/druploy.service
     owner: root
     group: root
     mode: '0644'
@@ -192,12 +193,12 @@
   become: yes
   notify:
     - Reload systemd
-    - Restart preview-manager
+    - Restart druploy
 
-- name: Create preview-worker systemd service
+- name: Create druploy-worker systemd service
   template:
     src: preview-worker.service.j2
-    dest: /etc/systemd/system/preview-worker.service
+    dest: /etc/systemd/system/druploy-worker.service
     owner: root
     group: root
     mode: '0644'
@@ -205,96 +206,96 @@
   become: yes
   notify:
     - Reload systemd
-    - Restart preview-worker
+    - Restart druploy-worker
 
-- name: Ensure /var/www is writable by preview-manager
+- name: Ensure /var/www is writable by druploy
   file:
     path: /var/www
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0755'
 
 - name: Create previews base directory
   file:
     path: /var/www
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0755'
 
 - name: Ensure backups directory ownership
   file:
     path: /backups
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0775'
     recurse: yes
 
 # CLI distribution tasks
 - name: Create CLI distribution directory
   file:
-    path: /var/www/preview-manager/cli
+    path: /var/www/druploy/cli
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0775'
   tags: [cli]
 
 - name: Copy CLI binaries
   copy:
     src: "{{ playbook_dir }}/../../../cli/dist/"
-    dest: /var/www/preview-manager/cli/
-    owner: preview-manager
-    group: preview-manager
+    dest: /var/www/druploy/cli/
+    owner: druploy
+    group: druploy
     mode: '0755'
   tags: [cli]
 
 - name: Copy CLI install script
   copy:
     src: "{{ playbook_dir }}/../../../cli/install.sh"
-    dest: /var/www/preview-manager/cli/install.sh
-    owner: preview-manager
-    group: preview-manager
+    dest: /var/www/druploy/cli/install.sh
+    owner: druploy
+    group: druploy
     mode: '0644'
   tags: [cli]
 
 - name: Copy CLI VERSION file
   copy:
     src: "{{ playbook_dir }}/../../../cli/VERSION"
-    dest: /var/www/preview-manager/cli/VERSION
-    owner: preview-manager
-    group: preview-manager
+    dest: /var/www/druploy/cli/VERSION
+    owner: druploy
+    group: druploy
     mode: '0644'
   tags: [cli]
 
-- name: Allow preview-manager to run du with sudo (for disk usage monitoring)
+- name: Allow druploy to run du with sudo (for disk usage monitoring)
   copy:
-    content: "preview-manager ALL=(root) NOPASSWD: /usr/bin/du\n"
-    dest: /etc/sudoers.d/preview-manager-du
+    content: "druploy ALL=(root) NOPASSWD: /usr/bin/du\n"
+    dest: /etc/sudoers.d/druploy-du
     owner: root
     group: root
     mode: '0440'
     validate: 'visudo -cf %s'
 
-- name: Enable and start preview-manager service
+- name: Enable and start druploy service
   systemd:
-    name: preview-manager
+    name: druploy
     enabled: yes
     state: started
     daemon_reload: yes
 
-- name: Enable and start preview-worker service
+- name: Enable and start druploy-worker service
   systemd:
-    name: preview-worker
+    name: druploy-worker
     enabled: yes
     state: started
     daemon_reload: yes
 
-- name: Gracefully restart preview-worker (waits for running jobs)
+- name: Gracefully restart druploy-worker (waits for running jobs)
   systemd:
-    name: preview-worker
+    name: druploy-worker
     state: restarted
   become: yes
   tags: [worker, never]

@@ -214,7 +214,7 @@ async def task_run_post_deploy(
         logger.error(f"Post-deploy: no VM for {project_slug}/{preview_name}")
         return
 
-    # Parse preview.yml to get post_deploy config
+    # Parse druploy.yml to get post_deploy config
     preview_path = PreviewStateManager.get_preview_path(org_slug, project_slug, preview_name)
     config = parse_preview_yml(preview_path)
 

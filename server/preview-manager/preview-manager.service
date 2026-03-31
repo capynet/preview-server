@@ -1,5 +1,5 @@
 [Unit]
-Description=Preview Manager API v2.0
+Description=Druploy API v2.0
 After=network.target postgresql.service
 Wants=postgresql.service
 

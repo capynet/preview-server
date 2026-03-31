@@ -30,11 +30,11 @@ func runSetupProject() error {
 		fmt.Println()
 	}
 
-	// 1. Create settings.preview.php
-	previewSettingsPath := filepath.Join(settingsDir, "settings.preview.php")
+	// 1. Create settings.druploy.php
+	previewSettingsPath := filepath.Join(settingsDir, "settings.druploy.php")
 	wrote, err := writeFile(previewSettingsPath, settingsPreviewContent())
 	if err != nil {
-		return fmt.Errorf("failed to create settings.preview.php: %w", err)
+		return fmt.Errorf("failed to create settings.druploy.php: %w", err)
 	}
 	switch wrote {
 	case "created":
@@ -48,26 +48,26 @@ func runSetupProject() error {
 		fmt.Printf("  · %s — already exists\n", previewSettingsPath)
 	}
 
-	// 2. Create preview.yml
-	wrote, err = writeFile("preview.yml", previewYmlContent())
+	// 2. Create druploy.yml
+	wrote, err = writeFile("druploy.yml", previewYmlContent())
 	if err != nil {
-		return fmt.Errorf("failed to create preview.yml: %w", err)
+		return fmt.Errorf("failed to create druploy.yml: %w", err)
 	}
 	switch wrote {
 	case "created":
-		created = append(created, "preview.yml")
-		fmt.Printf("  ✓ preview.yml — created\n")
+		created = append(created, "druploy.yml")
+		fmt.Printf("  ✓ druploy.yml — created\n")
 	case "overwritten":
-		overwritten = append(overwritten, "preview.yml")
-		fmt.Printf("  ✓ preview.yml — overwritten\n")
+		overwritten = append(overwritten, "druploy.yml")
+		fmt.Printf("  ✓ druploy.yml — overwritten\n")
 	default:
-		skipped = append(skipped, "preview.yml")
-		fmt.Printf("  · preview.yml — already exists\n")
+		skipped = append(skipped, "druploy.yml")
+		fmt.Printf("  · druploy.yml — already exists\n")
 	}
 
 	// 3. Create deploy scripts
 	for _, phase := range []string{"new", "update"} {
-		scriptDir := filepath.Join("scripts", "preview", phase)
+		scriptDir := filepath.Join("scripts", "druploy", phase)
 		scriptPath := filepath.Join(scriptDir, "deploy.sh")
 		os.MkdirAll(scriptDir, 0755)
 		wrote, err = writeFile(scriptPath, deployScriptContent(phase))
@@ -90,7 +90,7 @@ func runSetupProject() error {
 
 	// 4. Create post-deploy scripts
 	for _, phase := range []string{"new", "update"} {
-		scriptDir := filepath.Join("scripts", "preview", phase)
+		scriptDir := filepath.Join("scripts", "druploy", phase)
 		scriptPath := filepath.Join(scriptDir, "post-deploy.sh")
 		os.MkdirAll(scriptDir, 0755)
 		wrote, err = writeFile(scriptPath, postDeployScriptContent(phase))
@@ -124,8 +124,8 @@ func runSetupProject() error {
 
 	fmt.Println()
 	fmt.Println("Next steps:")
-	fmt.Println("  1. Edit preview.yml to match your project's needs")
-	fmt.Println("  2. Customize the deploy scripts in scripts/preview/")
+	fmt.Println("  1. Edit druploy.yml to match your project's needs")
+	fmt.Println("  2. Customize the deploy scripts in scripts/druploy/")
 	fmt.Println("  3. Commit everything to your repository")
 
 	return nil
@@ -168,7 +168,7 @@ func settingsPreviewContent() string {
  * Preview environment overrides.
  *
  * This file is loaded after the internal preview configuration
- * (settings.preview.internal.php) which sets up the database connection,
+ * (settings.druploy.internal.php) which sets up the database connection,
  * file paths, and trusted host patterns automatically.
  *
  * Use this file to add or override any Drupal settings specifically
@@ -183,7 +183,7 @@ func settingsPreviewContent() string {
 }
 
 func previewYmlContent() string {
-	return `# Preview Manager configuration
+	return `# Druploy configuration
 # This file defines how preview environments are created for this project.
 # See: https://druploy.dev/docs/configuration
 
@@ -217,7 +217,7 @@ solr: false           # e.g. "9", "8"
 # solr_configset: "etc/solr"
 
 # Custom environment variables injected into the PHP container.
-# These are available in settings.preview.php via getenv().
+# These are available in settings.druploy.php via getenv().
 # env:
 #   APP_ENV: preview
 #   MY_CUSTOM_VAR: some-value
@@ -251,8 +251,8 @@ solr: false           # e.g. "9", "8"
 # "update" runs when new commits are pushed to the MR.
 #
 deploy:
-  new: scripts/preview/new/deploy.sh
-  update: scripts/preview/update/deploy.sh
+  new: scripts/druploy/new/deploy.sh
+  update: scripts/druploy/update/deploy.sh
 
 # Post-deploy scripts — executed after a successful deploy.
 # These run after the preview is fully active and reachable.
@@ -260,8 +260,8 @@ deploy:
 # A failure here does NOT mark the deploy as failed.
 #
 # post_deploy:
-#   new: scripts/preview/new/post-deploy.sh
-#   update: scripts/preview/update/post-deploy.sh
+#   new: scripts/druploy/new/post-deploy.sh
+#   update: scripts/druploy/update/post-deploy.sh
 `
 }
 

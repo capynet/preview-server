@@ -86,7 +86,7 @@ def send_magic_link_email(to_email: str, token: str):
     html = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
       <h2 style="margin: 0 0 16px; font-size: 20px; color: #111;">
-        Sign in to Preview Manager
+        Sign in to Druploy
       </h2>
       <p style="margin: 0 0 24px; color: #666; font-size: 14px;">
         Click the button below to sign in. This link expires in 15 minutes.
@@ -105,7 +105,7 @@ def send_magic_link_email(to_email: str, token: str):
         resend.Emails.send({
             "from": settings.invitation_from_email,
             "to": [to_email],
-            "subject": "Sign in to Preview Manager",
+            "subject": "Sign in to Druploy",
             "html": html,
         })
         logger.info(f"Magic link email sent to {to_email}")
@@ -116,4 +116,4 @@ def send_magic_link_email(to_email: str, token: str):
 # Keep backward compat alias for invitation emails (same as org add)
 def send_invitation_email(to_email: str, invite_token: str, role: str, invited_by_name: str):
     """Legacy invitation email — now sends the same 'added' email."""
-    send_added_to_org_email(to_email, "Preview Manager", role)
+    send_added_to_org_email(to_email, "Druploy", role)

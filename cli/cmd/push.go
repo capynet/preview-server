@@ -550,7 +550,7 @@ func generateAndUploadFiles(slug string) error {
 		heavyFiles := strings.Split(strings.TrimSpace(string(findOut)), "\n")
 		skipped := 0
 		var strippedBytes int64
-		excludeFile, err = os.CreateTemp("", "preview-exclude-*.txt")
+		excludeFile, err = os.CreateTemp("", "druploy-exclude-*.txt")
 		if err != nil {
 			return fmt.Errorf("failed to create exclude file: %w", err)
 		}

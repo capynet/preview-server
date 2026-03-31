@@ -8,13 +8,13 @@
 #   ansible-playbook playbooks/setup-storage.yml
 
 - name: Setup Storage Volume
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   pre_tasks:
-    - name: Stop preview-manager
+    - name: Stop druploy
       systemd:
-        name: preview-manager
+        name: druploy
         state: stopped
       ignore_errors: yes
 
@@ -22,9 +22,9 @@
     - storage
 
   post_tasks:
-    - name: Start preview-manager
+    - name: Start druploy
       systemd:
-        name: preview-manager
+        name: druploy
         state: started
 
     - name: Verify setup

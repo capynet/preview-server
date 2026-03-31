@@ -3,14 +3,13 @@ from typing import Optional
 
 
 class Settings(BaseSettings):
-    """Preview Manager configuration"""
+    """Druploy configuration"""
 
     # API Settings
     api_host: str = "0.0.0.0"  # Listen on all interfaces (allows Docker containers to connect)
     api_port: int = 8000
 
     # Preview Settings
-    previews_base_path: str = "/var/www/previews"
     inactivity_threshold_minutes: int = 15
 
     # Resource Monitoring
@@ -19,8 +18,8 @@ class Settings(BaseSettings):
     check_interval_seconds: int = 60   # Check every 60 seconds
 
     # Docker Compose Settings
-    docker_network: str = "preview-network"
-    drupal_base_image: str = "preview-drupal"
+    docker_network: str = "druploy-network"
+    drupal_base_image: str = "druploy-drupal"
     docker_registry: str = ""  # e.g. "localhost:5000" — if set, all images are pulled from this registry
     default_php_version: str = "8.3"
     default_mysql_version: str = "8.0"

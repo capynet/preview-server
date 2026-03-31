@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# preview-ssh-proxy: restricted SSH proxy for preview VM access
-# Installed at /usr/local/bin/preview-ssh-proxy
+# druploy-ssh-proxy: restricted SSH proxy for preview VM access
+# Installed at /usr/local/bin/druploy-ssh-proxy
 # Used as command= restriction in authorized_keys
 #
 # Format 1 (CLI): VM_IP CONTAINER WORKDIR [COMMAND...]
@@ -12,7 +12,7 @@ set -euo pipefail
 # Format 2 (drush aliases): PREV_ROUTE env var set via SSH SetEnv.
 #   Contains VM_IP:CONTAINER. SSH_ORIGINAL_COMMAND has the drush command.
 
-KEY="/home/preview-manager/.ssh/preview-vm"
+KEY="/home/druploy/.ssh/druploy-vm"
 SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 if [ -z "${SSH_ORIGINAL_COMMAND:-}" ]; then

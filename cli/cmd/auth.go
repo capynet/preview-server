@@ -36,7 +36,7 @@ var loginNoBrowser bool
 
 var authLoginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate with Preview Manager",
+	Short: "Authenticate with Druploy",
 	Long:  "Opens the browser to authenticate. After approval, the CLI is logged in persistently.",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,7 +50,7 @@ var authLoginCmd = &cobra.Command{
 			user, err := fetchCurrentUser(cfg)
 			if err == nil {
 				fmt.Printf("Already logged in as %s (%s)\n", user.Name, user.Email)
-				fmt.Fprintln(os.Stderr, "Run 'preview logout' first to switch accounts.")
+				fmt.Fprintln(os.Stderr, "Run 'druploy logout' first to switch accounts.")
 				return nil
 			}
 			// Token invalid — continue with login flow
@@ -153,7 +153,7 @@ func pollAuth(url string) (string, error) {
 
 var authLogoutCmd = &cobra.Command{
 	Use:   "logout",
-	Short: "Log out of Preview Manager",
+	Short: "Log out of Druploy",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := loadConfig()
@@ -182,13 +182,13 @@ var whoamiCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := loadConfig()
 		if cfg.Token == "" {
-			fmt.Fprintln(os.Stderr, "Not logged in. Run 'preview login' first.")
+			fmt.Fprintln(os.Stderr, "Not logged in. Run 'druploy login' first.")
 			os.Exit(1)
 		}
 
 		user, err := fetchCurrentUser(cfg)
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Token is invalid or expired. Run 'preview login' to re-authenticate.")
+			fmt.Fprintln(os.Stderr, "Token is invalid or expired. Run 'druploy login' to re-authenticate.")
 			os.Exit(1)
 		}
 

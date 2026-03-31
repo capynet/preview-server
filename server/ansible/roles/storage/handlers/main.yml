@@ -1,5 +1,5 @@
 ---
-- name: Restart preview-manager
+- name: Restart druploy
   systemd:
-    name: preview-manager
+    name: druploy
     state: restarted

@@ -77,7 +77,7 @@ func main() {
 		fmt.Fprintf(w, `{"status":"ok","version":"%s"}`, Version)
 	})
 
-	log.Printf("Preview agent v%s listening on :%s", Version, port)
+	log.Printf("Druploy agent v%s listening on :%s", Version, port)
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
 
@@ -193,7 +193,7 @@ func handleInfo(w http.ResponseWriter, r *http.Request) {
 
 	cfg, err := ParsePreviewYML(codeDir)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("failed to parse preview.yml: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf("failed to parse druploy.yml: %v", err), http.StatusInternalServerError)
 		return
 	}
 

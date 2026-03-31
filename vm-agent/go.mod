@@ -1,4 +1,4 @@
-module preview-agent
+module druploy-agent
 
 go 1.26.1
 

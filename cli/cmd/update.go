@@ -18,7 +18,7 @@ without reimporting the database or files.
 Auto-detects the project and preview from the current git branch.
 
 Examples:
-  preview update`,
+  druploy update`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := resolvePreview()

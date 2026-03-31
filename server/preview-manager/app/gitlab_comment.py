@@ -136,7 +136,7 @@ def _build_comment(
     lines.append(f"| **URL** | [{url_hash}.{settings.preview_domain}]({preview_url}) |")
 
     dashboard_url = f"{settings.frontend_url}/projects/{project_slug}"
-    lines.append(f"| **Dashboard** | [View in Preview Manager]({dashboard_url}) |")
+    lines.append(f"| **Dashboard** | [View in Druploy]({dashboard_url}) |")
 
     # Stack info
     if stack_info:

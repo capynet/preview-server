@@ -7,7 +7,7 @@
 #   ansible-playbook playbooks/setup-r2.yml
 
 - name: Setup Cloudflare R2
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   roles:

@@ -666,7 +666,7 @@ class PreviewDeployer:
                 await update_preview_vm(preview["id"], self._vm_id, self._vm_ip)
 
     async def _provision_agent(self):
-        """Install and start the preview-agent on the VM via SSH.
+        """Install and start the druploy-agent on the VM via SSH.
 
         This ensures the agent is running even if the VM snapshot doesn't
         include it. On subsequent deploys for the same VM, this is a no-op
@@ -684,7 +684,7 @@ class PreviewDeployer:
                 if resp.status_code == 200:
                     # Agent running — restart to update binary (needs root for systemctl)
                     executor = RemoteExecutor(self._vm_ip, user="root")
-                    proc = await executor.run_shell("systemctl restart preview-agent")
+                    proc = await executor.run_shell("systemctl restart druploy-agent")
                     await proc.communicate()
                     elapsed = time.monotonic() - t0
                     await self._log_step_end(step, elapsed, True, f"{DIM}Agent updated{RESET}")
@@ -698,7 +698,7 @@ class PreviewDeployer:
 
         # Install the agent: download binary + create systemd service
         api_url = settings.api_url
-        agent_bin = "/var/www/preview/bin/preview-agent"
+        agent_bin = "/var/www/preview/bin/druploy-agent"
         install_cmd = (
             # Create directories
             f"mkdir -p /var/www/preview/bin && "
@@ -707,24 +707,24 @@ class PreviewDeployer:
             f"chmod +x {agent_bin} && "
             f"chown -R preview:www-data /var/www/preview/bin && "
             # Write env config
-            f"echo 'PREVIEW_SERVER_URL={api_url}' > /etc/preview-agent.env && "
+            f"echo 'PREVIEW_SERVER_URL={api_url}' > /etc/druploy-agent.env && "
             # Create update script
-            f"cat > /var/www/preview/bin/preview-agent-update << 'UPDATESCRIPT'\n"
+            f"cat > /var/www/preview/bin/druploy-agent-update << 'UPDATESCRIPT'\n"
             f"#!/bin/bash\n"
             f"set -euo pipefail\n"
-            f"source /etc/preview-agent.env 2>/dev/null || true\n"
+            f"source /etc/druploy-agent.env 2>/dev/null || true\n"
             f"AGENT_URL=\"${{PREVIEW_SERVER_URL:-{api_url}}}/api/internal/agent/download\"\n"
-            f"AGENT_BIN=/var/www/preview/bin/preview-agent\n"
+            f"AGENT_BIN=/var/www/preview/bin/druploy-agent\n"
             f"curl -sf -o \"${{AGENT_BIN}}.new\" \"$AGENT_URL\" && "
             f"chmod +x \"${{AGENT_BIN}}.new\" && "
             f"mv \"${{AGENT_BIN}}.new\" \"$AGENT_BIN\" || true\n"
             f"UPDATESCRIPT\n"
-            f"chmod +x /var/www/preview/bin/preview-agent-update && "
+            f"chmod +x /var/www/preview/bin/druploy-agent-update && "
             f"chown -R preview:www-data /var/www/preview/bin && "
             # Create systemd service (runs agent as preview user)
-            f"cat > /etc/systemd/system/preview-agent.service << 'SERVICEFILE'\n"
+            f"cat > /etc/systemd/system/druploy-agent.service << 'SERVICEFILE'\n"
             f"[Unit]\n"
-            f"Description=Preview Agent\n"
+            f"Description=Druploy Agent\n"
             f"After=docker.service\n"
             f"Requires=docker.service\n"
             f"\n"
@@ -732,20 +732,20 @@ class PreviewDeployer:
             f"Type=simple\n"
             f"User=preview\n"
             f"Group=www-data\n"
-            f"ExecStartPre=/var/www/preview/bin/preview-agent-update\n"
-            f"ExecStart=/var/www/preview/bin/preview-agent\n"
+            f"ExecStartPre=/var/www/preview/bin/druploy-agent-update\n"
+            f"ExecStart=/var/www/preview/bin/druploy-agent\n"
             f"Restart=always\n"
             f"RestartSec=5\n"
             f"Environment=PORT=8022\n"
             f"Environment=HOME=/var/www/preview\n"
-            f"EnvironmentFile=-/etc/preview-agent.env\n"
+            f"EnvironmentFile=-/etc/druploy-agent.env\n"
             f"\n"
             f"[Install]\n"
             f"WantedBy=multi-user.target\n"
             f"SERVICEFILE\n"
             f"systemctl daemon-reload && "
-            f"systemctl enable preview-agent && "
-            f"systemctl start preview-agent"
+            f"systemctl enable druploy-agent && "
+            f"systemctl start druploy-agent"
         )
 
         proc = await executor.run_shell(install_cmd)

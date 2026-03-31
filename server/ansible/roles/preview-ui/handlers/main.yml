@@ -4,8 +4,8 @@
     daemon_reload: yes
   become: yes
 
-- name: Restart preview-ui
+- name: Restart druploy-ui
   systemd:
-    name: preview-ui
+    name: druploy-ui
     state: restarted
   become: yes

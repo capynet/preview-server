@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Preview Manager
+Druploy
 
 Simple preview deployment system for Drupal environments with Docker Compose.
 """
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     from app.config_store import load_config_to_settings
     from app.websockets import system_resources_loop, disk_usage_loop
 
-    logger.info("Starting Preview Manager Service")
+    logger.info("Starting Druploy Service")
 
     # Initialize PostgreSQL pool
     await init_pool()
@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):
     # System resources monitor still runs in-process (lightweight, 2s interval)
     system_resources_task = asyncio.create_task(system_resources_loop())
     disk_usage_task = asyncio.create_task(disk_usage_loop())
-    logger.info("Preview Manager Service started successfully")
+    logger.info("Druploy Service started successfully")
 
     yield
 
@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
     await close_valkey()
     await close_pool()
 
-    logger.info("Preview Manager Service stopped")
+    logger.info("Druploy Service stopped")
 
 
 def handle_signal(signum, frame):
@@ -113,7 +113,7 @@ def handle_signal(signum, frame):
 
 
 app = FastAPI(
-    title="Preview Manager",
+    title="Druploy",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,

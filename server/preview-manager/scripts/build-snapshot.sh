@@ -29,7 +29,7 @@ LOCATION="fsn1"
 SERVER_TYPE="cx23"
 SERVER_NAME="snapshot-builder-$(date +%s)"
 IMAGE="ubuntu-24.04"
-SSH_KEY_PATH="${SSH_KEY_PATH:-/home/preview-manager/.ssh/preview-vm}"
+SSH_KEY_PATH="${SSH_KEY_PATH:-/home/druploy/.ssh/druploy-vm}"
 SSH_CMD="ssh -i $SSH_KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 
 # Collect existing preview-base-image snapshot IDs (only ours, not unrelated snapshots)
@@ -46,7 +46,7 @@ hcloud server create \
     --type "$SERVER_TYPE" \
     --image "$IMAGE" \
     --location "$LOCATION" \
-    --ssh-key preview-manager
+    --ssh-key druploy
 
 SERVER_IP=$(hcloud server ip "$SERVER_NAME")
 echo "==> VM created: $SERVER_IP"
@@ -100,7 +100,7 @@ cp /root/.ssh/authorized_keys /var/www/preview/.ssh/authorized_keys
 chown preview:www-data /var/www/preview/.ssh/authorized_keys
 
 # Create Docker network used by preview containers
-docker network create preview-network 2>/dev/null || true
+docker network create druploy-network 2>/dev/null || true
 
 # Clean up apt cache
 apt-get clean
@@ -122,7 +122,7 @@ for i in $(seq 1 20); do
 done
 
 echo "==> Creating snapshot..."
-SNAPSHOT_DESC="preview-vm-$(date +%Y%m%d-%H%M)"
+SNAPSHOT_DESC="druploy-vm-$(date +%Y%m%d-%H%M)"
 CREATE_OUTPUT=$(hcloud server create-image --type snapshot --description "$SNAPSHOT_DESC" --label "$SNAPSHOT_LABEL" "$SERVER_NAME" 2>&1)
 echo "$CREATE_OUTPUT"
 

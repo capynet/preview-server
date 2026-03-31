@@ -1,6 +1,6 @@
 ---
 - name: Clean all deployment locks
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   tasks:

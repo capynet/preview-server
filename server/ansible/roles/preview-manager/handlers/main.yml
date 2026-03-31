@@ -4,14 +4,14 @@
     daemon_reload: yes
   become: yes
 
-- name: Restart preview-manager
+- name: Restart druploy
   systemd:
-    name: preview-manager
+    name: druploy
     state: restarted
   become: yes
 
-- name: Restart preview-worker
+- name: Restart druploy-worker
   systemd:
-    name: preview-worker
+    name: druploy-worker
     state: restarted
   become: yes

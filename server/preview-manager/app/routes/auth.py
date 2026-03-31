@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from config.settings import settings
 from app.auth import database as db
-from app.auth.dependencies import SESSION_COOKIE, get_current_user
+from app.auth.dependencies import SESSION_COOKIE, get_current_user, require_superadmin
 from app.database import (
     add_org_member, get_invitation_by_token, get_pool, get_preview_by_domain,
     list_user_organizations, mark_invitation_accepted, match_email_domain,
@@ -367,9 +367,9 @@ async def magic_link_verify(token: str):
 
 # ---- SSH Keys ----
 
-AUTHORIZED_KEYS_PATH = "/home/preview-manager/.ssh/authorized_keys"
-COMMAND_PREFIX = 'command="/usr/local/bin/preview-ssh-proxy"'
-MANAGED_MARKER = 'command="/usr/local/bin/preview-ssh-proxy"'
+AUTHORIZED_KEYS_PATH = "/home/druploy/.ssh/authorized_keys"
+COMMAND_PREFIX = 'command="/usr/local/bin/druploy-ssh-proxy"'
+MANAGED_MARKER = 'command="/usr/local/bin/druploy-ssh-proxy"'
 
 VALID_KEY_PREFIXES = ("ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "sk-ssh-ed25519", "sk-ecdsa-sha2-nistp256")
 

@@ -365,7 +365,7 @@
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
         <pre>curl -fsSL https://api.druploy.dev/api/cli/install.sh | sh</pre>
       </div>
-      <p class="note">Downloads the binary to <code>~/.local/bin/preview</code>. Make sure <code>~/.local/bin</code> is in your PATH.</p>
+      <p class="note">Downloads the binary to <code>~/.local/bin/druploy</code>. Make sure <code>~/.local/bin</code> is in your PATH.</p>
     </div>
   </section>
 
@@ -376,9 +376,9 @@
       <h2>Get up and running</h2>
       <div class="code-block">
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-        <pre>preview setup api https://api.druploy.dev
-preview login
-preview list</pre>
+        <pre>druploy setup api https://api.druploy.dev
+druploy login
+druploy list</pre>
       </div>
     </div>
   </section>
@@ -403,7 +403,7 @@ preview list</pre>
 
   <footer>
     <div class="container">
-      <p>Preview Manager</p>
+      <p>Druploy</p>
     </div>
   </footer>
 
@@ -419,23 +419,23 @@ preview list</pre>
 
     // Commands data
     const commands = [
-      { name: 'login', usage: 'preview login', desc: 'Authenticate via browser (device flow)', flags: [['--no-browser', 'Print URL instead of opening browser']] },
-      { name: 'logout', usage: 'preview logout', desc: 'Log out and clear credentials', flags: [] },
-      { name: 'whoami', usage: 'preview whoami', desc: 'Show current authenticated user', flags: [] },
-      { name: 'list', usage: 'preview list [PROJECT]', desc: 'List previews, interactive selector if no project specified', flags: [['--no-status', 'Skip fetching container status (faster)']] },
-      { name: 'start', usage: 'preview start PROJECT/PREVIEW', desc: 'Start a stopped preview environment', flags: [] },
-      { name: 'stop', usage: 'preview stop PROJECT/PREVIEW', desc: 'Stop a running preview environment', flags: [] },
-      { name: 'restart', usage: 'preview restart PROJECT/PREVIEW', desc: 'Restart a preview environment', flags: [] },
-      { name: 'rebuild', usage: 'preview rebuild PROJECT/PREVIEW', desc: 'Trigger a rebuild for a preview from the current branch', flags: [] },
-      { name: 'uli', usage: 'preview uli PROJECT/PREVIEW', desc: 'Get a Drupal one-time login link', flags: [['--no-browser', 'Print URL instead of opening browser']] },
-      { name: 'drush', usage: 'preview drush PROJECT/PREVIEW [args...]', desc: 'Run a drush command on a preview. Auto-detects project and preview from git context.', flags: [] },
-      { name: 'db download', usage: 'preview db download PROJECT/PREVIEW', desc: 'Download a database dump (gzip compressed)', flags: [['-o, --output', 'Output file path']] },
-      { name: 'files download', usage: 'preview files download PROJECT/PREVIEW', desc: 'Download files archive (tar.gz)', flags: [['-o, --output', 'Output file path']] },
-      { name: 'push db', usage: 'preview push db [file.sql.gz]', desc: 'Upload base database. Auto-detects project from git remote.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
-      { name: 'push files', usage: 'preview push files [file.tar.gz]', desc: 'Upload base files archive', flags: [['--strip-heavy-files SIZE', 'Remove files larger than SIZE before upload'], ['--yes, -y', 'Skip confirmation prompt']] },
-      { name: 'setup api', usage: 'preview setup api API_URL', desc: 'Configure the API endpoint URL', flags: [] },
-      { name: 'setup project', usage: 'preview setup project', desc: 'Scaffold a project for preview environments (generates preview.yml and settings)', flags: [['--override', 'Overwrite existing configuration files']] },
-      { name: 'self-update', usage: 'preview self-update', desc: 'Update the CLI to the latest version', flags: [] },
+      { name: 'login', usage: 'druploy login', desc: 'Authenticate via browser (device flow)', flags: [['--no-browser', 'Print URL instead of opening browser']] },
+      { name: 'logout', usage: 'druploy logout', desc: 'Log out and clear credentials', flags: [] },
+      { name: 'whoami', usage: 'druploy whoami', desc: 'Show current authenticated user', flags: [] },
+      { name: 'list', usage: 'druploy list [PROJECT]', desc: 'List previews, interactive selector if no project specified', flags: [['--no-status', 'Skip fetching container status (faster)']] },
+      { name: 'start', usage: 'druploy start PROJECT/PREVIEW', desc: 'Start a stopped preview environment', flags: [] },
+      { name: 'stop', usage: 'druploy stop PROJECT/PREVIEW', desc: 'Stop a running preview environment', flags: [] },
+      { name: 'restart', usage: 'druploy restart PROJECT/PREVIEW', desc: 'Restart a preview environment', flags: [] },
+      { name: 'rebuild', usage: 'druploy rebuild PROJECT/PREVIEW', desc: 'Trigger a rebuild for a preview from the current branch', flags: [] },
+      { name: 'uli', usage: 'druploy uli PROJECT/PREVIEW', desc: 'Get a Drupal one-time login link', flags: [['--no-browser', 'Print URL instead of opening browser']] },
+      { name: 'drush', usage: 'druploy drush PROJECT/PREVIEW [args...]', desc: 'Run a drush command on a preview. Auto-detects project and preview from git context.', flags: [] },
+      { name: 'db download', usage: 'druploy db download PROJECT/PREVIEW', desc: 'Download a database dump (gzip compressed)', flags: [['-o, --output', 'Output file path']] },
+      { name: 'files download', usage: 'druploy files download PROJECT/PREVIEW', desc: 'Download files archive (tar.gz)', flags: [['-o, --output', 'Output file path']] },
+      { name: 'push db', usage: 'druploy push db [file.sql.gz]', desc: 'Upload base database. Auto-detects project from git remote.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
+      { name: 'push files', usage: 'druploy push files [file.tar.gz]', desc: 'Upload base files archive', flags: [['--strip-heavy-files SIZE', 'Remove files larger than SIZE before upload'], ['--yes, -y', 'Skip confirmation prompt']] },
+      { name: 'setup api', usage: 'druploy setup api API_URL', desc: 'Configure the API endpoint URL', flags: [] },
+      { name: 'setup project', usage: 'druploy setup project', desc: 'Scaffold a project for preview environments (generates druploy.yml and settings)', flags: [['--override', 'Overwrite existing configuration files']] },
+      { name: 'self-update', usage: 'druploy self-update', desc: 'Update the CLI to the latest version', flags: [] },
     ];
 
     // Render commands
@@ -485,7 +485,7 @@ preview list</pre>
         version: '1.8.0', date: '2026-03-04',
         sections: [
           { tag: 'Changed', type: 'changed', items: [
-            'Separate internal settings from user settings: <code>setup project</code> now only generates <code>settings.preview.php</code> as an empty file for user overrides. The deployer handles everything else automatically.',
+            'Separate internal settings from user settings: <code>setup project</code> now only generates <code>settings.druploy.php</code> as an empty file for user overrides. The deployer handles everything else automatically.',
             '<code>setup project</code> no longer modifies <code>settings.php</code> \u2014 the deployer manages it.',
             'Existing projects with old-style includes are automatically upgraded on next deploy.'
           ]}
@@ -533,7 +533,7 @@ preview list</pre>
         version: '1.6.0', date: '2026-02-28',
         sections: [
           { tag: 'Added', type: 'added', items: [
-            'Auto-detect preview in <code>drush</code>: <code>preview drush cr</code> now works without specifying a preview.',
+            'Auto-detect preview in <code>drush</code>: <code>druploy drush cr</code> now works without specifying a preview.',
             'Flexible preview names in <code>drush</code>: Accepts any preview name format, not just <code>project/mr-ID</code>.'
           ]}
         ]
@@ -548,7 +548,7 @@ preview list</pre>
         version: '1.5.0', date: '2026-02-26',
         sections: [
           { tag: 'Added', type: 'added', items: [
-            'Auto-detect preview in <code>pull</code>: <code>preview pull db</code> and <code>preview pull files</code> now work without arguments.',
+            'Auto-detect preview in <code>pull</code>: <code>druploy pull db</code> and <code>druploy pull files</code> now work without arguments.',
             'Flexible preview names: <code>pull</code> accepts any preview name format.'
           ]}
         ]
@@ -579,7 +579,7 @@ preview list</pre>
       {
         version: '1.0.5', date: '2026-02-17',
         sections: [
-          { tag: 'Added', type: 'added', items: ['Self-update: <code>preview self-update</code> command to update the CLI in place.', 'Login guard: <code>preview login</code> now warns if already logged in.'] },
+          { tag: 'Added', type: 'added', items: ['Self-update: <code>druploy self-update</code> command to update the CLI in place.', 'Login guard: <code>druploy login</code> now warns if already logged in.'] },
           { tag: 'Changed', type: 'changed', items: ['Install location: CLI now installs to <code>~/.local/bin/</code> instead of <code>/usr/local/bin/</code>.', 'Version check: Update notification is fully non-blocking.', 'Version format: Switched to semantic versioning.'] }
         ]
       },

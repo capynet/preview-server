@@ -11,7 +11,7 @@
 
 - name: Start Docker registry container
   community.docker.docker_container:
-    name: preview-registry
+    name: druploy-registry
     image: registry:2
     state: started
     restart_policy: always
@@ -20,7 +20,7 @@
     volumes:
       - /var/lib/registry:/var/lib/registry
     networks:
-      - name: preview-network
+      - name: druploy-network
     env:
       REGISTRY_STORAGE_DELETE_ENABLED: "true"
 
@@ -32,23 +32,23 @@
   retries: 10
   delay: 2
 
-# Build and push preview-drupal images for each PHP version
+# Build and push druploy-drupal images for each PHP version
 - name: Create temporary build directory
   file:
-    path: /tmp/preview-drupal-build
+    path: /tmp/druploy-drupal-build
     state: directory
     mode: '0755'
 
 - name: Copy Dockerfile.drupal to build directory
   copy:
     src: "{{ playbook_dir }}/../../preview-manager/docker/Dockerfile.drupal"
-    dest: /tmp/preview-drupal-build/Dockerfile
+    dest: /tmp/druploy-drupal-build/Dockerfile
     mode: '0644'
 
-- name: Build and push preview-drupal images
+- name: Build and push druploy-drupal images
   shell: |
-    docker build --build-arg PHP_VERSION={{ item }} -t localhost:5000/preview-drupal:php{{ item }} /tmp/preview-drupal-build
-    docker push localhost:5000/preview-drupal:php{{ item }}
+    docker build --build-arg PHP_VERSION={{ item }} -t localhost:5000/druploy-drupal:php{{ item }} /tmp/druploy-drupal-build
+    docker push localhost:5000/druploy-drupal:php{{ item }}
   loop:
     - "8.1"
     - "8.2"
@@ -58,7 +58,7 @@
 
 - name: Clean up build directory
   file:
-    path: /tmp/preview-drupal-build
+    path: /tmp/druploy-drupal-build
     state: absent
 
 # Pull, tag and push standard images from Docker Hub

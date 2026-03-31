@@ -2,15 +2,15 @@
 
 Usage (from local via SSH):
     cat scripts/get-deploy-logs.py | ssh root@91.99.157.66 \
-        "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3 - mr-1593"
+        "cd /home/druploy/www/previews/server/preview-manager && source venv/bin/activate && python3 - mr-1593"
 
     # Or with deployment ID:
     cat scripts/get-deploy-logs.py | ssh root@91.99.157.66 \
-        "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3 - --id 156"
+        "cd /home/druploy/www/previews/server/preview-manager && source venv/bin/activate && python3 - --id 156"
 
     # Last N deployments for a preview:
     cat scripts/get-deploy-logs.py | ssh root@91.99.157.66 \
-        "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3 - mr-1593 --last 3"
+        "cd /home/druploy/www/previews/server/preview-manager && source venv/bin/activate && python3 - mr-1593 --last 3"
 """
 
 import argparse

@@ -5,7 +5,7 @@
 #   ansible-playbook playbooks/setup-docker-preview.yml
 
 - name: Setup Docker Preview Infrastructure
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   roles:
@@ -14,7 +14,7 @@
   tasks:
     - name: Create Dockerfile directory
       file:
-        path: /opt/preview-drupal
+        path: /opt/druploy-drupal
         state: directory
         owner: root
         group: root
@@ -23,7 +23,7 @@
     - name: Copy Drupal Dockerfile
       copy:
         src: "{{ playbook_dir }}/../../preview-manager/docker/Dockerfile.drupal"
-        dest: /opt/preview-drupal/Dockerfile
+        dest: /opt/druploy-drupal/Dockerfile
         owner: root
         group: root
         mode: '0644'
@@ -31,8 +31,8 @@
 
     - name: Build and push Drupal base images
       shell: |
-        docker build -t localhost:5000/preview-drupal:php{{ item }} --build-arg PHP_VERSION={{ item }} /opt/preview-drupal
-        docker push localhost:5000/preview-drupal:php{{ item }}
+        docker build -t localhost:5000/druploy-drupal:php{{ item }} --build-arg PHP_VERSION={{ item }} /opt/druploy-drupal
+        docker push localhost:5000/druploy-drupal:php{{ item }}
       loop:
         - "8.1"
         - "8.2"
@@ -51,14 +51,14 @@
           DOCKER PREVIEW INFRASTRUCTURE READY
           ================================================
 
-          Network: preview-network
-          Caddy: running as Docker container (preview-caddy)
+          Network: druploy-network
+          Caddy: running as Docker container (druploy-caddy)
 
           PHP images (private registry):
-            - preview-drupal:php8.1
-            - preview-drupal:php8.2
-            - preview-drupal:php8.3
-            - preview-drupal:php8.4
+            - druploy-drupal:php8.1
+            - druploy-drupal:php8.2
+            - druploy-drupal:php8.3
+            - druploy-drupal:php8.4
 
           Service images (pulled from Docker Hub by VMs):
             - mysql, mariadb, percona, redis, valkey, solr

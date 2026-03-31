@@ -67,7 +67,7 @@ var selfUpdateCmd = &cobra.Command{
 		}
 
 		// Write script to temp file
-		tmpFile, err := os.CreateTemp("", "preview-install-*.sh")
+		tmpFile, err := os.CreateTemp("", "druploy-install-*.sh")
 		if err != nil {
 			return fmt.Errorf("failed to create temp file: %w", err)
 		}

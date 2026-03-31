@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PreviewConfig holds the parsed preview.yml configuration.
+// PreviewConfig holds the parsed druploy.yml configuration.
 type PreviewConfig struct {
 	PHPVersion     string            `yaml:"php_version"`
 	Database       string            `yaml:"database"`
@@ -50,20 +50,20 @@ var defaultConfig = PreviewConfig{
 	Expose:         map[string]int{},
 }
 
-// ParsePreviewYML reads and parses preview.yml from the given directory.
+// ParsePreviewYML reads and parses druploy.yml from the given directory.
 func ParsePreviewYML(repoPath string) (*PreviewConfig, error) {
-	ymlPath := filepath.Join(repoPath, "preview.yml")
+	ymlPath := filepath.Join(repoPath, "druploy.yml")
 	data, err := os.ReadFile(ymlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no preview.yml found in the repository — a preview.yml file is required to create previews")
+			return nil, fmt.Errorf("no druploy.yml found in the repository — a druploy.yml file is required to create previews")
 		}
-		return nil, fmt.Errorf("failed to read preview.yml: %w", err)
+		return nil, fmt.Errorf("failed to read druploy.yml: %w", err)
 	}
 
 	var raw map[string]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil, fmt.Errorf("failed to parse preview.yml: %w", err)
+		return nil, fmt.Errorf("failed to parse druploy.yml: %w", err)
 	}
 
 	cfg := defaultConfig
@@ -187,7 +187,7 @@ func ParsePreviewYML(repoPath string) (*PreviewConfig, error) {
 		}
 	}
 
-	// Auto-detect docroot if not set in preview.yml
+	// Auto-detect docroot if not set in druploy.yml
 	if _, ok := raw["docroot"]; !ok {
 		cfg.Docroot = detectDocroot(repoPath)
 	}

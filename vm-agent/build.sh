@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-echo "Building preview-agent (linux/amd64)..."
+echo "Building druploy-agent (linux/amd64)..."
 mkdir -p bin
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o bin/vm-agent .
 

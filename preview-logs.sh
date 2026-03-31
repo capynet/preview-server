@@ -67,7 +67,7 @@ Commands:
   worker [-f] [N]                     Worker logs (preview-worker). -f to follow, N=lines (default 100)
   deploy <ID> [--status]              Deployment logs from DB. --status for summary only
   vm <project/preview> [subcommand]   VM logs. Subcommands:
-      (none)                            Agent stdout (journalctl preview-agent)
+      (none)                            Agent stdout (journalctl druploy-agent)
       -f                                Follow agent logs
       docker [container]                Docker container logs (all or specific)
       containers                        List running containers
@@ -151,10 +151,10 @@ cmd_vm() {
 
     case "$subcmd" in
         -f|--follow)
-            ssh_vm "$vm_ip" "journalctl -u preview-agent -f --no-pager -o cat 2>/dev/null || tail -f /var/log/preview-agent.log 2>/dev/null || echo 'No agent logs found'"
+            ssh_vm "$vm_ip" "journalctl -u druploy-agent -f --no-pager -o cat 2>/dev/null || tail -f /var/log/druploy-agent.log 2>/dev/null || echo 'No agent logs found'"
             ;;
         logs)
-            ssh_vm "$vm_ip" "journalctl -u preview-agent -n 200 --no-pager -o cat 2>/dev/null || cat /var/log/preview-agent.log 2>/dev/null || echo 'No agent logs found'"
+            ssh_vm "$vm_ip" "journalctl -u druploy-agent -n 200 --no-pager -o cat 2>/dev/null || cat /var/log/druploy-agent.log 2>/dev/null || echo 'No agent logs found'"
             ;;
         docker)
             local container="${1:-}"

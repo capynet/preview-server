@@ -1,4 +1,4 @@
-BINARY_NAME := preview
+BINARY_NAME := druploy
 VERSION := $(shell cat VERSION)
 LDFLAGS := -ldflags "-s -w -X github.com/preview-manager/cli/cmd.Version=$(VERSION)"
 DIST_DIR := dist

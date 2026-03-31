@@ -1,41 +1,41 @@
 ---
-# Setup the preview-agent on a VM (or snapshot base).
+# Setup the druploy-agent on a VM (or snapshot base).
 # Usage: ansible-playbook -i "VM_IP," playbooks/setup-vm-agent.yml -e "preview_server_url=https://api.druploy.dev"
 #
 # This installs:
-# - preview-agent-update script (downloads agent binary from server)
-# - preview-agent.service (systemd, starts agent on boot)
-# - /etc/preview-agent.env (server URL config)
+# - druploy-agent-update script (downloads agent binary from server)
+# - druploy-agent.service (systemd, starts agent on boot)
+# - /etc/druploy-agent.env (server URL config)
 
-- name: Setup Preview Agent on VM
+- name: Setup Druploy Agent on VM
   hosts: all
   become: yes
   vars:
     preview_server_url: "https://api.druploy.dev"
 
   tasks:
-    - name: Copy preview-agent-update script
+    - name: Copy druploy-agent-update script
       copy:
-        src: "{{ playbook_dir }}/../../../vm-agent/systemd/preview-agent-update"
-        dest: /usr/local/bin/preview-agent-update
+        src: "{{ playbook_dir }}/../../../vm-agent/systemd/druploy-agent-update"
+        dest: /usr/local/bin/druploy-agent-update
         mode: "0755"
 
-    - name: Copy preview-agent systemd service
+    - name: Copy druploy-agent systemd service
       copy:
-        src: "{{ playbook_dir }}/../../../vm-agent/systemd/preview-agent.service"
-        dest: /etc/systemd/system/preview-agent.service
+        src: "{{ playbook_dir }}/../../../vm-agent/systemd/druploy-agent.service"
+        dest: /etc/systemd/system/druploy-agent.service
         mode: "0644"
       notify: Reload systemd
 
-    - name: Write preview-agent environment config
+    - name: Write druploy-agent environment config
       copy:
         content: "PREVIEW_SERVER_URL={{ preview_server_url }}\n"
-        dest: /etc/preview-agent.env
+        dest: /etc/druploy-agent.env
         mode: "0644"
 
-    - name: Enable preview-agent service
+    - name: Enable druploy-agent service
       systemd:
-        name: preview-agent
+        name: druploy-agent
         enabled: yes
         daemon_reload: yes
 

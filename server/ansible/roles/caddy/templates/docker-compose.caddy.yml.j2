@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.caddy
-    image: preview-caddy:latest
-    container_name: preview-caddy
+    image: druploy-caddy:latest
+    container_name: druploy-caddy
     ports:
       - "80:80"
       - "443:443"

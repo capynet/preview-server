@@ -53,7 +53,7 @@ def _sanitize_branch_name(branch: str) -> str:
 
 
 def _resolve_drush_uri(org_slug: str, project_slug: str, preview_name: str, url_hash: str) -> str:
-    """Resolve drush --uri from preview.yml config.
+    """Resolve drush --uri from druploy.yml config.
 
     If drush_uri is a simple name (e.g. "admin"), it's treated as a domain alias
     and expanded to https://{alias}--{url_hash}.{settings.preview_domain}.
@@ -393,7 +393,7 @@ async def get_preview_config(
     preview_name: str,
     user: UserWithContext = Depends(require_project_role(OrgRole.viewer)),
 ):
-    """Proxy to the VM agent's /config endpoint to get preview.yml config."""
+    """Proxy to the VM agent's /config endpoint to get druploy.yml config."""
     import httpx
 
     proj = await _resolve_project(user, project)
@@ -522,8 +522,11 @@ async def update_preview_endpoint(
 def _get_preview_status(preview: dict) -> str:
     """Determine preview status based on VM state and active deployments."""
     # If there's an active deployment running, the preview is building
+    # But if post-deploy is running, the main deploy succeeded — preview is active
     latest_status = preview.get("latest_deployment_status")
     if latest_status and latest_status == "running":
+        if preview.get("post_deploy_status") and preview.get("vm_id"):
+            return "running"
         return "building"
 
     if preview.get("vm_id"):

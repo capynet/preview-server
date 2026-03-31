@@ -82,29 +82,29 @@
     group: root
     mode: '0755'
 
-- name: Generar SSH keypair para conectar al preview-server
+- name: Generar SSH keypair para conectar al druploy-server
   openssh_keypair:
     path: /etc/gitlab-runner/.ssh/id_ed25519
     type: ed25519
     comment: "gitlab-runner@runner-server"
   register: ssh_keypair
 
-- name: Obtener host key del preview-server
+- name: Obtener host key del druploy-server
   shell: ssh-keyscan -H {{ preview_server_host }} 2>/dev/null
   register: preview_server_hostkey
   changed_when: false
 
-- name: Crear known_hosts con host key del preview-server
+- name: Crear known_hosts con host key del druploy-server
   copy:
     content: "{{ preview_server_hostkey.stdout }}\n"
     dest: /etc/gitlab-runner/.ssh/known_hosts
     mode: '0644'
 
-- name: Mostrar clave publica SSH (copiar al preview-server)
+- name: Mostrar clave publica SSH (copiar al druploy-server)
   debug:
     msg: "{{ ssh_keypair.public_key }}"
 
-- name: Copiar clave publica al preview-server
+- name: Copiar clave publica al druploy-server
   authorized_key:
     user: "{{ preview_server_user }}"
     key: "{{ ssh_keypair.public_key }}"

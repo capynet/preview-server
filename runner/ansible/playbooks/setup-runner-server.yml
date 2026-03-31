@@ -20,6 +20,6 @@
             ✓ GitLab Runner (executor: docker)
 
           El runner ejecuta jobs en contenedores Docker
-          y despliega previews al preview-server via SSH.
+          y despliega previews al druploy-server via SSH.
 
           ==========================================

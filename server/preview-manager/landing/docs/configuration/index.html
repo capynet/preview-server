@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Project Configuration — Preview Manager Docs</title>
-  <meta name="description" content="How to configure a Drupal project for preview environments with Preview Manager.">
+  <title>Project Configuration — Druploy Docs</title>
+  <meta name="description" content="How to configure a Drupal project for preview environments with Druploy.">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -360,9 +360,9 @@
     <div class="sidebar-title">On this page</div>
     <ul class="sidebar-nav">
       <li><a href="#file-structure" class="active">File structure</a></li>
-      <li><a href="#preview-yml">preview.yml</a></li>
+      <li><a href="#preview-yml">druploy.yml</a></li>
       <li><a href="#settings-php-include">settings.php include</a></li>
-      <li><a href="#settings-preview-php">settings.preview.php</a></li>
+      <li><a href="#settings-druploy-php">settings.druploy.php</a></li>
       <li><a href="#deploy-scripts">Deploy scripts</a></li>
       <li><a href="#environment-variables">Environment variables</a></li>
       <li><a href="#base-database-files">Base database &amp; files</a></li>
@@ -371,7 +371,7 @@
 
   <main class="content">
     <h1>Project Configuration</h1>
-    <p class="subtitle">How to configure a Drupal project for preview environments. Run <code>preview setup project</code> from your project root to scaffold these files automatically.</p>
+    <p class="subtitle">How to configure a Drupal project for preview environments. Run <code>druploy setup project</code> from your project root to scaffold these files automatically.</p>
 
     <!-- File structure -->
     <h2 id="file-structure">File structure</h2>
@@ -381,24 +381,24 @@
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
       </div>
       <pre><code>your-project/
-&#x251C;&#x2500;&#x2500; preview.yml                          # Preview configuration
+&#x251C;&#x2500;&#x2500; druploy.yml                          # Preview configuration
 &#x251C;&#x2500;&#x2500; web/sites/default/                   # (or docroot/)
 &#x2502;   &#x251C;&#x2500;&#x2500; settings.php                     # Modified: include snippet added
-&#x2502;   &#x2514;&#x2500;&#x2500; settings.preview.php             # Created: environment overrides
-&#x2514;&#x2500;&#x2500; scripts/preview/
+&#x2502;   &#x2514;&#x2500;&#x2500; settings.druploy.php             # Created: environment overrides
+&#x2514;&#x2500;&#x2500; scripts/druploy/
     &#x251C;&#x2500;&#x2500; new/deploy.sh                    # Runs on first deploy
     &#x2514;&#x2500;&#x2500; update/deploy.sh                 # Runs on code updates</code></pre>
     </div>
 
     <!-- preview.yml -->
-    <h2 id="preview-yml">preview.yml</h2>
+    <h2 id="preview-yml">druploy.yml</h2>
     <p>The main configuration file for your project. Place it in the repository root.</p>
     <div class="code-block">
       <div class="code-header">
         <span class="code-lang">YAML</span>
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
       </div>
-      <pre><code><span class="hl-comment"># Preview Manager configuration</span>
+      <pre><code><span class="hl-comment"># Druploy configuration</span>
 <span class="hl-comment"># See: https://druploy.dev/docs/configuration</span>
 
 <span class="hl-comment"># PHP version for the preview container.</span>
@@ -425,7 +425,7 @@
 <span class="hl-comment"># solr_configset: "etc/solr"</span>
 
 <span class="hl-comment"># Custom environment variables injected into the PHP container.</span>
-<span class="hl-comment"># Available in settings.preview.php via getenv().</span>
+<span class="hl-comment"># Available in settings.druploy.php via getenv().</span>
 <span class="hl-comment"># env:</span>
 <span class="hl-comment">#   APP_ENV: preview</span>
 <span class="hl-comment">#   MY_CUSTOM_VAR: some-value</span>
@@ -445,8 +445,8 @@
 <span class="hl-comment"># Deploy scripts &mdash; executed inside the PHP container.</span>
 <span class="hl-comment"># Paths relative to the project root. Set to false or omit to skip.</span>
 <span class="hl-key">deploy</span>:
-  <span class="hl-key">new</span>: <span class="hl-value">scripts/preview/new/deploy.sh</span>
-  <span class="hl-key">update</span>: <span class="hl-value">scripts/preview/update/deploy.sh</span></code></pre>
+  <span class="hl-key">new</span>: <span class="hl-value">scripts/druploy/new/deploy.sh</span>
+  <span class="hl-key">update</span>: <span class="hl-value">scripts/druploy/update/deploy.sh</span></code></pre>
     </div>
 
     <h3>Defaults</h3>
@@ -478,14 +478,14 @@
       </div>
       <pre><code><span class="hl-php-comment">// Preview environment settings.</span>
 <span class="hl-php-keyword">if</span> (<span class="hl-php-function">getenv</span>(<span class="hl-php-string">'PREV_IS_PREVIEW'</span>)) {
-  <span class="hl-php-keyword">include</span> <span class="hl-php-const">__DIR__</span> . <span class="hl-php-string">'/settings.preview.php'</span>;
+  <span class="hl-php-keyword">include</span> <span class="hl-php-const">__DIR__</span> . <span class="hl-php-string">'/settings.druploy.php'</span>;
 }</code></pre>
     </div>
     <p class="note"><code>PREV_IS_PREVIEW</code> is only set inside preview containers, so this snippet has no effect in other environments.</p>
 
-    <!-- settings.preview.php -->
-    <h2 id="settings-preview-php">settings.preview.php</h2>
-    <p>This file is managed by you for custom overrides. The internal configuration (database connection, file paths, trusted host patterns) is handled automatically by <code>settings.preview.internal.php</code>, which is generated by the deployer.</p>
+    <!-- settings.druploy.php -->
+    <h2 id="settings-druploy-php">settings.druploy.php</h2>
+    <p>This file is managed by you for custom overrides. The internal configuration (database connection, file paths, trusted host patterns) is handled automatically by <code>settings.druploy.internal.php</code>, which is generated by the deployer.</p>
     <div class="code-block">
       <div class="code-header">
         <span class="code-lang">PHP</span>
@@ -526,11 +526,11 @@
     </div>
 
     <h3>Per-preview overrides</h3>
-    <p>Create a file named <code>scripts/preview/new/mr-123-deploy.sh</code> to override the default deploy script for a specific preview (in this case, <code>mr-123</code>).</p>
+    <p>Create a file named <code>scripts/druploy/new/mr-123-deploy.sh</code> to override the default deploy script for a specific preview (in this case, <code>mr-123</code>).</p>
 
     <!-- Environment variables -->
     <h2 id="environment-variables">Environment variables</h2>
-    <p>These variables are available inside preview containers and in <code>settings.preview.php</code> via <code>getenv()</code>.</p>
+    <p>These variables are available inside preview containers and in <code>settings.druploy.php</code> via <code>getenv()</code>.</p>
     <div class="table-wrap">
       <table>
         <thead>
@@ -561,7 +561,7 @@
         </tbody>
       </table>
     </div>
-    <p class="note">Custom variables defined in the <code>env</code> key of <code>preview.yml</code> are injected without the <code>PREV_</code> prefix.</p>
+    <p class="note">Custom variables defined in the <code>env</code> key of <code>druploy.yml</code> are injected without the <code>PREV_</code> prefix.</p>
 
     <!-- Base database & files -->
     <h2 id="base-database-files">Base database &amp; files</h2>
@@ -574,7 +574,7 @@
         <span class="code-lang">Shell</span>
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
       </div>
-      <pre><code>preview push db</code></pre>
+      <pre><code>druploy push db</code></pre>
     </div>
 
     <h3>Files (optional)</h3>
@@ -584,13 +584,13 @@
         <span class="code-lang">Shell</span>
         <button class="copy-btn" onclick="copyCode(this)">Copy</button>
       </div>
-      <pre><code>preview push files --strip-heavy-files 2mb</code></pre>
+      <pre><code>druploy push files --strip-heavy-files 2mb</code></pre>
     </div>
   </main>
 </div>
 
 <footer>
-  <p>Preview Manager</p>
+  <p>Druploy</p>
 </footer>
 
 <script>

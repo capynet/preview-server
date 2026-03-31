@@ -15,10 +15,10 @@ var drushCmd = &cobra.Command{
 The project and preview are auto-detected from the current git branch.
 
 Examples:
-  preview drush cr
-  preview drush status
-  preview drush sql-dump > dump.sql
-  preview drush updb -y`,
+  druploy drush cr
+  druploy drush status
+  druploy drush sql-dump > dump.sql
+  druploy drush updb -y`,
 	Args:               cobra.MinimumNArgs(1),
 	DisableFlagParsing: true,
 	RunE: func(cmd *cobra.Command, args []string) error {

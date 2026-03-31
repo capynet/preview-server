@@ -38,6 +38,7 @@ Is the UI of preview manager ([server](server))
 - Agregar cron a los preview.
 - Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos. ademas deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
 - Esto va a los casos de uso para publicitar: Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos.
+-  hay jobs que no son cruciales para considerar el NMR valido a la hora de crear un mr. A lo mjor estaria bien poder especificar en preview.yml los job "required". Se entiende?
 - 
 # TODO
 - cada tenant u organizacion podria configurar sus propios dominios? la url de preview seguiria siendo funcionar. lo del dominio custom seria añadirlo encima. Ojo. solo puedo permitir subdominios de su dominio registrado en la organizacion. A lo sumo puedo permitir subdominios de un sitio alternativo pero nunca dominuios base apra que no lo usen como pagina web.
@@ -90,24 +91,24 @@ Is the UI of preview manager ([server](server))
    Añadir aplicacion
    
    "User login"
-   Callback: https://api.preview-mr.com/api/gitlab/auth/callback
+   Callback: https://api.druploy.dev/api/gitlab/auth/callback
    Scopes: read_user
    
    Luego crear una nueva app para conectar la api:
    "Previews API"
-   Callback: https://api.preview-mr.com/api/gitlab/connect/callback
+   Callback: https://api.druploy.dev/api/gitlab/connect/callback
    Scopes: api
 
    "User login"
    Application ID: 3a4c9a8e1626f825734902c265eda47787b56f1724f09d65419e88991ab228d4
    Secret: gloas-85522b0b96f9a61bf169e10231a2422a6c59325dc324de1535cb0d4aecf8e0ee
-   Callback: https://api.preview-mr.com/api/gitlab/auth/callback
+   Callback: https://api.druploy.dev/api/gitlab/auth/callback
    Scopes: read_user
    
    "Previews API"
    Application ID: b05e4ef0609f8e02eec1bbe36770d1c847a155da9176b80bc568ba4b87dfe7e4
    Secret: gloas-4361304ca401bddf62cddac1cc37b3062b9c8e981fdada089765f44836d1acc6
-   Callback: https://api.preview-mr.com/api/gitlab/connect/callback
+   Callback: https://api.druploy.dev/api/gitlab/connect/callback
    Scopes: api
 
 

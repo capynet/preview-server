@@ -7,14 +7,14 @@ import (
 var setupCmd = &cobra.Command{
 	Use:   "setup",
 	Short: "Scaffold a Drupal project for preview environments",
-	Long: `Creates the necessary files for preview compatibility:
+	Long: `Creates the necessary files for druploy compatibility:
 
-  1. Creates web/sites/default/settings.preview.php for custom overrides
-  2. Creates preview.yml template in the project root
-  3. Creates deploy script templates in scripts/preview/
+  1. Creates web/sites/default/settings.druploy.php for custom overrides
+  2. Creates druploy.yml template in the project root
+  3. Creates deploy script templates in scripts/druploy/
 
 The preview include snippet in settings.php and the internal settings
-file (settings.preview.internal.php) are managed automatically by
+file (settings.druploy.internal.php) are managed automatically by
 the deployer — you don't need to touch them.
 
 Run this command from the root of your Drupal project.

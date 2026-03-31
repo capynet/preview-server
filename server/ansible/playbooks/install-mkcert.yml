@@ -1,6 +1,6 @@
 ---
-- name: Install mkcert for preview-user
-  hosts: preview-server
+- name: Install mkcert for druploy-user
+  hosts: druploy-server
   become: yes
 
   tasks:
@@ -10,15 +10,15 @@
         state: present
         update_cache: yes
 
-    - name: Install mkcert for preview-user user
-      become_user: preview-user
+    - name: Install mkcert for druploy-user user
+      become_user: druploy-user
       shell: |
         mkcert -install
       args:
-        creates: /home/preview-user/.local/share/mkcert
+        creates: /home/druploy-user/.local/share/mkcert
 
     - name: Verify mkcert installation
-      become_user: preview-user
+      become_user: druploy-user
       command: mkcert -CAROOT
       register: mkcert_root
       changed_when: false

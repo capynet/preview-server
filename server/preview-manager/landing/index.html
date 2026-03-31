@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Preview Manager — On-demand preview environments for Drupal</title>
+  <title>Druploy — On-demand preview environments for Drupal</title>
   <meta name="description" content="Automatically deploy preview environments for every merge request. Share live URLs with your team. Optimized for Drupal.">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -317,11 +317,11 @@
           <span class="comment"># Install the CLI</span><br>
           <span class="prompt">$ </span><span class="cmd">curl -fsSL https://api.druploy.dev/api/cli/install.sh | bash</span><br><br>
           <span class="comment"># Authenticate</span><br>
-          <span class="prompt">$ </span><span class="cmd">preview login</span><br><br>
+          <span class="prompt">$ </span><span class="cmd">druploy login</span><br><br>
           <span class="comment"># List your previews</span><br>
-          <span class="prompt">$ </span><span class="cmd">preview list myproject</span><br><br>
+          <span class="prompt">$ </span><span class="cmd">druploy list myproject</span><br><br>
           <span class="comment"># Get a Drupal login link</span><br>
-          <span class="prompt">$ </span><span class="cmd">preview drush myproject/mr-42 uli</span>
+          <span class="prompt">$ </span><span class="cmd">druploy drush myproject/mr-42 uli</span>
         </code>
       </div>
     </div>
@@ -394,7 +394,7 @@
 
 <footer>
   <div class="container">
-    <p><a href="https://druploy.dev">Open Preview Manager</a></p>
+    <p><a href="https://druploy.dev">Open Druploy</a></p>
   </div>
 </footer>
 

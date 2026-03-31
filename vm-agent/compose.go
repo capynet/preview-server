@@ -119,7 +119,7 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		phpEnv["PREV_DOMAIN_ALIASES"] = strings.Join(aliasDomains, ",")
 	}
 
-	// Merge preview.yml env vars
+	// Merge druploy.yml env vars
 	for k, v := range cfg.Env {
 		phpEnv[k] = v
 	}
@@ -134,7 +134,7 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		"name": prefix,
 		"services": map[string]interface{}{
 			"php": map[string]interface{}{
-				"image":          registryImage(job.DockerRegistry, fmt.Sprintf("preview-drupal:php%s", cfg.PHPVersion)),
+				"image":          registryImage(job.DockerRegistry, fmt.Sprintf("druploy-drupal:php%s", cfg.PHPVersion)),
 				"container_name": prefix + "-php",
 				"volumes":        []string{"./:/var/www/html"},
 				"environment":    phpEnv,
@@ -212,7 +212,7 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 		volumes["solr_data"] = map[string]string{"name": prefix + "_solr_data"}
 	}
 
-	// Terminal/deploy is handled by the native preview-agent on the VM (port 8022).
+	// Terminal/deploy is handled by the native druploy-agent on the VM (port 8022).
 	// No Docker sidecar needed.
 
 	// Expose services with known web UIs

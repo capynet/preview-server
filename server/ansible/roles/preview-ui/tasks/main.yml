@@ -39,25 +39,25 @@
 
 - name: Create preview-ui directory
   file:
-    path: /home/preview-manager/www/previews/preview-ui
+    path: /home/druploy/www/previews/preview-ui
     state: directory
-    owner: preview-manager
-    group: preview-manager
+    owner: druploy
+    group: druploy
     mode: '0775'
 
 - name: Create systemd service file
   template:
     src: preview-ui.service.j2
-    dest: /etc/systemd/system/preview-ui.service
+    dest: /etc/systemd/system/druploy-ui.service
     owner: root
     group: root
     mode: '0644'
   notify:
     - Reload systemd
-    - Restart preview-ui
+    - Restart druploy-ui
 
-- name: Enable preview-ui service
+- name: Enable druploy-ui service
   systemd:
-    name: preview-ui
+    name: druploy-ui
     enabled: yes
     daemon_reload: yes

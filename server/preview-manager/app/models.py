@@ -1,4 +1,4 @@
-"""Pydantic models for Preview Manager API"""
+"""Pydantic models for Druploy API"""
 
 from typing import Optional
 

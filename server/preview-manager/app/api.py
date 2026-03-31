@@ -1,5 +1,5 @@
 """
-Preview Manager API
+Druploy API
 
 Router aggregator - imports all sub-routers and re-exports a single `router`.
 """

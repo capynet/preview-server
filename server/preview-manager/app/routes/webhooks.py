@@ -198,7 +198,7 @@ async def _local_sync_repo(
             # Clean untracked files
             proc = await asyncio.create_subprocess_exec(
                 "git", "-C", str(dest), "clean", "-fdx",
-                "--exclude", "preview.yml",
+                "--exclude", "druploy.yml",
                 "--exclude", "docker-compose.yml",
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

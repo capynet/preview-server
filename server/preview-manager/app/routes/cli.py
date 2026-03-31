@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/cli", tags=["cli"])
 internal_router = APIRouter(tags=["internal"])
 
-CLI_DIR = Path("/var/www/preview-manager/cli")
+CLI_DIR = Path("/var/www/druploy/cli")
 INSTALL_SCRIPT = CLI_DIR / "install.sh"
 VERSION_FILE = CLI_DIR / "VERSION"
 
@@ -48,7 +48,7 @@ async def download_binary(os: str, arch: str):
     if arch not in VALID_ARCH:
         return PlainTextResponse(f"Unsupported architecture: {arch}", status_code=400)
 
-    binary_path = CLI_DIR / f"preview-{os}-{arch}"
+    binary_path = CLI_DIR / f"druploy-{os}-{arch}"
     if not binary_path.exists():
         return PlainTextResponse(
             f"Binary not available for {os}/{arch}", status_code=404
@@ -57,7 +57,7 @@ async def download_binary(os: str, arch: str):
     return FileResponse(
         binary_path,
         media_type="application/octet-stream",
-        filename="preview",
+        filename="druploy",
     )
 
 
@@ -65,16 +65,16 @@ async def download_binary(os: str, arch: str):
 # VM Agent binary download
 # ---------------------------------------------------------------------------
 
-AGENT_BINARY = CLI_DIR / "preview-agent"
+AGENT_BINARY = CLI_DIR / "druploy-agent"
 
 
 @internal_router.get("/api/internal/agent/download")
 async def download_agent():
-    """Download the preview-agent binary for VMs."""
+    """Download the druploy-agent binary for VMs."""
     if not AGENT_BINARY.exists():
         return PlainTextResponse("Agent binary not found", status_code=404)
     return FileResponse(
         AGENT_BINARY,
         media_type="application/octet-stream",
-        filename="preview-agent",
+        filename="druploy-agent",
     )

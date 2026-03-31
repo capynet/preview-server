@@ -40,7 +40,7 @@ func cachePath() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("preview-resolve-%s.json", key)), nil
+	return filepath.Join(os.TempDir(), fmt.Sprintf("druploy-resolve-%s.json", key)), nil
 }
 
 // loadCachedResolve loads cached preview info. Returns nil if not found.

@@ -3,11 +3,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.caddy
-    image: preview-caddy:latest
-    container_name: preview-caddy
+    image: druploy-caddy:latest
+    container_name: druploy-caddy
     command: caddy docker-proxy
     environment:
-      CADDY_INGRESS_NETWORKS: preview-network
+      CADDY_INGRESS_NETWORKS: druploy-network
     ports:
       - "80:80"
       - "443:443"
@@ -17,7 +17,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     networks:
-      - preview-network
+      - druploy-network
     restart: unless-stopped
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -30,5 +30,5 @@ volumes:
   caddy_config:
 
 networks:
-  preview-network:
+  druploy-network:
     external: true

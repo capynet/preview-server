@@ -34,7 +34,7 @@ PLATFORMS=(
 for PLATFORM in "${PLATFORMS[@]}"; do
     OS="${PLATFORM%/*}"
     ARCH="${PLATFORM#*/}"
-    OUTPUT="dist/preview-${OS}-${ARCH}"
+    OUTPUT="dist/druploy-${OS}-${ARCH}"
     echo "  → ${OS}/${ARCH}"
     GOOS=$OS GOARCH=$ARCH go build -o "$OUTPUT" .
 done

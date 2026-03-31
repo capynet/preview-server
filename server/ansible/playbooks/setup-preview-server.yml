@@ -1,6 +1,6 @@
 ---
-- name: Setup Preview Server
-  hosts: preview-server
+- name: Setup Druploy Server
+  hosts: druploy-server
   become: yes
 
   roles:
@@ -8,9 +8,9 @@
     - caddy
 
   post_tasks:
-    - name: Crear usuario preview-user
+    - name: Crear usuario druploy-user
       user:
-        name: preview-user
+        name: druploy-user
         shell: /bin/bash
         create_home: yes
         groups: docker
@@ -24,7 +24,7 @@
         owner: "{{ item.owner | default('root') }}"
         group: "{{ item.group | default('root') }}"
       loop:
-        - { path: '/backups', mode: '0775', owner: 'preview-manager', group: 'preview-manager' }
+        - { path: '/backups', mode: '0777' }
 
     - name: Set IS_PREVIEW_SERVER environment variable globally
       lineinfile:
@@ -56,10 +56,10 @@
           Componentes instalados:
             - Docker y Docker Compose
             - Caddy (caddy-docker-proxy + cloudflare DNS)
-            - preview-network (red Docker compartida)
+            - druploy-network (red Docker compartida)
             - jq (JSON parser)
 
-          Preview Manager API:
+          Druploy API:
             - URL: https://api.druploy.dev
             - Local: http://localhost:8000
 

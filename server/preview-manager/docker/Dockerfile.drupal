@@ -159,7 +159,7 @@ RUN LSPHP_VER=$(echo "${PHP_VERSION}" | tr -d '.') \
 
 # OLS main server configuration
 RUN cat > /usr/local/lsws/conf/httpd_config.conf <<'HTTPD_EOF'
-serverName                preview-drupal
+serverName                druploy-drupal
 user                      www-data
 group                     www-data
 priority                  0

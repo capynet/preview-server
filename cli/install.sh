@@ -27,10 +27,10 @@ esac
 
 DOWNLOAD_URL="${BASE_URL}/download/${OS}/${ARCH}"
 INSTALL_DIR="${HOME}/.local/bin"
-BINARY_NAME="preview"
+BINARY_NAME="druploy"
 TMP_FILE=$(mktemp)
 
-echo "Downloading preview CLI for ${OS}/${ARCH}..."
+echo "Downloading druploy CLI for ${OS}/${ARCH}..."
 if ! curl -fsSL "$DOWNLOAD_URL" -o "$TMP_FILE"; then
   echo "Error: Failed to download binary from $DOWNLOAD_URL"
   rm -f "$TMP_FILE"
@@ -44,7 +44,7 @@ mkdir -p "$INSTALL_DIR"
 mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
 
 echo ""
-echo "preview CLI installed successfully!"
+echo "druploy CLI installed successfully!"
 echo ""
 ${INSTALL_DIR}/${BINARY_NAME} --version
 echo ""
@@ -67,18 +67,18 @@ case "$SHELL_NAME" in
   bash)
     COMP_DIR="${HOME}/.local/share/bash-completion/completions"
     mkdir -p "$COMP_DIR"
-    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/preview" 2>/dev/null
+    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/druploy" 2>/dev/null
     ;;
   zsh)
     COMP_DIR="${HOME}/.local/share/zsh/site-functions"
     mkdir -p "$COMP_DIR"
-    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_preview" 2>/dev/null
+    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_druploy" 2>/dev/null
     ;;
 esac
 
 # Only show login hint if not already authenticated
-CONFIG_FILE="${HOME}/.preview-manager.json"
+CONFIG_FILE="${HOME}/.druploy.json"
 if ! grep -q '"token"' "$CONFIG_FILE" 2>/dev/null; then
   echo ""
-  echo "Get started with: preview login"
+  echo "Get started with: druploy login"
 fi

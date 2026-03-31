@@ -36,24 +36,24 @@ DEFAULTS = {
 
 
 def parse_preview_yml(preview_path: Path) -> dict:
-    """Read and validate preview.yml from the project root, applying defaults."""
+    """Read and validate druploy.yml from the project root, applying defaults."""
     config = dict(DEFAULTS)
     config["services"] = dict(DEFAULTS["services"])
     config["env"] = dict(DEFAULTS["env"])
     config["deploy"] = dict(DEFAULTS["deploy"])
     config["post_deploy"] = dict(DEFAULTS["post_deploy"])
 
-    yml_file = preview_path / "preview.yml"
+    yml_file = preview_path / "druploy.yml"
     if not yml_file.exists():
         raise FileNotFoundError(
-            f"No preview.yml found in the repository. "
-            f"A preview.yml file is required to create previews."
+            f"No druploy.yml found in the repository. "
+            f"A druploy.yml file is required to create previews."
         )
 
     try:
         raw = yaml.safe_load(yml_file.read_text()) or {}
     except Exception as e:
-        raise ValueError(f"Failed to parse preview.yml: {e}")
+        raise ValueError(f"Failed to parse druploy.yml: {e}")
 
     if "php_version" in raw:
         config["php_version"] = str(raw["php_version"])
@@ -140,7 +140,7 @@ def parse_preview_yml(preview_path: Path) -> dict:
     if "litespeed_cache" in raw:
         config["litespeed_cache"] = bool(raw["litespeed_cache"])
 
-    logger.info(f"Parsed preview.yml: php={config['php_version']}, database={config['database']}, "
+    logger.info(f"Parsed druploy.yml: php={config['php_version']}, database={config['database']}, "
                 f"redis={config['services']['redis']}, valkey={config['services']['valkey']}, "
                 f"solr={config['services']['solr']}, litespeed_cache={config['litespeed_cache']}, "
                 f"deploy.new={config['deploy']['new']}, deploy.update={config['deploy']['update']}, "
@@ -229,7 +229,7 @@ def generate_docker_compose(
     if alias_domains:
         php_env["PREV_DOMAIN_ALIASES"] = ",".join(alias_domains)
 
-    # Merge user env vars from preview.yml
+    # Merge user env vars from druploy.yml
     php_env.update(config["env"])
 
     # Merge extra env vars (project + preview level from UI)
@@ -300,7 +300,7 @@ def generate_docker_compose(
                 "SOLR_JAVA_MEM": "-Xms128m -Xmx256m",
             },
         }
-        # Mount custom configset if specified in preview.yml.
+        # Mount custom configset if specified in druploy.yml.
         # We manually create the core directory instead of using solr-precreate
         # because solr-precreate has an elevate.xml conflict bug in Solr 8.
         configset_path = config.get("solr_configset")
@@ -320,7 +320,7 @@ def generate_docker_compose(
         compose["services"]["solr"] = solr_service
         compose["volumes"]["solr_data"] = {"name": f"{prefix}_solr_data"}
 
-    # Terminal/deploy is handled by the native preview-agent on the VM (port 8022).
+    # Terminal/deploy is handled by the native druploy-agent on the VM (port 8022).
     # No Docker sidecar needed.
 
     # Expose — map host ports for exposed services.

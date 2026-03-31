@@ -13,10 +13,10 @@ const settingsPreviewInternalPHP = `<?php
 
 /**
  * @file
- * Internal preview environment settings — managed by Preview Agent.
+ * Internal preview environment settings — managed by Druploy Agent.
  *
  * DO NOT EDIT. This file is overwritten on every deploy.
- * Use settings.preview.php for custom overrides.
+ * Use settings.druploy.php for custom overrides.
  */
 
 // Database connection.
@@ -99,14 +99,14 @@ if ($_redis_host) {
 const settingsIncludeSnippet = `
 // Preview environment settings.
 if (getenv('PREV_IS_PREVIEW')) {
-  include __DIR__ . '/settings.preview.internal.php';
-  if (file_exists(__DIR__ . '/settings.preview.php')) {
-    include __DIR__ . '/settings.preview.php';
+  include __DIR__ . '/settings.druploy.internal.php';
+  if (file_exists(__DIR__ . '/settings.druploy.php')) {
+    include __DIR__ . '/settings.druploy.php';
   }
 }
 `
 
-// WriteSettings generates settings.preview.internal.php, ensures settings.php
+// WriteSettings generates settings.druploy.internal.php, ensures settings.php
 // includes it, and writes drush site aliases.
 func WriteSettings(repoPath string, job *DeployJob, cfg *PreviewConfig) error {
 	docroot := cfg.Docroot
@@ -115,17 +115,17 @@ func WriteSettings(repoPath string, job *DeployJob, cfg *PreviewConfig) error {
 		return fmt.Errorf("failed to create settings dir: %w", err)
 	}
 
-	// 1. Write settings.preview.internal.php
-	internalPath := filepath.Join(settingsDir, "settings.preview.internal.php")
+	// 1. Write settings.druploy.internal.php
+	internalPath := filepath.Join(settingsDir, "settings.druploy.internal.php")
 	if err := os.WriteFile(internalPath, []byte(settingsPreviewInternalPHP), 0644); err != nil {
-		return fmt.Errorf("failed to write settings.preview.internal.php: %w", err)
+		return fmt.Errorf("failed to write settings.druploy.internal.php: %w", err)
 	}
 
 	// 2. Ensure settings.php includes the preview snippet
 	settingsPhpPath := filepath.Join(settingsDir, "settings.php")
 	if data, err := os.ReadFile(settingsPhpPath); err == nil {
 		content := string(data)
-		if !strings.Contains(content, "settings.preview.internal.php") {
+		if !strings.Contains(content, "settings.druploy.internal.php") {
 			content = strings.TrimRight(content, "\n") + "\n" + settingsIncludeSnippet
 			if err := os.WriteFile(settingsPhpPath, []byte(content), 0644); err != nil {
 				return fmt.Errorf("failed to update settings.php: %w", err)
@@ -163,7 +163,7 @@ func WriteSettings(repoPath string, job *DeployJob, cfg *PreviewConfig) error {
 			return fmt.Errorf("failed to marshal drush aliases: %w", err)
 		}
 
-		aliasContent := "# Managed by Preview Agent — overwritten on every deploy.\n" + string(aliasData)
+		aliasContent := "# Managed by Druploy Agent — overwritten on every deploy.\n" + string(aliasData)
 		aliasPath := filepath.Join(drushSitesDir, "preview.site.yml")
 		if err := os.WriteFile(aliasPath, []byte(aliasContent), 0644); err != nil {
 			return fmt.Errorf("failed to write drush aliases: %w", err)

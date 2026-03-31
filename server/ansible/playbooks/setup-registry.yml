@@ -1,6 +1,6 @@
 ---
 - name: Setup Docker Registry
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   roles:

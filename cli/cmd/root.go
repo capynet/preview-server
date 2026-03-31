@@ -23,9 +23,9 @@ var apiClient *client.Client
 var Version = "dev"
 
 var rootCmd = &cobra.Command{
-	Use:     "preview",
-	Short:   "Preview Manager CLI",
-	Long:    "CLI tool to manage Drupal preview environments.\n\nRun 'preview login' to authenticate.",
+	Use:     "druploy",
+	Short:   "Druploy CLI",
+	Long:    "CLI tool to manage Drupal preview environments.\n\nRun 'druploy login' to authenticate.",
 	Version: Version,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		cfg := loadConfig()
@@ -45,13 +45,13 @@ var rootCmd = &cobra.Command{
 		}
 
 		if cfg.APIURL == "" {
-			fmt.Fprintln(os.Stderr, "API URL not configured. Run 'preview login' or 'preview setup <API_URL>' first.")
+			fmt.Fprintln(os.Stderr, "API URL not configured. Run 'druploy login' or 'druploy setup <API_URL>' first.")
 			os.Exit(1)
 		}
 		if cfg.Token == "" {
 			fmt.Fprintln(os.Stderr, "Not authenticated. Register this CLI by running:\n")
-			fmt.Fprintln(os.Stderr, "  preview login\n")
-			fmt.Fprintln(os.Stderr, "This will open a browser to authorize the CLI with your preview server.")
+			fmt.Fprintln(os.Stderr, "  druploy login\n")
+			fmt.Fprintln(os.Stderr, "This will open a browser to authorize the CLI with your druploy server.")
 			os.Exit(1)
 		}
 
@@ -78,8 +78,8 @@ func printVersionWarning(cfg config) {
 		yellow := "\033[33m"
 		bold := "\033[1m"
 		reset := "\033[0m"
-		fmt.Fprintf(os.Stderr, "\n%s%sA new version of preview CLI is available (current: %s -> latest: %s)%s\n", yellow, bold, Version, cfg.LatestVersion, reset)
-		fmt.Fprintf(os.Stderr, "%sRun 'preview self-update' to update.%s\n\n", yellow, reset)
+		fmt.Fprintf(os.Stderr, "\n%s%sA new version of druploy CLI is available (current: %s -> latest: %s)%s\n", yellow, bold, Version, cfg.LatestVersion, reset)
+		fmt.Fprintf(os.Stderr, "%sRun 'druploy self-update' to update.%s\n\n", yellow, reset)
 	}
 }
 
@@ -120,7 +120,7 @@ func refreshVersionCache(cfg *config) {
 
 func configPath() string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".preview-manager.json")
+	return filepath.Join(home, ".druploy.json")
 }
 
 type config struct {

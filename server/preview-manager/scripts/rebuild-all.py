@@ -3,14 +3,14 @@
 Load test: enqueue update or rebuild jobs for all active previews via arq.
 
 Usage (run on the server):
-    cd /home/preview-manager/www/previews/server/preview-manager
+    cd /home/druploy/www/previews/server/preview-manager
     source venv/bin/activate
     python3 scripts/load-test-rebuild.py              # update (default)
     python3 scripts/load-test-rebuild.py --rebuild     # full rebuild (re-import DB/files)
 
 Or from local via SSH:
     cat preview-server/server/preview-manager/scripts/load-test-rebuild.py | \
-        ssh root@91.99.157.66 "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3 - --rebuild"
+        ssh root@91.99.157.66 "cd /home/druploy/www/previews/server/preview-manager && source venv/bin/activate && python3 - --rebuild"
 """
 
 import asyncio

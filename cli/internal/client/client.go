@@ -84,7 +84,7 @@ func (c *Client) doRequest(method, url string, body io.Reader) (*http.Response, 
 		resp.Body.Close()
 		fmt.Fprintln(os.Stderr, "Authentication failed. Your token may be expired or revoked.")
 		fmt.Fprintln(os.Stderr, "Re-authenticate by running:\n")
-		fmt.Fprintln(os.Stderr, "  preview login\n")
+		fmt.Fprintln(os.Stderr, "  druploy login\n")
 		os.Exit(1)
 	}
 	return resp, nil
@@ -259,7 +259,7 @@ func (c *Client) GetBaseFilesStatus(slug string) (*BaseFilesStatus, error) {
 // uncompressedSize is the original size before compression (0 if unknown).
 func (c *Client) UploadBaseFileChunked(slug, kind string, reader io.Reader, filename string, uncompressedSize int64) error {
 	// 1. Copy stream to temp file to know size.
-	tmpFile, err := os.CreateTemp(".", ".preview-upload-*")
+	tmpFile, err := os.CreateTemp(".", ".druploy-upload-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
 	}

@@ -1,17 +1,17 @@
 #!/bin/bash
-# Download latest preview-agent from the preview server.
+# Download latest druploy-agent from the druploy server.
 # Called by systemd ExecStartPre before starting the agent.
-# PREVIEW_SERVER_URL is set in /etc/preview-agent.env by the server during VM creation.
+# PREVIEW_SERVER_URL is set in /etc/druploy-agent.env by the server during VM creation.
 
 set -euo pipefail
 
-ENV_FILE="/etc/preview-agent.env"
+ENV_FILE="/etc/druploy-agent.env"
 if [ -f "$ENV_FILE" ]; then
     source "$ENV_FILE"
 fi
 
 AGENT_URL="${PREVIEW_SERVER_URL:-https://api.druploy.dev}/api/internal/agent/download"
-AGENT_BIN="/usr/local/bin/preview-agent"
+AGENT_BIN="/usr/local/bin/druploy-agent"
 
 # Download new version
 if curl -sf -o "${AGENT_BIN}.new" "$AGENT_URL"; then

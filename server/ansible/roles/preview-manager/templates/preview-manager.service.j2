@@ -1,21 +1,21 @@
 [Unit]
-Description=Preview Manager Service
+Description=Druploy Service
 After=network.target docker.service
 Requires=docker.service
 # Needs PostgreSQL and Valkey containers running (managed by infra docker-compose)
 
 [Service]
 Type=simple
-User=preview-manager
-Group=preview-manager
-WorkingDirectory=/home/preview-manager/www/previews/server/preview-manager
-Environment="PATH=/home/preview-manager/www/previews/server/preview-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-ExecStart=/home/preview-manager/www/previews/server/preview-manager/venv/bin/python main.py
+User=druploy
+Group=druploy
+WorkingDirectory=/home/druploy/www/previews/server/preview-manager
+Environment="PATH=/home/druploy/www/previews/server/preview-manager/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStart=/home/druploy/www/previews/server/preview-manager/venv/bin/python main.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=preview-manager
+SyslogIdentifier=druploy
 
 # Security
 PrivateTmp=true

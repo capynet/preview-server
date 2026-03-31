@@ -1,16 +1,16 @@
 [Unit]
-Description=Preview Agent
+Description=Druploy Agent
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=simple
-ExecStartPre=/usr/local/bin/preview-agent-update
-ExecStart=/usr/local/bin/preview-agent
+ExecStartPre=/usr/local/bin/druploy-agent-update
+ExecStart=/usr/local/bin/druploy-agent
 Restart=always
 RestartSec=5
 Environment=PORT=8022
-EnvironmentFile=-/etc/preview-agent.env
+EnvironmentFile=-/etc/druploy-agent.env
 
 [Install]
 WantedBy=multi-user.target

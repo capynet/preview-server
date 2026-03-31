@@ -1,6 +1,6 @@
 ---
 - name: Configure IS_PREVIEW_SERVER environment variable
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   tasks:

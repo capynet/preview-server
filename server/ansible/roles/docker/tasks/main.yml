@@ -50,8 +50,8 @@
     state: started
     enabled: yes
 
-- name: Create preview-network
-  command: docker network create preview-network
+- name: Create druploy-network
+  command: docker network create druploy-network
   register: network_result
   changed_when: network_result.rc == 0
   failed_when: network_result.rc != 0 and 'already exists' not in network_result.stderr

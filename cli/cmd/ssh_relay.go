@@ -16,7 +16,7 @@ var sshRelayCmd = &cobra.Command{
 	Use:    "ssh-relay",
 	Short:  "SSH relay for drush aliases (internal use)",
 	Hidden: true,
-	// Drush calls: preview ssh-relay --vm=IP --container=NAME user@host "cd /path && command"
+	// Drush calls: druploy ssh-relay --vm=IP --container=NAME user@host "cd /path && command"
 	// We get positional args: [user@host, "cd /path && command"]
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {

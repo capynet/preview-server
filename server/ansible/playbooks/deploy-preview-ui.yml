@@ -12,7 +12,7 @@
 #   ansible-playbook playbooks/deploy-preview-ui.yml
 
 - name: Setup Preview UI
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   roles:

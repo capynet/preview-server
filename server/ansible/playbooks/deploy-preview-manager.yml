@@ -1,11 +1,11 @@
 ---
-# Deploy Preview Manager
+# Deploy Druploy
 #
 # Usage:
 #   ansible-playbook playbooks/deploy-preview-manager.yml
 
-- name: Deploy Preview Manager
-  hosts: preview-server
+- name: Deploy Druploy
+  hosts: druploy-server
   become: yes
 
   roles:
@@ -14,21 +14,21 @@
   post_tasks:
     - name: Verify service is running
       systemd:
-        name: preview-manager
+        name: druploy
         state: started
       register: service_state
       tags: [code]
 
     - name: Display service status
       debug:
-        msg: "Preview Manager service is {{ service_state.status.ActiveState }}"
+        msg: "Druploy service is {{ service_state.status.ActiveState }}"
       tags: [code]
 
     - name: Show API endpoints
       debug:
         msg: |
           ================================================
-          PREVIEW MANAGER DEPLOYED SUCCESSFULLY
+          DRUPLOY DEPLOYED SUCCESSFULLY
           ================================================
 
           API Endpoints:
@@ -40,7 +40,7 @@
             - Docs:         http://localhost:8000/docs
 
           Logs:
-            - View logs:    sudo journalctl -u preview-manager -f
-            - Service:      sudo systemctl status preview-manager
+            - View logs:    sudo journalctl -u druploy -f
+            - Service:      sudo systemctl status druploy
 
           ================================================

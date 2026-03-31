@@ -1,4 +1,4 @@
-"""Shared PostgreSQL database for Preview Manager — multi-tenant with organizations."""
+"""Shared PostgreSQL database for Druploy — multi-tenant with organizations."""
 
 import hashlib
 import logging

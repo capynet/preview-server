@@ -1,6 +1,6 @@
 ---
 - name: Setup Caddy reverse proxy with TLS
-  hosts: preview-server
+  hosts: druploy-server
   become: yes
 
   roles:

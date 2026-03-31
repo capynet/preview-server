@@ -27,10 +27,10 @@ If project/preview-name is not given, auto-detects from the current git branch.
 On first use, you'll be asked to register your SSH key.
 
 Examples:
-  preview ssh                        # auto-detect, php container
-  preview ssh db                     # auto-detect, db container
-  preview ssh soudal/mr-1597         # explicit preview, php container
-  preview ssh db soudal/mr-1597      # explicit preview, db container`,
+  druploy ssh                        # auto-detect, php container
+  druploy ssh db                     # auto-detect, db container
+  druploy ssh soudal/mr-1597         # explicit preview, php container
+  druploy ssh db soudal/mr-1597      # explicit preview, db container`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		container := "php"
