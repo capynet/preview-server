@@ -361,9 +361,10 @@ async def get_preview_by_hash(url_hash: str) -> Optional[dict]:
 
 
 async def get_preview_by_domain(domain: str) -> Optional[dict]:
-    """Find a preview by its domain (e.g. 'a3f8b2c1.mr.preview-mr.com')."""
+    """Find a preview by its domain (e.g. 'a3f8b2c1.{preview_domain}')."""
     import re
-    match = re.match(r"^(.+?)\.mr\.preview-mr\.com$", domain)
+    escaped_domain = re.escape(settings.preview_domain)
+    match = re.match(rf"^(.+?)\.{escaped_domain}$", domain)
     if not match:
         return None
     subdomain = match.group(1)

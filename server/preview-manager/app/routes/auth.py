@@ -40,12 +40,12 @@ def _set_session_cookie(response: Response, session_id: str):
         httponly=True,
         samesite="none",
         secure=True,
-        domain=".preview-mr.com",
+        domain=f".{settings.base_domain}",
     )
 
 
 def _delete_session_cookie(response: Response):
-    response.delete_cookie(SESSION_COOKIE, domain=".preview-mr.com")
+    response.delete_cookie(SESSION_COOKIE, domain=f".{settings.base_domain}")
 
 
 # ---- OAuth ----

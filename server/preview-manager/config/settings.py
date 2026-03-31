@@ -38,16 +38,21 @@ class Settings(BaseSettings):
     gitlab_oauth_client_secret: str = ""
     google_oauth_client_id: str = ""
     google_oauth_client_secret: str = ""
-    oauth_redirect_uri_base: str = "https://api.preview-mr.com/api/auth/callback"
+    oauth_redirect_uri_base: str = "https://api.druploy.dev/api/auth/callback"
+
+    # Domain configuration
+    base_domain: str = "druploy.dev"
+    preview_domain: str = "druploy.dev"
+    api_url: str = "https://api.druploy.dev"
 
     # GitLab API access (Personal Access Token)
     gitlab_oauth_access_token: Optional[str] = None
     session_max_age_seconds: int = 2592000  # 30 days
-    frontend_url: str = "https://app.preview-mr.com"
+    frontend_url: str = "https://druploy.dev"
 
     # Resend (email)
     resend_api_key: str = ""
-    invitation_from_email: str = "Preview Manager <noreply@preview-mr.com>"
+    invitation_from_email: str = "Druploy <noreply@druploy.dev>"
 
     # Hetzner Cloud
     hetzner_api_token: str = ""

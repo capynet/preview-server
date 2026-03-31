@@ -60,7 +60,7 @@
             - jq (JSON parser)
 
           Preview Manager API:
-            - URL: https://api.preview-mr.com
+            - URL: https://api.druploy.dev
             - Local: http://localhost:8000
 
           ==========================================

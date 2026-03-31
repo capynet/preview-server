@@ -7,23 +7,26 @@ api.{{ domain }} {
 	reverse_proxy host.docker.internal:8000
 }
 
-# Frontend app
-app.{{ domain }} {
+# Frontend app (root domain)
+{{ domain }} {
 	reverse_proxy host.docker.internal:3000
+}
+
+# Public website
+druploy.com {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	root * /landing
+	file_server
 }
 
 # Wildcard TLS cert + routing managed via Admin API.
 # The Python app inserts per-preview direct routes (position 0) via Admin API
 # so they are evaluated BEFORE this fallback.
-*.mr.{{ domain }} {
+*.{{ domain }} {
 	tls {
 		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
 	}
 	reverse_proxy host.docker.internal:8000
-}
-
-# Landing page
-{{ domain }} {
-	root * /landing
-	file_server
 }

@@ -6,12 +6,29 @@ All sensitive values are read from environment variables (set via Ansible vault)
 import logging
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 
 import psycopg2
 
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
+
+
+def _load_dotenv():
+    """Load .env file into os.environ (simple parser, no dependencies)."""
+    env_path = Path(__file__).parent / ".env"
+    if not env_path.exists():
+        return
+    for line in env_path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+_load_dotenv()
 
 
 def _env(key: str, default: str = "") -> str:
@@ -48,9 +65,9 @@ def seed_database():
 
         # 1. Create superadmin
         cur.execute(
-            """INSERT INTO users (email, name, password_hash, is_superadmin, created_at, updated_at)
-            VALUES (%s, %s, %s, 1, %s, %s) RETURNING id""",
-            (_env("SEED_ADMIN_EMAIL"), _env("SEED_ADMIN_NAME"), _env("SEED_ADMIN_PASSWORD_HASH"), now, now),
+            """INSERT INTO users (email, name, is_superadmin, created_at, updated_at)
+            VALUES (%s, %s, 1, %s, %s) RETURNING id""",
+            (_env("SEED_ADMIN_EMAIL"), _env("SEED_ADMIN_NAME"), now, now),
         )
         admin_id = cur.fetchone()[0]
 

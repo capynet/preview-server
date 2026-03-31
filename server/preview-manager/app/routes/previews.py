@@ -28,6 +28,7 @@ from app.database import (
     finish_deployment,
 )
 from app.auth.dependencies import require_project_role, get_current_user
+from config.settings import settings
 from app.auth.models import OrgRole, UserWithContext
 from app.auth import database as auth_db
 from app.cloud import cloud_manager
@@ -55,7 +56,7 @@ def _resolve_drush_uri(org_slug: str, project_slug: str, preview_name: str, url_
     """Resolve drush --uri from preview.yml config.
 
     If drush_uri is a simple name (e.g. "admin"), it's treated as a domain alias
-    and expanded to https://{alias}--{url_hash}.mr.preview-mr.com.
+    and expanded to https://{alias}--{url_hash}.{settings.preview_domain}.
     If not set or false, returns the default preview URL.
     """
     from app.docker_compose import parse_preview_yml
@@ -69,14 +70,14 @@ def _resolve_drush_uri(org_slug: str, project_slug: str, preview_name: str, url_
         raw = None
 
     if not raw:
-        return f"https://{url_hash}.mr.preview-mr.com"
+        return f"https://{url_hash}.{settings.preview_domain}"
 
     # If it looks like a full URL, use as-is
     if raw.startswith("http://") or raw.startswith("https://"):
         return raw
 
     # Otherwise treat as a domain alias prefix
-    return f"https://{raw}--{url_hash}.mr.preview-mr.com"
+    return f"https://{raw}--{url_hash}.{settings.preview_domain}"
 
 
 async def _resolve_project(user: UserWithContext, project_slug: str) -> dict:
@@ -130,7 +131,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
     if expose_config_raw and url_hash:
         try:
             expose_config = json.loads(expose_config_raw) if isinstance(expose_config_raw, str) else expose_config_raw
-            preview_domain = f"{url_hash}.mr.preview-mr.com"
+            preview_domain = f"{url_hash}.{settings.preview_domain}"
             for svc_name in expose_config:
                 exposed_services[svc_name] = f"https://{svc_name}--{preview_domain}"
         except (json.JSONDecodeError, TypeError):
@@ -143,7 +144,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         try:
             aliases_list = json.loads(aliases_raw) if isinstance(aliases_raw, str) else aliases_raw
             for prefix in aliases_list:
-                domain_aliases[prefix] = f"https://{prefix}--{url_hash}.mr.preview-mr.com"
+                domain_aliases[prefix] = f"https://{prefix}--{url_hash}.{settings.preview_domain}"
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -242,7 +243,7 @@ async def create_mr_preview(
     mr_title = mr_data.get("title", "")
 
     url_hash = compute_url_hash(org_slug, project_slug, preview_name)
-    preview_url = f"https://{url_hash}.mr.preview-mr.com"
+    preview_url = f"https://{url_hash}.{settings.preview_domain}"
 
     await PreviewStateManager.save_state(
         project_id, preview_name,
@@ -332,7 +333,7 @@ async def create_branch_preview(
 
     commit_sha = branch_data["commit"]["id"]
     url_hash = compute_url_hash(org_slug, project_slug, preview_name)
-    preview_url = f"https://{url_hash}.mr.preview-mr.com"
+    preview_url = f"https://{url_hash}.{settings.preview_domain}"
 
     await PreviewStateManager.save_state(
         project_id, preview_name,
@@ -625,7 +626,7 @@ async def delete_preview_internal(
     try:
         from app.caddy_api import caddy_manager
         url_hash = preview.get("url_hash", "") if preview else compute_url_hash(org_slug, project_slug, preview_name)
-        domain = f"{url_hash}.mr.preview-mr.com"
+        domain = f"{url_hash}.{settings.preview_domain}"
         await caddy_manager.remove_preview_route(domain)
     except Exception as e:
         logger.warning(f"Error removing Caddy route for {org_slug}/{project_slug}/{preview_name}: {e}")
@@ -823,7 +824,7 @@ async def drush_uli(
 ):
     """Get a one-time login link (drush uli) via SSH.
 
-    Optional body: {"uri": "https://admin--hash.mr.preview-mr.com"}
+    Optional body: {"uri": "https://admin--hash.{preview_domain}"}
     If not provided, uses the default preview URL.
     """
     proj = await _resolve_project(user, project)
@@ -833,7 +834,7 @@ async def drush_uli(
     url_hash = preview.get("url_hash", compute_url_hash(user.org.slug, proj["slug"], preview_name))
     drush_uri = body.get("uri") if body else None
     if not drush_uri:
-        drush_uri = f"https://{url_hash}.mr.preview-mr.com"
+        drush_uri = f"https://{url_hash}.{settings.preview_domain}"
 
     php_container = f"{container_prefix(url_hash)}-php"
 

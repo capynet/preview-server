@@ -29,8 +29,8 @@ func openBrowser(url string) {
 	_ = cmd.Start()
 }
 
-const defaultAPIURL = "https://api.preview-mr.com"
-const appURL = "https://app.preview-mr.com"
+const defaultAPIURL = "https://api.druploy.dev"
+const appURL = "https://druploy.dev"
 
 var loginNoBrowser bool
 

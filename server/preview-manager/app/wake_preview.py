@@ -138,7 +138,7 @@ BUILDING_PAGE_HTML = """<!DOCTYPE html>
 
 
 class WakePreviewMiddleware(BaseHTTPMiddleware):
-    """Handle all *.mr.preview-mr.com requests.
+    """Handle all *.{preview_domain} requests.
 
     The Caddy wildcard proxies ALL preview subdomain requests here.
     This middleware:
@@ -153,7 +153,10 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         host = request.headers.get("host", "")
 
         # Only handle preview domain requests (from Caddy wildcard)
-        if not host.endswith(".mr.preview-mr.com"):
+        # Exclude the API and root domain (they share the same base domain)
+        if not host.endswith(f".{settings.preview_domain}"):
+            return await call_next(request)
+        if host in (f"api.{settings.base_domain}", settings.base_domain):
             return await call_next(request)
 
         # Forward auth requests from Caddy — let FastAPI handle them directly
@@ -224,10 +227,11 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
         # If VM is running, reverse proxy to it
         if preview.get("vm_id") and preview.get("vm_ip"):
-            # Detect exposed service domain (e.g. solr--hash.mr.preview-mr.com)
+            # Detect exposed service domain (e.g. solr--hash.{preview_domain})
             import re
             port = 80
-            match = re.match(r"^(.+?)\.mr\.preview-mr\.com$", host)
+            escaped_domain = re.escape(settings.preview_domain)
+            match = re.match(rf"^(.+?)\.{escaped_domain}$", host)
             if match:
                 subdomain = match.group(1)
                 if "--" in subdomain:

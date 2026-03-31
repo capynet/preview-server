@@ -185,7 +185,7 @@ func settingsPreviewContent() string {
 func previewYmlContent() string {
 	return `# Preview Manager configuration
 # This file defines how preview environments are created for this project.
-# See: https://app.preview-mr.com/docs/configuration
+# See: https://druploy.dev/docs/configuration
 
 # PHP version for the preview container.
 # Supported: 8.1, 8.2, 8.3, 8.4
@@ -223,7 +223,7 @@ solr: false           # e.g. "9", "8"
 #   MY_CUSTOM_VAR: some-value
 
 # Domain aliases — additional subdomains that route to this preview.
-# Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com
+# Each prefix becomes {prefix}--{preview-domain}.druploy.dev
 # Useful for multi-site setups where the app expects different hostnames.
 # The list is available as PREV_DOMAIN_ALIASES env var.
 # domain_aliases:
@@ -239,7 +239,7 @@ solr: false           # e.g. "9", "8"
 # Drush URI — custom URI passed to drush via --uri flag.
 # Used for drush uli (admin login link) and other drush commands.
 # Can be a domain alias name (e.g. "admin") which expands to
-# https://{alias}--{preview-domain}.mr.preview-mr.com, or a full URL.
+# https://{alias}--{preview-domain}.druploy.dev, or a full URL.
 # If not set or false, the default preview URL is used.
 # drush_uri: admin
 

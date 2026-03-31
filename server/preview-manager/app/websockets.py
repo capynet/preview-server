@@ -906,7 +906,7 @@ async def websocket_preview_action(
                 if preview.get("vm_id"):
                     await cloud_manager.destroy_vm(preview["vm_id"])
                     url_hash = compute_url_hash(org_slug, project_slug, preview_name)
-                    domain = f"{url_hash}.mr.preview-mr.com"
+                    domain = f"{url_hash}.{settings.preview_domain}"
                     await caddy_manager.remove_preview_route(domain)
                     await update_preview_vm(preview["id"], None, None)
                 success, message = True, "VM destroyed, volume kept"

@@ -10,7 +10,7 @@ if [ -f "$ENV_FILE" ]; then
     source "$ENV_FILE"
 fi
 
-AGENT_URL="${PREVIEW_SERVER_URL:-https://api.preview-mr.com}/api/internal/agent/download"
+AGENT_URL="${PREVIEW_SERVER_URL:-https://api.druploy.dev}/api/internal/agent/download"
 AGENT_BIN="/usr/local/bin/preview-agent"
 
 # Download new version

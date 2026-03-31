@@ -281,7 +281,7 @@ class PreviewDeployer:
         # Hash-based domain and container prefix
         url_hash = compute_url_hash(self.org_slug, self.project_slug, preview_name)
         self.container_prefix = url_hash
-        self.domain = f"{url_hash}.mr.preview-mr.com"
+        self.domain = f"{url_hash}.{settings.preview_domain}"
         self.preview_url = f"https://{self.domain}"
 
         self._preview_config: dict | None = None
@@ -697,7 +697,7 @@ class PreviewDeployer:
         await executor.wait_for_ssh(timeout=120)
 
         # Install the agent: download binary + create systemd service
-        api_url = f"https://api.preview-mr.com"
+        api_url = settings.api_url
         agent_bin = "/var/www/preview/bin/preview-agent"
         install_cmd = (
             # Create directories

@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-BASE_URL="https://api.preview-mr.com/api/cli"
+BASE_URL="https://api.druploy.dev/api/cli"
 
 # Detect OS
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')

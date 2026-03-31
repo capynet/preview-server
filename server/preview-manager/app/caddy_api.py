@@ -1,6 +1,6 @@
 """Caddy Admin API manager — manage preview routing dynamically.
 
-Strategy: The Caddyfile defines the wildcard *.mr.preview-mr.com route that
+Strategy: The Caddyfile defines the wildcard *.{preview_domain} route that
 proxies all requests to the Python middleware. We patch the handlers of that
 route via the Admin API to insert per-preview subroutes that proxy static
 assets directly to the VM (bypassing Python), while HTML document requests
@@ -14,6 +14,8 @@ import json
 import logging
 
 import httpx
+
+from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +47,11 @@ class CaddyRouteManager:
         self._wildcard_route_index: int | None = None
 
     def _find_wildcard_route_index(self, routes: list[dict]) -> int | None:
-        """Find the index of the *.mr.preview-mr.com route."""
+        """Find the index of the *.{preview_domain} route."""
+        wildcard = f"*.{settings.preview_domain}"
         for i, r in enumerate(routes):
             for m in r.get("match", []):
-                if "*.mr.preview-mr.com" in m.get("host", []):
+                if wildcard in m.get("host", []):
                     return i
         return None
 
@@ -205,7 +208,7 @@ class CaddyRouteManager:
                 routes = resp.json()
                 self._wildcard_route_index = self._find_wildcard_route_index(routes)
                 if self._wildcard_route_index is None:
-                    raise RuntimeError("Wildcard route *.mr.preview-mr.com not found in Caddy config")
+                    raise RuntimeError(f"Wildcard route *.{settings.preview_domain} not found in Caddy config")
 
             # Patch the handle array of the wildcard route
             path = f"{ROUTES_PATH}/{self._wildcard_route_index}/handle"
@@ -255,7 +258,7 @@ class CaddyRouteManager:
         public_paths: list[str] | None = None,
     ) -> None:
         """Add all routes for a preview: main domain + aliases + exposed services."""
-        domain = f"{url_hash}.mr.preview-mr.com"
+        domain = f"{url_hash}.{settings.preview_domain}"
         self._preview_upstreams[domain] = (upstream_ip, 80)
 
         if public_paths:
@@ -281,7 +284,7 @@ class CaddyRouteManager:
         expose_services: dict[str, int] | None = None,
     ) -> None:
         """Remove all routes for a preview."""
-        domain = f"{url_hash}.mr.preview-mr.com"
+        domain = f"{url_hash}.{settings.preview_domain}"
         self._preview_upstreams.pop(domain, None)
         self._domain_public_paths.pop(domain, None)
 
@@ -324,7 +327,7 @@ class CaddyRouteManager:
             url_hash = p.get("url_hash") or compute_url_hash(
                 org_slug, project_slug, p["preview_name"]
             )
-            domain = f"{url_hash}.mr.preview-mr.com"
+            domain = f"{url_hash}.{settings.preview_domain}"
             if domain in self._preview_upstreams:
                 self.set_domain_public_paths(domain, paths)
                 changed = True

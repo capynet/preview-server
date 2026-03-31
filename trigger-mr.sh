@@ -53,4 +53,4 @@ RESULT=$(ssh "$SERVER" "curl -sf -X POST http://localhost:8000/api/webhooks/$ORG
 
 echo "Result: $RESULT"
 echo ""
-echo "Track: https://app.preview-mr.com/projects/project/soudal/mr-$MR_IID"
+echo "Track: https://druploy.dev/projects/project/soudal/mr-$MR_IID"

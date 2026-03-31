@@ -113,7 +113,7 @@ def parse_preview_yml(preview_path: Path) -> dict:
         config["post_deploy"] = {"new": None, "update": None}
 
     # Domain aliases — additional subdomain prefixes routed to this preview.
-    # Each prefix becomes {prefix}--{preview-domain}.mr.preview-mr.com
+    # Each prefix becomes {prefix}--{preview-domain}.{settings.preview_domain}
     if "domain_aliases" in raw and isinstance(raw["domain_aliases"], list):
         config["domain_aliases"] = [str(a) for a in raw["domain_aliases"] if a]
 
@@ -173,7 +173,7 @@ def generate_docker_compose(
 ) -> dict:
     """Generate a docker-compose.yml dict for a preview environment."""
     prefix = container_prefix(url_hash) if url_hash else f"{preview_name}-{project_name}"
-    domain = f"{url_hash}.mr.preview-mr.com" if url_hash else f"{prefix}.mr.preview-mr.com"
+    domain = f"{url_hash}.{settings.preview_domain}" if url_hash else f"{prefix}.{settings.preview_domain}"
     url = f"https://{domain}"
 
     # Determine DB image from unified "database" property (e.g. "mysql:8.0", "mariadb:10.6")

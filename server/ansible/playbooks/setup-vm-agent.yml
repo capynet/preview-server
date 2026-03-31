@@ -1,6 +1,6 @@
 ---
 # Setup the preview-agent on a VM (or snapshot base).
-# Usage: ansible-playbook -i "VM_IP," playbooks/setup-vm-agent.yml -e "preview_server_url=https://api.preview-mr.com"
+# Usage: ansible-playbook -i "VM_IP," playbooks/setup-vm-agent.yml -e "preview_server_url=https://api.druploy.dev"
 #
 # This installs:
 # - preview-agent-update script (downloads agent binary from server)
@@ -11,7 +11,7 @@
   hosts: all
   become: yes
   vars:
-    preview_server_url: "https://api.preview-mr.com"
+    preview_server_url: "https://api.druploy.dev"
 
   tasks:
     - name: Copy preview-agent-update script

@@ -106,7 +106,7 @@ Examples:
 			}
 		}
 
-		domain := fmt.Sprintf("%s.mr.preview-mr.com", detail.UrlHash)
+		domain := fmt.Sprintf("%s.druploy.dev", detail.UrlHash)
 
 		// SSH options: direct SSH to VM on port 2222 (sshd inside PHP container)
 		sshOpts := "-p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"

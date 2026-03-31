@@ -133,7 +133,7 @@ def _build_comment(
     # Main info table
     lines.append("| | |")
     lines.append("|---|---|")
-    lines.append(f"| **URL** | [{url_hash}.mr.preview-mr.com]({preview_url}) |")
+    lines.append(f"| **URL** | [{url_hash}.{settings.preview_domain}]({preview_url}) |")
 
     dashboard_url = f"{settings.frontend_url}/projects/{project_slug}"
     lines.append(f"| **Dashboard** | [View in Preview Manager]({dashboard_url}) |")
@@ -161,7 +161,7 @@ def _build_comment(
         lines.append("**Sites:**")
         lines.append(f"- [default]({preview_url})")
         for alias in domain_aliases:
-            alias_url = f"https://{alias}--{url_hash}.mr.preview-mr.com"
+            alias_url = f"https://{alias}--{url_hash}.{settings.preview_domain}"
             lines.append(f"- [{alias}]({alias_url})")
         lines.append("")
 

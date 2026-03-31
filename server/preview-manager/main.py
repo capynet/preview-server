@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
                 project_slug = p.get("project_slug", "")
                 preview_name = p["preview_name"]
                 url_hash = p.get("url_hash") or compute_url_hash(org_slug, project_slug, preview_name)
-                domain = f"{url_hash}.mr.preview-mr.com"
+                domain = f"{url_hash}.{settings.preview_domain}"
                 caddy_manager._preview_upstreams[domain] = (p["vm_ip"], 80)
                 # Load project public_paths
                 raw_pp = p.get("project_public_paths")
@@ -123,8 +123,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         settings.frontend_url,
-        "https://app.preview-mr.com",
-        "https://preview-mr.com",
+        f"https://{settings.base_domain}",
         "http://localhost:3000",
     ],
     allow_credentials=True,

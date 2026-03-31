@@ -22,7 +22,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     labels:
-      caddy: api.preview-mr.com
+      caddy: api.druploy.dev
       caddy.reverse_proxy: "host.docker.internal:8000"
 
 volumes:
