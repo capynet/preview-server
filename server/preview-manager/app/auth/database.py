@@ -35,13 +35,13 @@ async def get_user_by_email(email: str) -> Optional[dict]:
     return _row_to_dict(row) if row else None
 
 
-async def create_user(email: str, name: str, avatar_url: Optional[str] = None, is_superadmin: bool = False) -> dict:
+async def create_user(email: str, name: str, avatar_url: Optional[str] = None, is_superadmin: bool = False, system_role: Optional[str] = None) -> dict:
     now = _now()
     pool = await get_pool()
     row = await pool.fetchrow(
-        """INSERT INTO users (email, name, avatar_url, is_superadmin, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING *""",
-        email, name, avatar_url, int(is_superadmin), now, now,
+        """INSERT INTO users (email, name, avatar_url, is_superadmin, system_role, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *""",
+        email, name, avatar_url, int(is_superadmin), system_role, now, now,
     )
     return _row_to_dict(row)
 

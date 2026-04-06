@@ -34,6 +34,7 @@ class User(BaseModel):
     name: str
     avatar_url: Optional[str] = None
     is_superadmin: bool = False
+    system_role: Optional[str] = None
     created_at: str
     updated_at: str
 

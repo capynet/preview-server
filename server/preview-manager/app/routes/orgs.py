@@ -80,8 +80,10 @@ async def list_my_orgs(user: UserWithContext = Depends(get_current_user)):
 
 
 @router.post("")
-async def create_org(body: CreateOrgBody, user: UserWithContext = Depends(require_superadmin())):
-    """Create a new organization. The creator becomes the owner."""
+async def create_org(body: CreateOrgBody, user: UserWithContext = Depends(get_current_user)):
+    """Create a new organization. Requires system_role='owner' or superadmin."""
+    if not user.is_superadmin and getattr(user, 'system_role', None) != 'owner':
+        raise HTTPException(status_code=403, detail="Only users with owner role can create organizations")
     slug = _validate_slug(body.slug)
 
     existing = await get_organization_by_slug(slug)

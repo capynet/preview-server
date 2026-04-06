@@ -215,6 +215,7 @@ async def get_me(user: UserWithContext = Depends(get_current_user)):
         "name": user.name,
         "avatar_url": user.avatar_url,
         "is_superadmin": user.is_superadmin,
+        "system_role": user.system_role,
         "organizations": [
             {"org_id": o["id"], "org_slug": o["slug"], "org_name": o["name"], "role": o["role"], "color": o.get("color", "#6366f1"), "gitlab_url": o.get("gitlab_url")}
             for o in orgs
@@ -488,4 +489,51 @@ async def delete_ssh_key(key_id: int, user: UserWithContext = Depends(get_curren
     # Sync authorized_keys file
     await _sync_authorized_keys()
 
+    return {"success": True}
+
+
+# ---- Superadmin: User Management ----
+
+
+class CreateOwnerBody(BaseModel):
+    email: str
+
+
+@router.get("/admin/owners")
+async def list_owners(user: UserWithContext = Depends(require_superadmin())):
+    """List all users in the system (superadmin only)."""
+    users = await db.list_users()
+    return {"users": [
+        {"id": u["id"], "email": u["email"], "name": u["name"], "avatar_url": u.get("avatar_url"),
+         "is_superadmin": bool(u["is_superadmin"]), "system_role": u.get("system_role"), "created_at": u["created_at"]}
+        for u in users
+    ]}
+
+
+@router.post("/admin/owners")
+async def create_owner(body: CreateOwnerBody, user: UserWithContext = Depends(require_superadmin())):
+    """Create a new user by email (superadmin only). The user can then login via OAuth and create orgs."""
+    email = body.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email")
+
+    existing = await db.get_user_by_email(email)
+    if existing:
+        raise HTTPException(status_code=409, detail=f"User '{email}' already exists")
+
+    new_user = await db.create_user(email, name="", is_superadmin=False, system_role="owner")
+    return {"id": new_user["id"], "email": new_user["email"], "message": f"User '{email}' created as owner. They can now sign in via OAuth and create organizations."}
+
+
+@router.delete("/admin/owners/{user_id}")
+async def delete_owner(user_id: int, user: UserWithContext = Depends(require_superadmin())):
+    """Delete a user (superadmin only). Cannot delete yourself."""
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete yourself")
+    target = await db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["is_superadmin"]:
+        raise HTTPException(status_code=400, detail="Cannot delete a superadmin")
+    await db.delete_user(user_id)
     return {"success": True}

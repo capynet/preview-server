@@ -54,6 +54,7 @@ async def get_current_user(
         name=user["name"],
         avatar_url=user.get("avatar_url"),
         is_superadmin=bool(user.get("is_superadmin", 0)),
+        system_role=user.get("system_role"),
         created_at=user["created_at"],
         updated_at=user["updated_at"],
     )
