@@ -10,7 +10,7 @@ from config.settings import settings
 
 logger = logging.getLogger(__name__)
 
-# Defaults when preview.yml is missing or incomplete
+# Defaults when druploy.yml is missing or incomplete
 DEFAULTS = {
     "php_version": "8.3",
     "database": "mysql:8.0",

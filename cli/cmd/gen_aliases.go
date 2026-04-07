@@ -59,13 +59,13 @@ var genCmd = &cobra.Command{
 var genAliasesCmd = &cobra.Command{
 	Use:   "drush-aliases [PROJECT/PREVIEW-NAME]",
 	Short: "Generate local drush site aliases for a preview",
-	Long: `Generate a drush/sites/preview.site.yml file with aliases pointing
+	Long: `Generate a drush/sites/druploy.site.yml file with aliases pointing
 to the preview environment, including SSH connection info for remote drush.
 
 If PROJECT/PREVIEW-NAME is given, uses that specific preview.
 If no argument is given, auto-detects from git remote and current branch.
 
-The generated file is written to drush/sites/preview.site.yml relative
+The generated file is written to drush/sites/druploy.site.yml relative
 to the git repository root.
 
 Examples:
@@ -170,13 +170,13 @@ Examples:
 		}
 		gitRoot := strings.TrimSpace(string(rootBytes))
 
-		// Write to drush/sites/preview.site.yml
+		// Write to drush/sites/druploy.site.yml
 		drushDir := filepath.Join(gitRoot, "drush", "sites")
 		if err := os.MkdirAll(drushDir, 0755); err != nil {
 			return fmt.Errorf("failed to create drush/sites/: %w", err)
 		}
 
-		aliasFile := filepath.Join(drushDir, "preview.site.yml")
+		aliasFile := filepath.Join(drushDir, "druploy.site.yml")
 		if err := os.WriteFile(aliasFile, []byte(buf.String()), 0644); err != nil {
 			return fmt.Errorf("failed to write %s: %w", aliasFile, err)
 		}

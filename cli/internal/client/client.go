@@ -661,13 +661,13 @@ func (c *Client) ResolveProject(slug string) ([]ProjectMatch, error) {
 	return result.Matches, nil
 }
 
-// PreviewConfig holds the preview.yml configuration returned by the VM agent.
+// PreviewConfig holds the druploy.yml configuration returned by the VM agent.
 type PreviewConfig struct {
 	DomainAliases []string `json:"domain_aliases"`
 	Docroot       string   `json:"docroot"`
 }
 
-// GetPreviewConfig fetches the preview.yml config from the VM agent via the coordinator.
+// GetPreviewConfig fetches the druploy.yml config from the VM agent via the coordinator.
 func (c *Client) GetPreviewConfig(project, previewName string) (*PreviewConfig, error) {
 	url := fmt.Sprintf("%s/previews/%s/preview-config", c.orgProjectPrefix(project), previewName)
 

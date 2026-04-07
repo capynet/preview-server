@@ -42,7 +42,7 @@ class HetznerCloudManager:
             if key:
                 return key
 
-        name = "preview-manager"
+        name = "druploy"
         existing = await _run(client.ssh_keys.get_by_name, name)
         if existing:
             self._ssh_key_id = existing.data_model.id

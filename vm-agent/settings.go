@@ -164,7 +164,7 @@ func WriteSettings(repoPath string, job *DeployJob, cfg *PreviewConfig) error {
 		}
 
 		aliasContent := "# Managed by Druploy Agent — overwritten on every deploy.\n" + string(aliasData)
-		aliasPath := filepath.Join(drushSitesDir, "preview.site.yml")
+		aliasPath := filepath.Join(drushSitesDir, "druploy.site.yml")
 		if err := os.WriteFile(aliasPath, []byte(aliasContent), 0644); err != nil {
 			return fmt.Errorf("failed to write drush aliases: %w", err)
 		}
