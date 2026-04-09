@@ -131,7 +131,7 @@ def _build_comment(
     lines = ["## :rocket: Preview Ready", ""]
 
     # Main info table
-    lines.append("| | |")
+    lines.append("| Info | |")
     lines.append("|---|---|")
     lines.append(f"| **URL** | [{url_hash}.{settings.preview_domain}]({preview_url}) |")
 

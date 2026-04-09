@@ -32,8 +32,7 @@ Is the UI of preview manager ([server](server))
 
 # TODO antes de prod. 
 - Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. No hace falta que cierres esta pestaña, tan rponto como acabe el build la pagina se va a mostrar"
-- Todavia tengo pendiente proporcional info util del preview en el MR de gitlab.
-- Implemente el auto pr solo si ci pasa?
+- Implemente el auto preview solo si ci pasa?
 - Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
 - Agregar cron a los preview.
 - Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos. ademas deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
