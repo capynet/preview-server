@@ -25,6 +25,7 @@ class PreviewInfo(BaseModel):
     env_vars: dict[str, str] = {}
     mr_title: Optional[str] = None
     mr_url: Optional[str] = None
+    gitlab_project_path: Optional[str] = None
     target_branch: Optional[str] = None
     vm_ip: Optional[str] = None
     post_deploy_status: Optional[str] = None

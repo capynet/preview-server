@@ -31,7 +31,7 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO antes de prod. 
-- Si un preview se borra (por ejempl por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen. Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. No hace falta que cierres esta pestaña, tan rponto como acabe el build la pagina se va a mostrar"
+- Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. No hace falta que cierres esta pestaña, tan rponto como acabe el build la pagina se va a mostrar"
 - Todavia tengo pendiente proporcional info util del preview en el MR de gitlab.
 - Implemente el auto pr solo si ci pasa?
 - Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
@@ -41,6 +41,8 @@ Is the UI of preview manager ([server](server))
 -  hay jobs que no son cruciales para considerar el NMR valido a la hora de crear un mr. A lo mjor estaria bien poder especificar en preview.yml los job "required". Se entiende?
 - 
 # TODO
+- Necesito en la UI alguna forma de recibir feedback. Algun popup que permita rapidamente attachear un video o imagen y algun comentario. Es para que los usuarios puedan decirme qwue necesita ser mejorado o arreglado. 
+- Necesito que el cli tenga autoreport de errores. Antes de usarlo imagino que primero vamos a tener que agregar un mensaje que el usuario confirme permitiendonos enviar informacion anonimizada para mejorar la herramienta. Una vez que lo haya aprobado, si algun comando falla o crashea deberia enviarse informacion util que nos permita arreglar el error para el futuro. 
 - cada tenant u organizacion podria configurar sus propios dominios? la url de preview seguiria siendo funcionar. lo del dominio custom seria añadirlo encima. Ojo. solo puedo permitir subdominios de su dominio registrado en la organizacion. A lo sumo puedo permitir subdominios de un sitio alternativo pero nunca dominuios base apra que no lo usen como pagina web.
 - El backend ya tiene los endpoints (/api/config/cloud-resources y /api/config/cloud-costs), pero falta la UI en el frontend para mostrarlos
 - Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?

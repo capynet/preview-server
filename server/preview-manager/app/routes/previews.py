@@ -169,6 +169,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         env_vars=env_vars,
         vm_ip=state.get("vm_ip"),
         post_deploy_status=state.get("post_deploy_status"),
+        gitlab_project_path=state.get("gitlab_project_path"),
         domain_aliases=domain_aliases,
         exposed_services=exposed_services,
         stack=stack,
@@ -381,9 +382,10 @@ async def get_preview_endpoint(
     state = await PreviewStateManager.load_state(proj["id"], preview_name)
     if not state:
         raise HTTPException(status_code=404, detail=f"Preview {project}/{preview_name} not found")
-    # Enrich state with org/project slugs
+    # Enrich state with org/project slugs and gitlab path
     state["org_slug"] = user.org.slug
     state["project_slug"] = proj["slug"]
+    state["gitlab_project_path"] = proj.get("gitlab_project_path")
     return _build_preview_info(state)
 
 
@@ -511,6 +513,7 @@ async def update_preview_endpoint(
     updated = await PreviewStateManager.load_state(project_id, preview_name)
     updated["org_slug"] = user.org.slug
     updated["project_slug"] = proj["slug"]
+    updated["gitlab_project_path"] = proj.get("gitlab_project_path")
     result = _build_preview_info(updated)
 
     if body.env_vars is not None:

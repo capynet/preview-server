@@ -67,12 +67,12 @@ case "$SHELL_NAME" in
   bash)
     COMP_DIR="${HOME}/.local/share/bash-completion/completions"
     mkdir -p "$COMP_DIR"
-    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/druploy" 2>/dev/null
+    "${INSTALL_DIR}/${BINARY_NAME}" completion bash > "${COMP_DIR}/druploy" 2>/dev/null || true
     ;;
   zsh)
     COMP_DIR="${HOME}/.local/share/zsh/site-functions"
     mkdir -p "$COMP_DIR"
-    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_druploy" 2>/dev/null
+    "${INSTALL_DIR}/${BINARY_NAME}" completion zsh > "${COMP_DIR}/_druploy" 2>/dev/null || true
     ;;
 esac
 
