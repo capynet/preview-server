@@ -8,23 +8,41 @@ import (
 )
 
 var rebuildCmd = &cobra.Command{
-	Use:   "rebuild",
+	Use:   "rebuild [PROJECT/PREVIEW-NAME]",
 	Short: "Rebuild the preview from scratch (new VM, fresh deploy)",
 	Long: `Rebuild the preview environment from scratch.
 
-Auto-detects the project and preview from the current git branch.
+If PROJECT/PREVIEW-NAME is given, rebuilds that specific preview.
+Otherwise, auto-detects from git remote and current branch.
 
 Examples:
-  druploy rebuild`,
-	Args: cobra.NoArgs,
+  druploy rebuild
+  druploy rebuild soudal/branch-master
+  druploy rebuild soudal/mr-1584`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		r, err := resolvePreview()
-		if err != nil {
-			return err
+		var project, previewName string
+
+		if len(args) == 1 {
+			var err error
+			project, previewName, err = parsePreviewName(args[0])
+			if err != nil {
+				return err
+			}
+			if err := resolveOrgForProject(project); err != nil {
+				return err
+			}
+		} else {
+			r, err := resolvePreview()
+			if err != nil {
+				return err
+			}
+			project = r.Project
+			previewName = r.PreviewName
 		}
 
-		fmt.Fprintf(os.Stderr, "Rebuilding %s/%s...\n", r.Project, r.PreviewName)
-		result, err := apiClient.PostActionByName(r.Project, r.PreviewName, "rebuild?force_new=true")
+		fmt.Fprintf(os.Stderr, "Rebuilding %s/%s...\n", project, previewName)
+		result, err := apiClient.PostActionByName(project, previewName, "rebuild?force_new=true")
 		if err != nil {
 			return err
 		}

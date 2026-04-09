@@ -27,6 +27,7 @@ var rootCmd = &cobra.Command{
 	Short:   "Druploy CLI",
 	Long:    "CLI tool to manage Drupal preview environments.\n\nRun 'druploy login' to authenticate.",
 	Version: Version,
+	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		cfg := loadConfig()
 
@@ -150,6 +151,14 @@ func saveConfig(cfg config) error {
 }
 
 func init() {
+	// Hide "help" from command list — still works via `druploy help` or `--help`
+	rootCmd.InitDefaultHelpCmd()
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "help" {
+			cmd.Hidden = true
+			break
+		}
+	}
 }
 
 // detectGitBranch returns the current git branch name.

@@ -186,12 +186,17 @@ class HetznerCloudManager:
         return server.data_model.public_net.ipv4.ip
 
     async def get_vm(self, server_id: int) -> Server | None:
-        """Get VM by ID, returns None if not found."""
+        """Get VM by ID, returns None if not found. Raises on API errors (503, etc)."""
+        from hcloud._exceptions import APIException
         client = _get_client()
         try:
             return await _run(client.servers.get_by_id, server_id)
+        except APIException as e:
+            if e.code == "not_found" or e.code == 404:
+                return None
+            raise
         except Exception:
-            return None
+            raise
 
     async def wait_for_vm_ready(self, server_id: int, timeout: int = 300) -> str:
         """Wait until VM is running and SSH is reachable. Returns the IP address."""

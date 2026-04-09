@@ -41,9 +41,18 @@ var listCmd = &cobra.Command{
 				return fmt.Errorf("project %q not found", project)
 			}
 		} else {
-			project, err = selectProject(projects)
-			if err != nil {
-				return err
+			// Try auto-detect from git remote
+			if slug, err := detectProjectSlug(); err == nil {
+				if _, ok := projects[slug]; ok {
+					project = slug
+				}
+			}
+			// Fallback to interactive selector
+			if project == "" {
+				project, err = selectProject(projects)
+				if err != nil {
+					return err
+				}
 			}
 		}
 

@@ -307,14 +307,19 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithContext = Dep
             if resp.status_code == 200:
                 pat_info = resp.json()
                 if not pat_info.get("active", False):
+                    logger.warning("GitLab connect failed: token is revoked/inactive (url=%s)", gitlab_url)
                     raise HTTPException(status_code=401, detail="Token is revoked or inactive")
                 if "api" not in pat_info.get("scopes", []):
+                    logger.warning("GitLab connect failed: token missing 'api' scope (url=%s, scopes=%s)", gitlab_url, pat_info.get("scopes"))
                     raise HTTPException(status_code=401, detail="Token needs 'api' scope")
             elif resp.status_code in (401, 403):
+                logger.warning("GitLab connect failed: invalid token (url=%s, status=%d, body=%s)", gitlab_url, resp.status_code, resp.text[:200])
                 raise HTTPException(status_code=401, detail="Invalid token")
             else:
+                logger.warning("GitLab connect failed: unexpected status (url=%s, status=%d, body=%s)", gitlab_url, resp.status_code, resp.text[:200])
                 raise HTTPException(status_code=502, detail=f"GitLab API error: HTTP {resp.status_code}")
     except httpx.RequestError as e:
+        logger.warning("GitLab connect failed: connection error (url=%s, error=%s)", gitlab_url, e)
         raise HTTPException(status_code=502, detail=f"Could not reach GitLab at {gitlab_url}: {e}")
 
     from app.database import update_organization

@@ -116,7 +116,6 @@ var authLoginCmd = &cobra.Command{
 					}
 
 					fmt.Printf("Logged in as %s (%s)\n", user.Name, user.Email)
-					fmt.Println("Organization will be detected automatically from your project.")
 					return nil
 				}
 			}

@@ -537,3 +537,32 @@ async def delete_owner(user_id: int, user: UserWithContext = Depends(require_sup
         raise HTTPException(status_code=400, detail="Cannot delete a superadmin")
     await db.delete_user(user_id)
     return {"success": True}
+
+
+# ---- API Tokens (user-scoped) ----
+
+class _CreateTokenBody(BaseModel):
+    name: str
+
+
+@router.get("/tokens")
+async def list_tokens(user: UserWithContext = Depends(get_current_user)):
+    """List all API tokens for the current user."""
+    tokens = await db.list_api_tokens(user.id)
+    return {"tokens": tokens}
+
+
+@router.post("/tokens")
+async def create_token(body: _CreateTokenBody, user: UserWithContext = Depends(get_current_user)):
+    """Create an API token for the current user."""
+    token_id, raw_token = await db.create_api_token(user.id, None, body.name)
+    return {"token_id": token_id, "token": raw_token}
+
+
+@router.delete("/tokens/{token_id}")
+async def delete_token(token_id: int, user: UserWithContext = Depends(get_current_user)):
+    """Delete an API token."""
+    deleted = await db.delete_api_token(token_id, user.id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Token not found")
+    return {"success": True}

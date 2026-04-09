@@ -158,12 +158,12 @@ async def validate_api_token(raw_token: str) -> Optional[dict]:
     return token
 
 
-async def list_api_tokens(user_id: int, org_id: int) -> list[dict]:
+async def list_api_tokens(user_id: int) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(
         """SELECT id, user_id, organization_id, name, token_prefix, created_at, last_used_at
-           FROM api_tokens WHERE user_id = $1 AND organization_id = $2 ORDER BY id""",
-        user_id, org_id,
+           FROM api_tokens WHERE user_id = $1 ORDER BY id""",
+        user_id,
     )
     return [_row_to_dict(r) for r in rows]
 

@@ -649,7 +649,7 @@ class PreviewDeployer:
                     from arq import create_pool as create_arq_pool
                     from arq.connections import RedisSettings
                     pool = await create_arq_pool(RedisSettings.from_dsn(settings.valkey_url))
-                    await pool.enqueue_job("task_replenish_warm_pool")
+                    await pool.enqueue_job("task_replenish_warm_pool", _job_id="replenish_warm_pool")
                     await pool.aclose()
                     logger.info("Enqueued warm pool replenishment after claim")
                 except Exception as e:

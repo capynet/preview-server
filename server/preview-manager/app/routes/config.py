@@ -6,7 +6,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.auth.dependencies import require_org_role, require_project_role, get_org_context, require_superadmin
-from app.auth.models import OrgRole, UserWithContext, CreateTokenRequest
+from app.auth.models import OrgRole, UserWithContext
 from app.database import (
     update_organization,
     get_project_by_slug,
@@ -15,7 +15,6 @@ from app.database import (
     update_org_require_ci,
     update_project_require_ci,
 )
-from app.auth import database as auth_db
 
 logger = logging.getLogger(__name__)
 
@@ -263,44 +262,6 @@ async def save_project_public_paths(
     await caddy_manager.refresh_project_public_paths(user.org.id, project, paths)
 
     return {"success": True, "public_paths": paths}
-
-
-# ---------------------------------------------------------------------------
-# API tokens (per user, scoped to org)
-# ---------------------------------------------------------------------------
-
-
-@router.get("/api/orgs/{org}/tokens")
-async def list_tokens(
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
-):
-    """List API tokens for the current user in this org."""
-    tokens = await auth_db.list_api_tokens(user.id, user.org.id)
-    return {"tokens": tokens}
-
-
-@router.post("/api/orgs/{org}/tokens")
-async def create_token(
-    body: CreateTokenRequest,
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
-):
-    """Create an API token for the current user in this org."""
-    token_id, raw_token = await auth_db.create_api_token(
-        user.id, user.org.id, body.name
-    )
-    return {"token_id": token_id, "token": raw_token}
-
-
-@router.delete("/api/orgs/{org}/tokens/{token_id}")
-async def delete_token(
-    token_id: int,
-    user: UserWithContext = Depends(require_org_role(OrgRole.owner)),
-):
-    """Delete an API token."""
-    deleted = await auth_db.delete_api_token(token_id, user.id)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Token not found")
-    return {"success": True}
 
 
 # ---------------------------------------------------------------------------
