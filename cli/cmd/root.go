@@ -301,7 +301,7 @@ func parsePreviewArg(arg string) (string, int, error) {
 // printActionResult prints an action result in a consistent format.
 func printActionResult(result *client.ActionResult) {
 	if result.Output != "" {
-		fmt.Print(result.Output)
+		fmt.Println(result.Output)
 	}
 	if !result.Success && result.Error != "" {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", result.Error)

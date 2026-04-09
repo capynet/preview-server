@@ -41,6 +41,9 @@ Is the UI of preview manager ([server](server))
 -  hay jobs que no son cruciales para considerar el NMR valido a la hora de crear un mr. A lo mjor estaria bien poder especificar en preview.yml los job "required". Se entiende?
 - 
 # TODO
+- Reemplazar PAT por oauth en la conexion de gitlab?
+- Cuando abrimos ssh a un preview (drush ssh) me gustaria tener una consola con colores.
+- El cli deberia servirse desde algun lugar estatico. Como empiecen a descargarlo de forma masica me va a colapsar el server
 - Gitlab tiene un nuevo tipo de token granular. hay que darle soporte. 
 - Necesito en la UI alguna forma de recibir feedback. Algun popup que permita rapidamente attachear un video o imagen y algun comentario. Es para que los usuarios puedan decirme qwue necesita ser mejorado o arreglado. 
 - Necesito que el cli tenga autoreport de errores. Antes de usarlo imagino que primero vamos a tener que agregar un mensaje que el usuario confirme permitiendonos enviar informacion anonimizada para mejorar la herramienta. Una vez que lo haya aprobado, si algun comando falla o crashea deberia enviarse informacion util que nos permita arreglar el error para el futuro. 

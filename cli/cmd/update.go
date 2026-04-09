@@ -9,7 +9,7 @@ import (
 
 var updateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Update the preview with the latest code (no DB reimport)",
+	Short: "Update the preview pulling code and preserving DB and files",
 	Long: `Update the preview environment with the latest code from the current branch.
 
 This syncs the code, runs composer install, and executes deploy scripts

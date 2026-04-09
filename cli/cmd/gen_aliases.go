@@ -181,9 +181,9 @@ Examples:
 		fmt.Fprintf(os.Stderr, "Written to %s\n\n", relPath)
 		fmt.Fprintf(os.Stderr, "Available aliases:\n")
 		for _, a := range aliases {
-			fmt.Fprintf(os.Stderr, "  @preview.%-12s %s\n", a.name, a.uri)
+			fmt.Fprintf(os.Stderr, "  @druploy.%-12s %s\n", a.name, a.uri)
 		}
-		fmt.Fprintf(os.Stderr, "\nTest with: drush @preview.default status\n")
+		fmt.Fprintf(os.Stderr, "\nTest with: drush @druploy.default status\n")
 
 		return nil
 	},

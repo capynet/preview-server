@@ -337,6 +337,7 @@ cat > /usr/local/bin/ssh-shell <<'SHELL_EOF'
 export GIT_CONFIG_COUNT=1
 export GIT_CONFIG_KEY_0=safe.directory
 export GIT_CONFIG_VALUE_0=/var/www/html
+export PATH="/var/www/html/vendor/bin:$PATH"
 cd /var/www/html
 if [ -z "$SSH_ORIGINAL_COMMAND" ]; then
     exec bash -l
@@ -376,6 +377,10 @@ echo "OpenLiteSpeed process exited"
 exit 1
 ENTRY_EOF
 RUN chmod +x /entrypoint.sh
+
+# Colored prompt and vendor/bin in PATH for all SSH sessions (interactive + non-login)
+RUN echo 'export PS1="\[\033[01;32m\]preview\[\033[00m\]@\[\033[01;34m\]\h\[\033[00m\]:\[\033[01;33m\]\w\[\033[00m\]\$ "' >> /etc/bash.bashrc \
+    && echo 'export PATH="/var/www/html/vendor/bin:$PATH"' >> /etc/bash.bashrc
 
 WORKDIR /var/www/html
 ENV PATH="/var/www/html/vendor/bin:${PATH}"
