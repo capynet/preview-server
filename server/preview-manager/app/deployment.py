@@ -1431,6 +1431,11 @@ class PreviewDeployer:
             "url": self.preview_url,
         }
 
+        # Clear CI gating state when starting a new deploy — this ensures stale
+        # ci_status='failed' from a previous gated deploy doesn't persist.
+        if status == "creating":
+            fields["ci_status"] = None
+
         if self.mr_iid is not None:
             fields["mr_id"] = self.mr_iid
         if self.mr_title is not None:

@@ -42,6 +42,7 @@ Is the UI of preview manager ([server](server))
 - Ver si puedo loguearme con la cuenta de gitlab.
 
 # TODO
+- Cuando un MR se cierre estaria bien borrar el comentario que hay de druplpy. 
 - Reemplazar PAT por oauth en la conexion de gitlab?
 - Cuando abrimos ssh a un preview (drush ssh) me gustaria tener una consola con colores.
 - El cli deberia servirse desde algun lugar estatico. Como empiecen a descargarlo de forma masica me va a colapsar el server
