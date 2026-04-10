@@ -214,6 +214,60 @@ async def save_project_env_vars(
 
 
 # ---------------------------------------------------------------------------
+# Project cron jobs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/projects/{project}/cron-jobs")
+async def get_project_cron_jobs(
+    project: str,
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
+):
+    """Get cron jobs for a project."""
+    from app.cron_jobs import load_cron_jobs
+
+    proj = await get_project_by_slug(user.org.id, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"cron_jobs": load_cron_jobs(proj.get("cron_jobs"))}
+
+
+@router.put("/api/orgs/{org}/projects/{project}/cron-jobs")
+async def save_project_cron_jobs(
+    project: str,
+    request: Request,
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
+):
+    """Save cron jobs for a project."""
+    from app.cron_jobs import CronJobValidationError, validate_cron_jobs
+
+    body = await request.json()
+    try:
+        clean = validate_cron_jobs(body.get("cron_jobs"))
+    except CronJobValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await upsert_project(user.org.id, project, cron_jobs=json.dumps(clean))
+
+    from app.database import get_all_previews
+
+    all_previews = await get_all_previews(org_id=user.org.id)
+    active_previews = [
+        p["preview_name"]
+        for p in all_previews
+        if p.get("project_slug") == project
+        and p["status"] in ("active", "failed")
+    ]
+
+    return {
+        "success": True,
+        "cron_jobs": clean,
+        "needs_rebuild": len(active_previews) > 0,
+        "affected_previews": active_previews,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Project public paths (bypass forward_auth)
 # ---------------------------------------------------------------------------
 

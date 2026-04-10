@@ -132,6 +132,24 @@ RUN printf '#!/bin/bash\nsource /usr/local/bin/nvm-auto.sh\nnvm "$@"\n' > /usr/l
         && chmod +x /usr/local/bin/$cmd; \
     done
 
+# Install supercronic (cron scheduler for containers)
+# https://github.com/aptible/supercronic
+ARG SUPERCRONIC_VERSION=0.2.33
+RUN set -e \
+    && ARCH=$(dpkg --print-architecture) \
+    && case "${ARCH}" in \
+         amd64) SUPERCRONIC_ARCH=linux-amd64; SUPERCRONIC_SHA=71b0d58cc53f6bd72cf2f293e09e294b79c666d8 ;; \
+         arm64) SUPERCRONIC_ARCH=linux-arm64; SUPERCRONIC_SHA=e0f0c06ebc5627e43b25475711e694450489ab00 ;; \
+         *) echo "Unsupported arch: ${ARCH}"; exit 1 ;; \
+       esac \
+    && curl -fsSLO "https://github.com/aptible/supercronic/releases/download/v${SUPERCRONIC_VERSION}/supercronic-${SUPERCRONIC_ARCH}" \
+    && echo "${SUPERCRONIC_SHA}  supercronic-${SUPERCRONIC_ARCH}" | sha1sum -c - \
+    && chmod +x "supercronic-${SUPERCRONIC_ARCH}" \
+    && mv "supercronic-${SUPERCRONIC_ARCH}" /usr/local/bin/supercronic \
+    && mkdir -p /etc/supercronic \
+    && touch /var/log/supercronic.log \
+    && chown www-data:www-data /var/log/supercronic.log
+
 # Install Composer
 COPY --from=composer /usr/bin/composer /usr/bin/composer
 
@@ -347,6 +365,16 @@ fi
 SHELL_EOF
 chmod +x /usr/local/bin/ssh-shell
 /usr/sbin/sshd
+
+# Start supercronic if a non-empty crontab is bind-mounted at /etc/supercronic/crontab.
+# The VM agent (druploy-agent) writes the crontab before starting the container
+# and also restarts this process via `docker exec` when the user edits cron jobs.
+if [ -s /etc/supercronic/crontab ]; then
+    touch /var/log/supercronic.log
+    chown www-data:www-data /var/log/supercronic.log
+    su -s /bin/bash www-data -c \
+        "nohup setsid /usr/local/bin/supercronic -passthrough-logs /etc/supercronic/crontab >> /var/log/supercronic.log 2>&1 < /dev/null &"
+fi
 
 # Ensure runtime dirs exist
 mkdir -p /tmp/lshttpd/swap

@@ -813,7 +813,10 @@ class PreviewDeployer:
 
         # Load extra env vars from project and preview
         extra_env: dict[str, str] = {}
+        cron_jobs_merged: list[dict] = []
         try:
+            from app.cron_jobs import load_cron_jobs, merge_cron_jobs
+
             proj = await get_project(self.project_id)
             if proj and proj.get("env_vars"):
                 project_env = proj["env_vars"]
@@ -827,6 +830,10 @@ class PreviewDeployer:
                 if isinstance(preview_env, str):
                     preview_env = json.loads(preview_env)
                 extra_env.update(preview_env)
+
+            project_crons = load_cron_jobs(proj.get("cron_jobs")) if proj else []
+            preview_crons = load_cron_jobs(preview_row.get("cron_jobs")) if preview_row else []
+            cron_jobs_merged = merge_cron_jobs(project_crons, preview_crons)
         except Exception as e:
             logger.warning(f"Error loading extra env vars for agent job: {e}")
 
@@ -883,6 +890,7 @@ class PreviewDeployer:
             "terminal_secret": terminal_secret,
             "storage": storage_config,
             "env_vars": extra_env,
+            "cron_jobs": cron_jobs_merged,
             "callback_url": f"ws://91.99.157.66:8000/ws/internal/agent",
             "callback_token": self._generate_callback_token(),
         }

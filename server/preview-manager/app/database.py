@@ -471,8 +471,8 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
                 created_at, last_deployed_at,
                 last_deployment_status, last_deployment_error,
                 last_deployment_duration, last_deployment_completed_at,
-                auto_update, pinned, env_vars, stack_info, domain_aliases, ci_status)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+                auto_update, pinned, env_vars, stack_info, domain_aliases, ci_status, cron_jobs)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
                RETURNING *""",
             project_id,
             preview_name,
@@ -496,6 +496,7 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
             fields.get("stack_info"),
             fields.get("domain_aliases"),
             fields.get("ci_status"),
+            fields.get("cron_jobs", "[]"),
         )
         return _row_to_dict(row)
 
@@ -736,9 +737,9 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
         await pool.execute(
             """INSERT INTO projects
                (organization_id, slug, name, gitlab_project_id, gitlab_project_path,
-                gitlab_web_url, gitlab_default_branch, env_vars,
+                gitlab_web_url, gitlab_default_branch, env_vars, cron_jobs,
                 created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
             org_id, slug,
             fields.get("name"),
             fields.get("gitlab_project_id"),
@@ -746,6 +747,7 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
             fields.get("gitlab_web_url"),
             fields.get("gitlab_default_branch", "main"),
             fields.get("env_vars", "{}"),
+            fields.get("cron_jobs", "[]"),
             now, now,
         )
     row = await pool.fetchrow(

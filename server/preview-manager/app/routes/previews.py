@@ -12,6 +12,11 @@ from fastapi.responses import StreamingResponse
 from typing import Optional
 from pydantic import BaseModel
 
+from app.cron_jobs import (
+    CronJobValidationError,
+    load_cron_jobs,
+    validate_cron_jobs,
+)
 from app.docker_compose import container_prefix
 from app.models import PreviewInfo
 from app.state import PreviewStateManager
@@ -112,6 +117,8 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         except (json.JSONDecodeError, TypeError):
             env_vars = {}
 
+    cron_jobs = load_cron_jobs(state.get("cron_jobs"))
+
     org_slug = state.get("org_slug", "")
     project_slug = state.get("project_slug", state.get("project", ""))
     url_hash = state.get("url_hash", "")
@@ -167,6 +174,7 @@ def _build_preview_info(state: dict) -> PreviewInfo:
         auto_update=bool(state.get("auto_update", 1)),
         pinned=bool(state.get("pinned", 0)),
         env_vars=env_vars,
+        cron_jobs=cron_jobs,
         vm_ip=state.get("vm_ip"),
         post_deploy_status=state.get("post_deploy_status"),
         gitlab_project_path=state.get("gitlab_project_path"),
@@ -477,6 +485,7 @@ class UpdatePreviewRequest(BaseModel):
     auto_update: Optional[bool] = None
     pinned: Optional[bool] = None
     env_vars: Optional[dict[str, str]] = None
+    cron_jobs: Optional[list[dict]] = None
 
 
 @router.patch("/previews/{preview_name}")
@@ -504,6 +513,12 @@ async def update_preview_endpoint(
             updates["last_accessed_at"] = datetime.now(timezone.utc).isoformat()
     if body.env_vars is not None:
         updates["env_vars"] = json.dumps(body.env_vars)
+    if body.cron_jobs is not None:
+        try:
+            clean = validate_cron_jobs(body.cron_jobs)
+        except CronJobValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        updates["cron_jobs"] = json.dumps(clean)
 
     if updates:
         await PreviewStateManager.save_state(project_id, preview_name, **updates)
@@ -516,7 +531,7 @@ async def update_preview_endpoint(
     updated["gitlab_project_path"] = proj.get("gitlab_project_path")
     result = _build_preview_info(updated)
 
-    if body.env_vars is not None:
+    if body.env_vars is not None or body.cron_jobs is not None:
         return {**result.model_dump(), "needs_rebuild": True}
 
     return result

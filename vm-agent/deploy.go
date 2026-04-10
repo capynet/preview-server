@@ -154,6 +154,7 @@ func (d *Deployer) deployNew() (bool, string) {
 	}{
 		{"git_clone", d.stepGitClone},
 		{"parse_config", d.stepParseConfig},
+		{"write_crontab", d.stepWriteCrontab},
 		{"generate_compose", d.stepGenerateCompose},
 		{"generate_settings", d.stepGenerateSettings},
 		{"docker_pull", d.stepDockerPull},
@@ -163,6 +164,7 @@ func (d *Deployer) deployNew() (bool, string) {
 		{"import_files", d.stepImportFiles},
 		{"deploy_script", func() error { return d.stepDeployScript("new") }},
 		{"restart_webserver", d.stepRestartWebserver},
+		{"reload_cron", d.stepReloadCron},
 		{"post_deploy", func() error { return d.stepPostDeploy("new") }},
 	}
 	return d.runSteps(steps)
@@ -175,11 +177,13 @@ func (d *Deployer) deployUpdate() (bool, string) {
 	}{
 		{"git_fetch", d.stepGitClone},
 		{"parse_config", d.stepParseConfig},
+		{"write_crontab", d.stepWriteCrontab},
 		{"generate_compose", d.stepGenerateCompose},
 		{"generate_settings", d.stepGenerateSettings},
 		{"docker_up", d.stepDockerUp},
 		{"deploy_script", func() error { return d.stepDeployScript("update") }},
 		{"restart_webserver", d.stepRestartWebserver},
+		{"reload_cron", d.stepReloadCron},
 		{"post_deploy", func() error { return d.stepPostDeploy("update") }},
 	}
 	return d.runSteps(steps)
@@ -234,6 +238,32 @@ func (d *Deployer) stepParseConfig() error {
 func (d *Deployer) stepGenerateCompose() error {
 	compose := GenerateDockerCompose(d.job, d.config)
 	return WriteDockerCompose(codeDir, compose)
+}
+
+func (d *Deployer) stepWriteCrontab() error {
+	if err := WriteCrontab(d.job.CronJobs); err != nil {
+		return err
+	}
+	enabled := 0
+	for _, j := range d.job.CronJobs {
+		if j.Enabled {
+			enabled++
+		}
+	}
+	d.log(fmt.Sprintf("Wrote crontab with %d active job(s).\n", enabled))
+	return nil
+}
+
+func (d *Deployer) stepReloadCron() error {
+	prefix := d.job.URLHash
+	phpContainer := prefix + "-php"
+	if err := ReloadSupercronic(phpContainer); err != nil {
+		// Non-fatal: cron failures should not break the deploy.
+		d.log(fmt.Sprintf("⚠ Failed to reload cron (non-fatal): %s\n", err))
+		return nil
+	}
+	d.log("Reloaded supercronic.\n")
+	return nil
 }
 
 func (d *Deployer) stepGenerateSettings() error {
@@ -518,6 +548,7 @@ func (d *Deployer) stepStart(name string) {
 		"git_clone":         "Cloning repository",
 		"git_fetch":         "Fetching latest changes",
 		"parse_config":      "Parsing configuration",
+		"write_crontab":     "Writing crontab",
 		"generate_compose":  "Configuring environment",
 		"generate_settings": "Generating settings",
 		"docker_pull":       "Pulling Docker images",
@@ -525,9 +556,10 @@ func (d *Deployer) stepStart(name string) {
 		"wait_for_db":       "Waiting for database",
 		"import_db":         "Importing database",
 		"import_files":      "Importing files",
-		"deploy_script":      "Running deploy script",
-		"restart_webserver":  "Restarting webserver",
-		"post_deploy":        "Running post-deploy script",
+		"deploy_script":     "Running deploy script",
+		"restart_webserver": "Restarting webserver",
+		"reload_cron":       "Reloading cron",
+		"post_deploy":       "Running post-deploy script",
 	}
 	label := labels[name]
 	if label == "" {
@@ -539,13 +571,15 @@ func (d *Deployer) stepStart(name string) {
 func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg string) {
 	labels := map[string]string{
 		"git_clone": "Cloning repository", "git_fetch": "Fetching latest changes",
-		"parse_config": "Parsing configuration", "generate_compose": "Configuring environment",
+		"parse_config": "Parsing configuration", "write_crontab": "Writing crontab",
+		"generate_compose":  "Configuring environment",
 		"generate_settings": "Generating settings", "docker_pull": "Pulling Docker images",
 		"docker_up": "Starting containers", "wait_for_db": "Waiting for database",
 		"import_db": "Importing database", "import_files": "Importing files",
-		"deploy_script":      "Running deploy script",
-		"restart_webserver":  "Restarting webserver",
-		"post_deploy":        "Running post-deploy script",
+		"deploy_script":     "Running deploy script",
+		"restart_webserver": "Restarting webserver",
+		"reload_cron":       "Reloading cron",
+		"post_deploy":       "Running post-deploy script",
 	}
 	label := labels[name]
 	if label == "" {

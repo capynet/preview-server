@@ -35,6 +35,8 @@ type DeployJob struct {
 
 	EnvVars map[string]string `json:"env_vars"`
 
+	CronJobs []CronJob `json:"cron_jobs"`
+
 	CallbackURL   string `json:"callback_url"`
 	CallbackToken string `json:"callback_token"`
 }
@@ -71,6 +73,7 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 	phpEnv := map[string]string{
 		"HOST_UID":                    hostUID,
 		"HOST_GID":                    hostGID,
+		"TZ":                          "UTC",
 		"PREV_IS_PREVIEW":            "true",
 		"PREV_PROJECT_NAME":          job.ProjectSlug,
 		"PREV_PREVIEW_NAME":          job.PreviewName,
@@ -136,10 +139,13 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 			"php": map[string]interface{}{
 				"image":          registryImage(job.DockerRegistry, fmt.Sprintf("druploy-drupal:php%s", cfg.PHPVersion)),
 				"container_name": prefix + "-php",
-				"volumes":        []string{"./:/var/www/html"},
-				"environment":    phpEnv,
-				"ports":          []string{"80:80", "2222:2222"},
-				"restart":        "unless-stopped",
+				"volumes": []string{
+					"./:/var/www/html",
+					CrontabHostPath + ":" + CrontabContainerPath + ":ro",
+				},
+				"environment": phpEnv,
+				"ports":       []string{"80:80", "2222:2222"},
+				"restart":     "unless-stopped",
 			},
 			"db": map[string]interface{}{
 				"image":          dbImage,

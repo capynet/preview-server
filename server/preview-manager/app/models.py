@@ -23,6 +23,7 @@ class PreviewInfo(BaseModel):
     auto_update: bool = True
     pinned: bool = False
     env_vars: dict[str, str] = {}
+    cron_jobs: list[dict] = []
     mr_title: Optional[str] = None
     mr_url: Optional[str] = None
     gitlab_project_path: Optional[str] = None
