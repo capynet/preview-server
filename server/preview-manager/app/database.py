@@ -738,8 +738,9 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
             """INSERT INTO projects
                (organization_id, slug, name, gitlab_project_id, gitlab_project_path,
                 gitlab_web_url, gitlab_default_branch, env_vars, cron_jobs,
+                skip_source_branches, skip_target_branches,
                 created_at, updated_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)""",
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)""",
             org_id, slug,
             fields.get("name"),
             fields.get("gitlab_project_id"),
@@ -748,6 +749,8 @@ async def upsert_project(org_id: int, slug: str, **fields) -> dict:
             fields.get("gitlab_default_branch", "main"),
             fields.get("env_vars", "{}"),
             fields.get("cron_jobs", "[]"),
+            fields.get("skip_source_branches", "[]"),
+            fields.get("skip_target_branches", "[]"),
             now, now,
         )
     row = await pool.fetchrow(

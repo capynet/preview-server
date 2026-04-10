@@ -408,6 +408,9 @@ async def _handle_mr_event(
     project_path: str,
 ):
     """Handle merge request events."""
+    from app.database import get_project
+    from app.preview_rules import should_skip_auto_creation
+
     attrs = payload.get("object_attributes", {})
     mr_iid = attrs.get("iid")
     action = attrs.get("action")
@@ -415,6 +418,8 @@ async def _handle_mr_event(
     target_branch = attrs.get("target_branch")
     commit_sha = attrs.get("last_commit", {}).get("id")
     mr_title = attrs.get("title")
+    # GitLab exposes draft status under `draft` (newer) and `work_in_progress` (legacy)
+    is_draft = bool(attrs.get("draft") or attrs.get("work_in_progress"))
 
     preview_name = f"mr-{mr_iid}"
     state = attrs.get("state")
@@ -430,6 +435,26 @@ async def _handle_mr_event(
             existing = await get_preview(project_id, preview_name)
             if existing and not existing.get("auto_update", 1):
                 return {"status": "ignored", "reason": "auto_update disabled"}
+
+        # Project-level skip rules only apply to auto-creation. If the preview
+        # already exists (e.g. user created it manually from the UI), updates
+        # flow through normally regardless of the rules.
+        existing_preview = await get_preview(project_id, preview_name)
+        if not existing_preview:
+            project_row = await get_project(project_id)
+            skip_reason = should_skip_auto_creation(
+                project_row or {}, source_branch, target_branch, is_draft,
+            )
+            if skip_reason:
+                logger.info(
+                    f"Skipping auto-creation for {project_slug}/{preview_name}: "
+                    f"{skip_reason} (source={source_branch}, target={target_branch}, draft={is_draft})"
+                )
+                return {
+                    "status": "ignored",
+                    "reason": f"auto-creation skipped: {skip_reason}",
+                    "mr_iid": mr_iid,
+                }
 
         # Check if CI gating is enabled (DB setting or preview.yml)
         from app.database import get_effective_require_ci

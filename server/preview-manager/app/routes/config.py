@@ -268,6 +268,52 @@ async def save_project_cron_jobs(
 
 
 # ---------------------------------------------------------------------------
+# Project auto-preview rules (webhook skip patterns)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/orgs/{org}/projects/{project}/preview-rules")
+async def get_project_preview_rules(
+    project: str,
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
+):
+    """Get auto-preview skip rules for a project."""
+    from app.preview_rules import load_patterns
+
+    proj = await get_project_by_slug(user.org.id, project)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {
+        "skip_source_branches": load_patterns(proj.get("skip_source_branches")),
+        "skip_target_branches": load_patterns(proj.get("skip_target_branches")),
+    }
+
+
+@router.put("/api/orgs/{org}/projects/{project}/preview-rules")
+async def save_project_preview_rules(
+    project: str,
+    request: Request,
+    user: UserWithContext = Depends(require_project_role(OrgRole.member)),
+):
+    """Save auto-preview skip rules for a project."""
+    from app.preview_rules import PreviewRulesValidationError, validate_preview_rules
+
+    body = await request.json()
+    try:
+        clean = validate_preview_rules(body)
+    except PreviewRulesValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await upsert_project(
+        user.org.id, project,
+        skip_source_branches=json.dumps(clean["skip_source_branches"]),
+        skip_target_branches=json.dumps(clean["skip_target_branches"]),
+    )
+
+    return {"success": True, **clean}
+
+
+# ---------------------------------------------------------------------------
 # Project public paths (bypass forward_auth)
 # ---------------------------------------------------------------------------
 
