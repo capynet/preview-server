@@ -33,14 +33,15 @@ Is the UI of preview manager ([server](server))
 # TODO antes de prod. 
 - Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. No hace falta que cierres esta pestaña, tan rponto como acabe el build la pagina se va a mostrar"
 - Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
-- Agregar cron a los preview.
 - Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos. ademas deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
 - Esto va a los casos de uso para publicitar: Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos.
--  hay jobs que no son cruciales para considerar el NMR valido a la hora de crear un mr. A lo mjor estaria bien poder especificar en preview.yml los job "required". Se entiende?
 - revisa la documentacion y añadir la documentacion de como configurar gitlab.
 - Ver si puedo loguearme con la cuenta de gitlab.
 
 # TODO
+- Srupal tiene un scon que se podria configurar automaticamente como una configuracion inicial del proyecto. 
+- Hay logs dentor del container que estaria bien poder exponer mediante "preview logs (todos), preview logs cron" etc o incluso podes hacer preview logs pull para descargarlos localmente y rpocesarlos. 
+- Los env var no se pueden deshabilitar. deberia poder estar activo/inactivo por si en algun preview por ejemplo no la quiero porque tengo que hacer pruebas que necesitan ese valor ausente. 
 - Cuando un MR se cierre estaria bien borrar el comentario que hay de druplpy. 
 - Reemplazar PAT por oauth en la conexion de gitlab?
 - Cuando abrimos ssh a un preview (drush ssh) me gustaria tener una consola con colores.
@@ -175,4 +176,8 @@ Otro asunto para resolver:
     4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
 
 
- 
+
+
+a nivel proyecto Necesito:
+Poder indicar que MR no crean un preview automaticmanete. 
+deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
