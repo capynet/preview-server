@@ -5,6 +5,9 @@ import logging
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
+import yaml
+
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from config.settings import settings
@@ -19,6 +22,36 @@ from app.database import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+
+
+async def _fetch_required_ci_jobs(org_id: int, gitlab_project_path: str, ref: str) -> list[str] | None:
+    """Read preview.yml from GitLab API and return ci.required_jobs list, or None if not configured."""
+    try:
+        from app.routes.gitlab import _get_org_gitlab_token
+        gitlab_url, token = await _get_org_gitlab_token(org_id)
+        encoded_path = gitlab_project_path.replace("/", "%2F")
+        url = f"{gitlab_url}/api/v4/projects/{encoded_path}/repository/files/druploy.yml/raw"
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(url, headers={"PRIVATE-TOKEN": token}, params={"ref": ref})
+            if resp.status_code == 404:
+                return None
+            if resp.status_code != 200:
+                logger.warning(f"Failed to fetch preview.yml from GitLab: HTTP {resp.status_code}")
+                return None
+            config = yaml.safe_load(resp.text)
+            if not isinstance(config, dict):
+                return None
+            ci = config.get("ci")
+            if not isinstance(ci, dict):
+                return None
+            jobs = ci.get("required_jobs")
+            if isinstance(jobs, list) and all(isinstance(j, str) for j in jobs):
+                return jobs
+            return None
+    except Exception as e:
+        logger.warning(f"Error fetching preview.yml for CI gating: {e}")
+        return None
+
 
 async def clear_deploy_lock(project_slug: str, preview_name: str):
     """Remove the deploy lock for a preview (e.g. after deletion).
@@ -398,11 +431,12 @@ async def _handle_mr_event(
             if existing and not existing.get("auto_update", 1):
                 return {"status": "ignored", "reason": "auto_update disabled"}
 
-        # Check if CI gating is enabled
+        # Check if CI gating is enabled (DB setting or preview.yml)
         from app.database import get_effective_require_ci
         require_ci = await get_effective_require_ci(org_id, project_id)
+        required_jobs = await _fetch_required_ci_jobs(org_id, project_path, source_branch)
 
-        if require_ci:
+        if require_ci or required_jobs:
             # Create/update the preview record so it shows in the UI as waiting
             from app.state import PreviewStateManager
             from app.websockets import preview_list_manager
@@ -464,15 +498,39 @@ async def _handle_pipeline_event(
     if not waiting:
         return {"status": "ignored", "reason": "no previews waiting for CI"}
 
+    # Check if preview.yml defines specific required jobs
+    required_jobs = await _fetch_required_ci_jobs(org_id, project_path, ref)
+    builds = payload.get("builds", [])
+
+    if pipeline_status == "failed" and required_jobs:
+        # Only check required jobs — ignore failures in non-required jobs
+        failed_required = [
+            b["name"] for b in builds
+            if b["name"] in required_jobs and b.get("status") == "failed"
+        ]
+        if not failed_required:
+            # All required jobs passed, treat as success
+            logger.info(
+                f"CI gating: pipeline failed but required jobs all passed "
+                f"(required={required_jobs}, failed_required=none)"
+            )
+            pipeline_status = "success"
+        else:
+            logger.info(
+                f"CI gating: required jobs failed: {failed_required}"
+            )
+
     if pipeline_status == "failed":
+        failed_jobs = [b["name"] for b in builds if b.get("status") == "failed"]
+        error_msg = f"CI pipeline failed (jobs: {', '.join(failed_jobs)})" if failed_jobs else "CI pipeline failed"
         for preview in waiting:
             await update_preview_ci_status(
                 project_id, preview["preview_name"],
                 ci_status="failed", status="failed",
-                error="CI pipeline failed",
+                error=error_msg,
             )
         await preview_list_manager.force_broadcast()
-        return {"status": "ok", "action": "ci_failed", "branch": ref}
+        return {"status": "ok", "action": "ci_failed", "branch": ref, "failed_jobs": failed_jobs}
 
     # success
     triggered = []

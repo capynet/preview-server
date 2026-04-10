@@ -262,6 +262,16 @@ deploy:
 # post_deploy:
 #   new: scripts/druploy/new/post-deploy.sh
 #   update: scripts/druploy/update/post-deploy.sh
+
+# CI gating — wait for specific GitLab CI jobs to pass before deploying.
+# When configured, the preview is only created/updated if ALL listed jobs
+# in the pipeline finish with status "success". Other jobs can fail without
+# blocking the preview. If omitted, no CI gating is applied.
+#
+# ci:
+#   required_jobs:
+#     - build-composer
+#     - build-assets
 `
 }
 

@@ -524,6 +524,12 @@ async def update_preview_endpoint(
 
 def _get_preview_status(preview: dict) -> str:
     """Determine preview status based on VM state and active deployments."""
+    db_status = preview.get("status", "unknown")
+
+    # CI gating states take priority
+    if db_status in ("waiting_for_ci",) or (db_status == "failed" and preview.get("ci_status") == "failed"):
+        return db_status
+
     # If there's an active deployment running, the preview is building
     # But if post-deploy is running, the main deploy succeeded — preview is active
     latest_status = preview.get("latest_deployment_status")
@@ -534,10 +540,10 @@ def _get_preview_status(preview: dict) -> str:
 
     if preview.get("vm_id"):
         return "running"
-    elif preview.get("status") in ("creating", "pending"):
-        return preview["status"]
+    elif db_status in ("creating", "pending"):
+        return db_status
     else:
-        return preview.get("status", "unknown")
+        return db_status
 
 
 async def get_preview_list_base(
