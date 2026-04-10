@@ -471,8 +471,8 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
                 created_at, last_deployed_at,
                 last_deployment_status, last_deployment_error,
                 last_deployment_duration, last_deployment_completed_at,
-                auto_update, pinned, env_vars, stack_info, domain_aliases)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
+                auto_update, pinned, env_vars, stack_info, domain_aliases, ci_status)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
                RETURNING *""",
             project_id,
             preview_name,
@@ -495,6 +495,7 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
             fields.get("env_vars", "{}"),
             fields.get("stack_info"),
             fields.get("domain_aliases"),
+            fields.get("ci_status"),
         )
         return _row_to_dict(row)
 
@@ -859,21 +860,21 @@ async def update_preview_ci_status(
     status: str | None = None, error: str | None = None,
 ):
     pool = await get_pool()
-    if status and error:
-        await pool.execute(
-            "UPDATE previews SET ci_status = $3, status = $4, last_deployment_error = $5 WHERE project_id = $1 AND preview_name = $2",
-            project_id, preview_name, ci_status, status, error,
-        )
-    elif status:
-        await pool.execute(
-            "UPDATE previews SET ci_status = $3, status = $4 WHERE project_id = $1 AND preview_name = $2",
-            project_id, preview_name, ci_status, status,
-        )
-    else:
-        await pool.execute(
-            "UPDATE previews SET ci_status = $3 WHERE project_id = $1 AND preview_name = $2",
-            project_id, preview_name, ci_status,
-        )
+    sets = ["ci_status = $3"]
+    vals: list = [project_id, preview_name, ci_status]
+    idx = 4
+    if status:
+        sets.append(f"status = ${idx}")
+        vals.append(status)
+        idx += 1
+    if error:
+        sets.append(f"last_deployment_error = ${idx}")
+        vals.append(error)
+        idx += 1
+    await pool.execute(
+        f"UPDATE previews SET {', '.join(sets)} WHERE project_id = $1 AND preview_name = $2",
+        *vals,
+    )
 
 
 async def update_org_require_ci(org_id: int, enabled: bool):

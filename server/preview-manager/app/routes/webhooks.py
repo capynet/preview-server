@@ -441,16 +441,24 @@ async def _handle_mr_event(
             from app.state import PreviewStateManager
             from app.websockets import preview_list_manager
 
+            # If there was a previous successful deploy, keep its status —
+            # the existing preview stays available while we wait for CI.
+            existing = await get_preview(project_id, preview_name)
+            had_previous_deploy = existing and existing.get("last_deployed_at")
+
             url_hash = compute_url_hash(org_slug, project_slug, preview_name)
-            await PreviewStateManager.save_state(
-                project_id, preview_name,
+            save_fields = dict(
                 url_hash=url_hash,
                 mr_id=mr_iid,
                 mr_title=mr_title,
                 branch=source_branch,
                 commit_sha=commit_sha,
-                status="waiting_for_ci",
                 ci_status="waiting",
+            )
+            if not had_previous_deploy:
+                save_fields["status"] = "waiting_for_ci"
+            await PreviewStateManager.save_state(
+                project_id, preview_name, **save_fields,
             )
             await preview_list_manager.force_broadcast()
             logger.info(f"CI gating: {project_slug}/{preview_name} waiting for pipeline success")
@@ -524,9 +532,13 @@ async def _handle_pipeline_event(
         failed_jobs = [b["name"] for b in builds if b.get("status") == "failed"]
         error_msg = f"CI pipeline failed (jobs: {', '.join(failed_jobs)})" if failed_jobs else "CI pipeline failed"
         for preview in waiting:
+            # Only mark status as failed if there was no previous successful deploy.
+            # Otherwise keep the previous deploy active and only flag ci_status.
+            had_previous_deploy = bool(preview.get("last_deployed_at"))
+            new_status = None if had_previous_deploy else "failed"
             await update_preview_ci_status(
                 project_id, preview["preview_name"],
-                ci_status="failed", status="failed",
+                ci_status="failed", status=new_status,
                 error=error_msg,
             )
         await preview_list_manager.force_broadcast()

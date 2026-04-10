@@ -526,8 +526,8 @@ def _get_preview_status(preview: dict) -> str:
     """Determine preview status based on VM state and active deployments."""
     db_status = preview.get("status", "unknown")
 
-    # CI gating states take priority
-    if db_status in ("waiting_for_ci",) or (db_status == "failed" and preview.get("ci_status") == "failed"):
+    # CI gating "waiting" state takes priority (only set when no previous deploy)
+    if db_status == "waiting_for_ci":
         return db_status
 
     # If there's an active deployment running, the preview is building
@@ -535,11 +535,11 @@ def _get_preview_status(preview: dict) -> str:
     latest_status = preview.get("latest_deployment_status")
     if latest_status and latest_status == "running":
         if preview.get("post_deploy_status") and preview.get("vm_id"):
-            return "running"
+            return "active"
         return "building"
 
     if preview.get("vm_id"):
-        return "running"
+        return "active"
     elif db_status in ("creating", "pending"):
         return db_status
     else:
@@ -593,6 +593,7 @@ async def get_preview_list_base(
             "mr_id": row.get("mr_id"),
             "mr_title": row.get("mr_title"),
             "status": status,
+            "ci_status": row.get("ci_status"),
             "url": row["url"],
             "branch": row["branch"],
             "commit_sha": row["commit_sha"],

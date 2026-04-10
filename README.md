@@ -38,7 +38,9 @@ Is the UI of preview manager ([server](server))
 - Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos. ademas deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
 - Esto va a los casos de uso para publicitar: Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos.
 -  hay jobs que no son cruciales para considerar el NMR valido a la hora de crear un mr. A lo mjor estaria bien poder especificar en preview.yml los job "required". Se entiende?
-- 
+- revisa la documentacion y añadir la documentacion de como configurar gitlab.
+- Ver si puedo loguearme con la cuenta de gitlab.
+
 # TODO
 - Reemplazar PAT por oauth en la conexion de gitlab?
 - Cuando abrimos ssh a un preview (drush ssh) me gustaria tener una consola con colores.
