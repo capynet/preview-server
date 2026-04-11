@@ -191,6 +191,69 @@ class CaddyRouteManager:
 
         return routes
 
+    async def _hydrate_from_db(self) -> None:
+        """Rebuild the in-memory route map from the database.
+
+        Required because uvicorn runs multiple workers and each one holds its
+        own ``_preview_upstreams`` dict. Without this, worker B would miss
+        routes added by worker A and could silently leave stale Caddy routes
+        behind on delete. The DB row state (vm_ip, deleted_at) is the
+        authoritative source of truth.
+        """
+        from app.database import get_previews_with_active_vms, compute_url_hash
+        import json as _json
+
+        try:
+            active = await get_previews_with_active_vms()
+        except Exception as e:
+            logger.warning(f"Caddy hydrate: failed to read DB, keeping in-memory state: {e}")
+            return
+
+        self._preview_upstreams.clear()
+        self._domain_public_paths.clear()
+
+        for p in active:
+            if not p.get("vm_ip"):
+                continue
+            org_slug = p.get("org_slug", "")
+            project_slug = p.get("project_slug", "")
+            preview_name = p["preview_name"]
+            url_hash = p.get("url_hash") or compute_url_hash(org_slug, project_slug, preview_name)
+            domain = f"{url_hash}.{settings.preview_domain}"
+            self._preview_upstreams[domain] = (p["vm_ip"], 80)
+
+            # Domain aliases stored as JSON list on the preview row
+            aliases_raw = p.get("domain_aliases")
+            if aliases_raw:
+                try:
+                    aliases = _json.loads(aliases_raw) if isinstance(aliases_raw, str) else aliases_raw
+                    for a in aliases or []:
+                        alias_domain = f"{a}--{domain}"
+                        self._preview_upstreams[alias_domain] = (p["vm_ip"], 80)
+                except (ValueError, TypeError):
+                    pass
+
+            # Exposed services
+            expose_raw = p.get("expose_config")
+            if expose_raw:
+                try:
+                    expose = _json.loads(expose_raw) if isinstance(expose_raw, str) else expose_raw
+                    for svc_name, svc_port in (expose or {}).items():
+                        svc_domain = f"{svc_name}--{domain}"
+                        self._preview_upstreams[svc_domain] = (p["vm_ip"], int(svc_port))
+                except (ValueError, TypeError):
+                    pass
+
+            # Project public paths (for bypassing forward_auth)
+            pp_raw = p.get("project_public_paths")
+            if pp_raw:
+                try:
+                    pp = _json.loads(pp_raw) if isinstance(pp_raw, str) else pp_raw
+                    if pp:
+                        self._domain_public_paths[domain] = pp
+                except (ValueError, TypeError):
+                    pass
+
     async def _apply_routes(self) -> None:
         """Patch the wildcard route's handlers with current preview subroutes."""
         subroutes = self._build_wildcard_subroute_handlers()
@@ -229,19 +292,22 @@ class CaddyRouteManager:
         self, domain: str, upstream_ip: str, port: int = 80
     ) -> None:
         """Register a preview domain -> VM mapping and update Caddy."""
+        await self._hydrate_from_db()
         self._preview_upstreams[domain] = (upstream_ip, port)
         await self._apply_routes()
         logger.info("Added Caddy route: %s -> %s:%d", domain, upstream_ip, port)
 
     async def remove_preview_route(self, domain: str) -> None:
-        """Remove a preview domain mapping and update Caddy."""
-        if domain in self._preview_upstreams:
-            del self._preview_upstreams[domain]
-            self._domain_public_paths.pop(domain, None)
-            await self._apply_routes()
-            logger.info("Removed Caddy route: %s", domain)
-        else:
-            logger.debug("Caddy route not found for %s (already removed?)", domain)
+        """Remove a preview domain mapping and update Caddy.
+
+        Caller should have already updated the DB (e.g. soft-deleted the
+        preview). We rebuild the full route map from DB state so the
+        soft-deleted preview naturally falls out.
+        """
+        await self._hydrate_from_db()
+        self._domain_public_paths.pop(domain, None)
+        await self._apply_routes()
+        logger.info("Removed Caddy route: %s", domain)
 
     async def update_preview_route(
         self, domain: str, new_ip: str, port: int = 80
@@ -258,6 +324,7 @@ class CaddyRouteManager:
         public_paths: list[str] | None = None,
     ) -> None:
         """Add all routes for a preview: main domain + aliases + exposed services."""
+        await self._hydrate_from_db()
         domain = f"{url_hash}.{settings.preview_domain}"
         self._preview_upstreams[domain] = (upstream_ip, 80)
 

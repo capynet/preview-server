@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     # Warm pool — pre-created VMs ready for instant assignment
     warm_pool_size: int = 1  # Default only — actual value set via WARM_POOL_SIZE in .env (Ansible template)
 
+    # Soft-delete retention: previews marked as deleted are kept in the DB
+    # for this many days so users can resurrect them by visiting the URL.
+    # After the retention window the daily purge cron hard-deletes them.
+    soft_delete_retention_days: int = 30
+
     # Uvicorn
     uvicorn_workers: int = 2
 
