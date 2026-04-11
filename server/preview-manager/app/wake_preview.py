@@ -79,6 +79,99 @@ WAKE_PAGE_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+RESURRECT_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preview unavailable &mdash; {preview_name}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: #0a0a0a;
+            color: #e5e5e5;
+        }}
+        .container {{
+            text-align: center;
+            max-width: 560px;
+            padding: 2.5rem 2rem;
+        }}
+        .icon {{
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }}
+        h1 {{
+            font-size: 1.35rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }}
+        .meta {{
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            color: #888;
+            font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+        }}
+        p {{
+            color: #a0a0a0;
+            font-size: 0.95rem;
+            line-height: 1.55;
+            margin: 0.75rem 0;
+        }}
+        .note {{
+            color: #777;
+            font-size: 0.8rem;
+            margin-top: 1.5rem;
+        }}
+        form {{
+            margin-top: 2rem;
+        }}
+        button {{
+            background: #3b82f6;
+            color: white;
+            border: 0;
+            padding: 0.85rem 1.75rem;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.15s;
+        }}
+        button:hover {{
+            background: #2563eb;
+        }}
+        button:disabled {{
+            background: #444;
+            cursor: not-allowed;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">💤</div>
+        <h1>This preview doesn't currently exist</h1>
+        <div class="meta">{preview_name} &middot; {project} &middot; {branch}</div>
+        <p>
+            It was probably removed because it had been inactive for a while.
+            If you want to recreate it, confirm below and in a few minutes it will be available.
+        </p>
+        <p>
+            You don't need to close this tab — as soon as the build finishes, this page will
+            load the preview automatically.
+        </p>
+        <form method="POST" action="/__resurrect__" onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').innerText='Starting build…';">
+            <button type="submit">Recreate preview</button>
+        </form>
+        <p class="note">{note}</p>
+    </div>
+</body>
+</html>"""
+
+
 BUILDING_PAGE_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -163,6 +256,11 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
         if request.url.path == "/api/auth/verify-preview":
             return await call_next(request)
 
+        # The resurrect form posts here (intercepted before the static-asset
+        # branch so POST-only requests don't get skip_auth'd).
+        if request.url.path == "/__resurrect__" and request.method == "POST":
+            return await self._handle_resurrect_post(request, host)
+
         # Skip auth for static assets — only HTML documents need auth
         path = request.url.path
         _STATIC_PREFIXES = (
@@ -195,7 +293,15 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
 
         # Look up preview in DB (hash-based domain resolution)
         preview = await get_preview_by_domain(host)
+
         if not preview:
+            # Fallback: maybe the preview exists but was soft-deleted (auto-erase
+            # or manual delete). If so, offer the user a resurrect splash.
+            deleted = await get_preview_by_domain(host, include_deleted=True)
+            if deleted and deleted.get("deleted_at"):
+                return await self._handle_deleted_preview(
+                    request, host, deleted,
+                )
             return HTMLResponse(
                 content="<h1>Preview not found</h1><p>No preview matches this URL.</p>",
                 status_code=404,
@@ -259,6 +365,152 @@ class WakePreviewMiddleware(BaseHTTPMiddleware):
             content="<h1>Preview starting</h1><p>Please wait...</p>",
             status_code=503,
         )
+
+    async def _handle_deleted_preview(
+        self, request: Request, host: str, preview: dict,
+    ) -> Response:
+        """Render the resurrect splash for a soft-deleted preview."""
+        # Only show the splash for regular navigation (GET HTML requests).
+        # Background asset fetches (favicon, CSS from cached tabs, etc.)
+        # should get a proper 404 instead of confusing HTML responses.
+        if request.method != "GET":
+            return HTMLResponse(
+                content="<h1>Preview not found</h1>",
+                status_code=404,
+            )
+        accept = request.headers.get("accept", "")
+        if "text/html" not in accept and accept != "":
+            return HTMLResponse(
+                content="<h1>Preview not found</h1>",
+                status_code=404,
+            )
+
+        # Check project skip rules — if the project now refuses to auto-create
+        # previews for this branch/target, we don't offer resurrection either.
+        note = ""
+        try:
+            from app.database import get_project
+            from app.preview_rules import should_skip_auto_creation
+
+            project_row = await get_project(preview["project_id"])
+            skip_reason = should_skip_auto_creation(
+                project_row or {},
+                preview.get("branch") or "",
+                preview.get("target_branch") or "",
+                False,  # draft state is unknown at this point
+            )
+            if skip_reason:
+                note = f"Note: the current project rules block this preview ({skip_reason})."
+        except Exception as e:
+            logger.warning(f"Error checking skip rules for resurrect: {e}")
+
+        return HTMLResponse(
+            content=RESURRECT_PAGE_HTML.format(
+                preview_name=preview["preview_name"],
+                project=preview.get("project_slug", ""),
+                branch=preview.get("branch") or "unknown",
+                note=note,
+            ),
+            status_code=200,
+        )
+
+    async def _handle_resurrect_post(self, request: Request, host: str) -> Response:
+        """Accept the resurrect confirmation and enqueue a fresh deploy."""
+        # Re-verify auth before spending resources.
+        session_id = request.cookies.get(SESSION_COOKIE)
+        if not session_id:
+            return self._redirect_to_login(host, request)
+        session = await auth_db.get_session(session_id)
+        if not session:
+            return self._redirect_to_login(host, request)
+
+        from app.database import (
+            get_preview_by_domain as _db_get_preview_by_domain,
+            get_project, upsert_preview,
+        )
+        from app.preview_rules import should_skip_auto_creation
+
+        deleted = await _db_get_preview_by_domain(host, include_deleted=True)
+        if not deleted or not deleted.get("deleted_at"):
+            return HTMLResponse(
+                "<h1>Preview not found</h1><p>Nothing to resurrect.</p>",
+                status_code=404,
+            )
+
+        project_row = await get_project(deleted["project_id"])
+        if not project_row:
+            return HTMLResponse(
+                "<h1>Project missing</h1>", status_code=404,
+            )
+
+        skip_reason = should_skip_auto_creation(
+            project_row,
+            deleted.get("branch") or "",
+            deleted.get("target_branch") or "",
+            False,
+        )
+        if skip_reason:
+            return HTMLResponse(
+                f"<h1>Preview blocked</h1><p>Project rules prevent this preview from being recreated: {skip_reason}.</p>",
+                status_code=403,
+            )
+
+        # Clear deleted_at and reset transient fields so the normal "building"
+        # splash kicks in as soon as the user follows the redirect.
+        restored = await upsert_preview(
+            deleted["project_id"],
+            deleted["preview_name"],
+            status="creating",
+            last_deployment_status=None,
+            last_deployment_error=None,
+        )
+
+        # Create the deployment record now (not later in the arq worker) so the
+        # user's redirect immediately sees a running deployment and lands on
+        # the BUILDING splash rather than momentarily hitting a 404.
+        try:
+            from app.database import create_deployment
+            from app.websockets import deployment_log_broadcaster
+            deployment_id = await create_deployment(restored["id"], "resurrect")
+            await deployment_log_broadcaster.register(deployment_id)
+        except Exception as e:
+            logger.warning(f"Failed to pre-create deployment for resurrect: {e}")
+
+        # Enqueue a fresh deploy. We reuse the stored branch but pass an empty
+        # commit_sha so the VM agent pulls the latest HEAD — avoids resurrecting
+        # a stale commit that may have been force-pushed away.
+        project_path = project_row.get("gitlab_project_path", "")
+        await request.app.state.arq.enqueue_job(
+            "task_deploy_preview",
+            deleted.get("organization_id"),
+            deleted.get("org_slug"),
+            deleted["project_id"],
+            deleted.get("project_slug"),
+            project_path,
+            deleted["preview_name"],
+            deleted.get("branch") or "",
+            "",  # commit_sha — latest HEAD
+            "resurrect",
+            deleted.get("mr_id"),
+            True,  # force_new — start from scratch since VM is gone
+            deleted.get("mr_title"),
+            deleted.get("target_branch"),
+        )
+        logger.info(
+            f"Resurrect enqueued: {deleted.get('org_slug')}/{deleted.get('project_slug')}/"
+            f"{deleted['preview_name']} (branch={deleted.get('branch')})"
+        )
+
+        # Broadcast so the dashboard also sees the preview re-appear.
+        try:
+            from app.websockets import preview_list_manager
+            await preview_list_manager.force_broadcast()
+        except Exception:
+            pass
+
+        # 303 See Other: browser will switch to GET on redirect, user lands on
+        # the preview host which now shows BUILDING_PAGE_HTML until ready.
+        return RedirectResponse(f"https://{host}/", status_code=303)
 
     @staticmethod
     async def _proxy_to_vm(

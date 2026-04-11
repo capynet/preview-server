@@ -330,10 +330,11 @@ async def mark_invitation_accepted(invitation_id: int):
 
 # ---- Preview CRUD ----
 
-async def get_preview(project_id: int, preview_name: str) -> Optional[dict]:
+async def get_preview(project_id: int, preview_name: str, include_deleted: bool = False) -> Optional[dict]:
     pool = await get_pool()
+    deleted_filter = "" if include_deleted else " AND deleted_at IS NULL"
     row = await pool.fetchrow(
-        "SELECT * FROM previews WHERE project_id = $1 AND preview_name = $2",
+        f"SELECT * FROM previews WHERE project_id = $1 AND preview_name = $2{deleted_filter}",
         project_id, preview_name,
     )
     return _row_to_dict(row) if row else None
@@ -345,22 +346,27 @@ async def get_preview_by_id(preview_id: int) -> Optional[dict]:
     return _row_to_dict(row) if row else None
 
 
-async def get_preview_by_hash(url_hash: str) -> Optional[dict]:
-    """Find a preview by its URL hash (for domain resolution)."""
+async def get_preview_by_hash(url_hash: str, include_deleted: bool = False) -> Optional[dict]:
+    """Find a preview by its URL hash (for domain resolution).
+
+    Soft-deleted previews are excluded unless ``include_deleted=True`` is passed
+    — the wake-preview middleware uses that to detect resurrection opportunities.
+    """
     pool = await get_pool()
+    deleted_filter = "" if include_deleted else " AND p.deleted_at IS NULL"
     row = await pool.fetchrow(
-        """SELECT p.*, proj.slug as project_slug, proj.organization_id,
+        f"""SELECT p.*, proj.slug as project_slug, proj.organization_id,
                   o.slug as org_slug
            FROM previews p
            JOIN projects proj ON p.project_id = proj.id
            JOIN organizations o ON proj.organization_id = o.id
-           WHERE p.url_hash = $1""",
+           WHERE p.url_hash = $1{deleted_filter}""",
         url_hash,
     )
     return _row_to_dict(row) if row else None
 
 
-async def get_preview_by_domain(domain: str) -> Optional[dict]:
+async def get_preview_by_domain(domain: str, include_deleted: bool = False) -> Optional[dict]:
     """Find a preview by its domain (e.g. 'a3f8b2c1.{preview_domain}')."""
     import re
     escaped_domain = re.escape(settings.preview_domain)
@@ -370,13 +376,14 @@ async def get_preview_by_domain(domain: str) -> Optional[dict]:
     subdomain = match.group(1)
     if "--" in subdomain:
         subdomain = subdomain.split("--")[-1]
-    return await get_preview_by_hash(subdomain)
+    return await get_preview_by_hash(subdomain, include_deleted=include_deleted)
 
 
 async def get_preview_by_branch(project_id: int, branch: str) -> Optional[dict]:
     pool = await get_pool()
     row = await pool.fetchrow(
-        "SELECT * FROM previews WHERE project_id = $1 AND branch = $2 AND preview_name LIKE 'branch-%'",
+        """SELECT * FROM previews WHERE project_id = $1 AND branch = $2
+           AND preview_name LIKE 'branch-%' AND deleted_at IS NULL""",
         project_id, branch,
     )
     return _row_to_dict(row) if row else None
@@ -406,7 +413,7 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                    FROM deployments d3 WHERE d3.preview_id = p.id AND d3.type = 'post_deploy'
                    ORDER BY d3.id DESC LIMIT 1
                ) pd ON true
-               WHERE proj.organization_id = $1
+               WHERE proj.organization_id = $1 AND p.deleted_at IS NULL
                ORDER BY p.created_at DESC""",
             org_id,
         )
@@ -432,6 +439,7 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
                    FROM deployments d3 WHERE d3.preview_id = p.id AND d3.type = 'post_deploy'
                    ORDER BY d3.id DESC LIMIT 1
                ) pd ON true
+               WHERE p.deleted_at IS NULL
                ORDER BY p.created_at DESC"""
         )
     return [_row_to_dict(r) for r in rows]
@@ -439,25 +447,29 @@ async def get_all_previews(org_id: Optional[int] = None) -> list[dict]:
 
 async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
     pool = await get_pool()
+    # Intentionally match soft-deleted rows too — upserting a previously
+    # erased preview restores it in place.
     existing = await pool.fetchrow(
         "SELECT * FROM previews WHERE project_id = $1 AND preview_name = $2",
         project_id, preview_name,
     )
 
     if existing:
-        if fields:
-            sets = []
-            vals = []
-            idx = 1
-            for k, v in fields.items():
-                sets.append(f"{k} = ${idx}")
-                vals.append(v)
-                idx += 1
-            vals.extend([project_id, preview_name])
-            await pool.execute(
-                f"UPDATE previews SET {', '.join(sets)} WHERE project_id = ${idx} AND preview_name = ${idx + 1}",
-                *vals,
-            )
+        # Any re-creation path (webhook, manual, resurrect) clears deleted_at
+        # so the row becomes active again.
+        fields = {**fields, "deleted_at": None}
+        sets = []
+        vals = []
+        idx = 1
+        for k, v in fields.items():
+            sets.append(f"{k} = ${idx}")
+            vals.append(v)
+            idx += 1
+        vals.extend([project_id, preview_name])
+        await pool.execute(
+            f"UPDATE previews SET {', '.join(sets)} WHERE project_id = ${idx} AND preview_name = ${idx + 1}",
+            *vals,
+        )
         row = await pool.fetchrow(
             "SELECT * FROM previews WHERE project_id = $1 AND preview_name = $2",
             project_id, preview_name,
@@ -502,6 +514,27 @@ async def upsert_preview(project_id: int, preview_name: str, **fields) -> dict:
 
 
 async def delete_preview_from_db(project_id: int, preview_name: str):
+    """Soft-delete a preview.
+
+    Flags the row with ``deleted_at`` and clears VM references so the
+    resurrect-from-URL middleware can match the erased preview later and
+    offer to rebuild it. Actual row removal is reserved for purge jobs.
+    """
+    pool = await get_pool()
+    await pool.execute(
+        """UPDATE previews
+           SET deleted_at = $1,
+               vm_id = NULL,
+               vm_ip = NULL,
+               status = 'deleted'
+           WHERE project_id = $2 AND preview_name = $3
+             AND deleted_at IS NULL""",
+        _now(), project_id, preview_name,
+    )
+
+
+async def hard_delete_preview_from_db(project_id: int, preview_name: str):
+    """Permanently remove a preview row. Reserved for purge / admin flows."""
     pool = await get_pool()
     await pool.execute(
         "DELETE FROM previews WHERE project_id = $1 AND preview_name = $2",
@@ -525,7 +558,7 @@ async def get_previews_with_active_vms() -> list[dict]:
            FROM previews p
            JOIN projects proj ON p.project_id = proj.id
            JOIN organizations o ON proj.organization_id = o.id
-           WHERE p.vm_id IS NOT NULL"""
+           WHERE p.vm_id IS NOT NULL AND p.deleted_at IS NULL"""
     )
     return [_row_to_dict(r) for r in rows]
 
@@ -854,7 +887,8 @@ async def get_effective_require_ci(org_id: int, project_id: int) -> bool:
 async def get_previews_waiting_for_ci(project_id: int, branch: str) -> list[dict]:
     pool = await get_pool()
     rows = await pool.fetch(
-        "SELECT * FROM previews WHERE project_id = $1 AND branch = $2 AND ci_status = 'waiting'",
+        """SELECT * FROM previews WHERE project_id = $1 AND branch = $2
+           AND ci_status = 'waiting' AND deleted_at IS NULL""",
         project_id, branch,
     )
     return [_row_to_dict(r) for r in rows]
