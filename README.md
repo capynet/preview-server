@@ -31,14 +31,20 @@ Is the UI of preview manager ([server](server))
 
 
 # TODO antes de prod. 
-- Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. No hace falta que cierres esta pestaña, tan rponto como acabe el build la pagina se va a mostrar"
-- Para pulir el deploy necesito revisar los flows principales: creacion y gestion de usuarios, roles, accesos a sus proyecos y organizaciones. asegurarme que no se pueden acceder proyectos y organizaciones desde otrras cuentas. que el proceso de creacion de previews funciona y que se usan todas las herramientas que tenemos (queues). Que se pueden crear y borrar en secuencia previes sin que colapse el servicio
-- Necesito un black list para deshabilitar ramas que no tiene sentido que creen mr previews todo el tiempo (rama dev o master). Se pueden añadir y quitar y el listado se limpia solito como el listado de favoritos. ademas deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
 - Esto va a los casos de uso para publicitar: Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos.
 - revisa la documentacion y añadir la documentacion de como configurar gitlab.
-- Ver si puedo loguearme con la cuenta de gitlab.
-
+- Es posible estar asignado a organizaciones de otros owner? por ejemplo marcelo.tosco.diodati@gmail.com parte de Druploy y Dropsolid ademas de ser owner de su propio org?
+- Post deploy sigue mostrando el tag "Deploying" aunque haya temrinado el deploy principal
 # TODO
+- A veces queres mandar un preview a druploy incluso si las regla required_jobs no pasa. Estariab bueno poder marcar a nivel preview la desactivacion (o a nivel proyecto por lo menos podes espefificar que ramas o MR se bypasean asi se logra crear la primer preview) 
+- los preview estaria bueno que muestren la fecha de creacion de la VM, ultima actualizacion y tiempo rstante hasta que se elimine si no esta bloqueada.
+- Posibilidad de configurar un proyecot para que use VM mas grandes. Es necesario por si algun proyecto se considera muy pesado. 
+- Me gustaria poder ver si un cron esta corriendo. 
+- Cuando un mr se mergea o cierra el comentario con la info de druploy puede ser eliminada. 
+- Necesito mejorar los ocmentarios que se hacen en los MR. A veces por accidente se crea uno nuevo. Necesito tal vez añadir una comprobacion extra: a nivel hash (el que se usa en la url de los preview). buscar su precencia. A lo mejor ya esta hecho. la cuestion es que necesito evitar que acabe habiendo mas de un comentario en un MR.
+- Permitir que el auto erase sea a nivel horas en lugar de dias. 
+- arreglar la posibilidad de loguearme con la cuenta de gitlab.
+- Si un MR no contiene cambios a nivel de gitlab no se hace nada. simplemente me informa que no hay cambios. En ese tipo de MR deberiamos hacer lo mismo que se hace con los mr en dranf: nada.
 - Srupal tiene un scon que se podria configurar automaticamente como una configuracion inicial del proyecto. 
 - Hay logs dentor del container que estaria bien poder exponer mediante "preview logs (todos), preview logs cron" etc o incluso podes hacer preview logs pull para descargarlos localmente y rpocesarlos. 
 - Los env var no se pueden deshabilitar. deberia poder estar activo/inactivo por si en algun preview por ejemplo no la quiero porque tengo que hacer pruebas que necesitan ese valor ausente. 
@@ -177,7 +183,7 @@ Otro asunto para resolver:
 
 
 
-
-a nivel proyecto Necesito:
-Poder indicar que MR no crean un preview automaticmanete. 
-deberia poder usar wildcards como por ejemplo "hotfix/*" para evitar que se creen previes de ellas.
+Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. 
+Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. 
+No hace falta que cierres esta pestaña, tan pronto como acabe el build la pagina se va a mostrar"
+Crees que es posible?

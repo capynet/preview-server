@@ -50,7 +50,12 @@ from app.database import (
     list_org_invitations,
     list_project_invitations,
 )
-from app.auth.email import send_invitation_email, send_added_to_org_email, send_added_to_project_email
+from app.auth.email import (
+    send_added_to_org_email,
+    send_added_to_project_email,
+    send_org_invitation_email,
+    send_project_invitation_email,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +264,12 @@ async def create_invitation(body: InviteBody, user: UserWithContext = Depends(re
                 raise HTTPException(status_code=409, detail=f"{body.email} is already a member of this project")
             await add_project_member(existing_user["id"], project_id, user.id, body.role.value)
             try:
-                send_added_to_project_email(body.email, body.project_slug or "project", body.role.value)
+                send_added_to_project_email(
+                    body.email,
+                    user.org.name,
+                    project.get("name") or body.project_slug or "project",
+                    body.role.value,
+                )
             except Exception:
                 pass
             return {"success": True, "added_directly": True, "message": f"User {body.email} added to project"}
@@ -284,7 +294,23 @@ async def create_invitation(body: InviteBody, user: UserWithContext = Depends(re
     )
 
     try:
-        send_invitation_email(body.email, invitation["token"], body.role.value, user.name)
+        if project_id:
+            send_project_invitation_email(
+                body.email,
+                user.org.name,
+                project.get("name") or body.project_slug or "project",
+                body.role.value,
+                invitation["token"],
+                user.name,
+            )
+        else:
+            send_org_invitation_email(
+                body.email,
+                user.org.name,
+                body.role.value,
+                invitation["token"],
+                user.name,
+            )
     except Exception:
         pass
 
@@ -377,7 +403,12 @@ async def add_proj_member(
             raise HTTPException(status_code=409, detail=f"{body.email} is already a member of this project")
         await add_project_member(existing_user["id"], project["id"], user.id, body.role.value)
         try:
-            send_added_to_project_email(body.email, project.get("name") or slug, body.role.value)
+            send_added_to_project_email(
+                body.email,
+                user.org.name,
+                project.get("name") or slug,
+                body.role.value,
+            )
         except Exception:
             pass
         return {"success": True, "added_directly": True, "message": f"User {body.email} added to project"}
@@ -391,7 +422,14 @@ async def add_proj_member(
         user.org.id, body.email, body.role.value, user.id, project["id"]
     )
     try:
-        send_added_to_project_email(body.email, project.get("name") or slug, body.role.value)
+        send_project_invitation_email(
+            body.email,
+            user.org.name,
+            project.get("name") or slug,
+            body.role.value,
+            invitation["token"],
+            user.name,
+        )
     except Exception:
         pass
 

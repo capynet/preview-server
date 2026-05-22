@@ -1,0 +1,85 @@
+/* Match the Druploy landing aesthetic.
+ * Landing palette: bg #0a0a0b, surface #141416, border #23232a,
+ *                   text #e4e4e7, muted #8b8b96, accent #6d5cff.
+ */
+
+:root {
+  --md-primary-fg-color: #6d5cff;
+  --md-primary-fg-color--light: #8475ff;
+  --md-primary-fg-color--dark: #5746e8;
+  --md-accent-fg-color: #8475ff;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-hue: 240;
+  --md-default-bg-color: #0a0a0b;
+  --md-default-bg-color--light: #141416;
+  --md-default-bg-color--lighter: #1a1a1f;
+  --md-default-fg-color: #e4e4e7;
+  --md-default-fg-color--light: #b4b4bd;
+  --md-default-fg-color--lighter: #8b8b96;
+  --md-default-fg-color--lightest: #5a5a64;
+
+  --md-code-bg-color: #141416;
+  --md-code-fg-color: #e4e4e7;
+
+  --md-typeset-color: #e4e4e7;
+  --md-typeset-a-color: #8475ff;
+
+  --md-footer-bg-color: #0a0a0b;
+  --md-footer-bg-color--dark: #0a0a0b;
+}
+
+/* Borders use the landing's slim border tone */
+[data-md-color-scheme="slate"] .md-header,
+[data-md-color-scheme="slate"] .md-tabs {
+  background: #0a0a0b;
+  border-bottom: 1px solid #23232a;
+  box-shadow: none;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) {
+  border: 1px solid #23232a;
+  background: #141416;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) th {
+  background: #1a1a1f;
+  color: #e4e4e7;
+}
+
+[data-md-color-scheme="slate"] .md-typeset table:not([class]) td {
+  border-top: 1px solid #23232a;
+}
+
+/* Code blocks: slightly tighter, match landing surface */
+[data-md-color-scheme="slate"] .md-typeset code {
+  background: rgba(109, 92, 255, 0.12);
+  color: #e4e4e7;
+  border-radius: 4px;
+}
+
+[data-md-color-scheme="slate"] .md-typeset pre > code {
+  background: #141416;
+  border: 1px solid #23232a;
+}
+
+/* Sidebar — subtler hover */
+[data-md-color-scheme="slate"] .md-nav__link:hover {
+  color: #8475ff;
+}
+
+/* Inline links — purple to match landing */
+[data-md-color-scheme="slate"] .md-typeset a {
+  color: #8475ff;
+}
+
+[data-md-color-scheme="slate"] .md-typeset a:hover {
+  color: #a99cff;
+}
+
+/* "Back to druploy.com" — Material renders site_url in header via the homepage extra */
+.md-header__button.md-logo img,
+.md-header__button.md-logo svg {
+  fill: #6d5cff;
+}

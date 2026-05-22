@@ -1,638 +1,1118 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Project Configuration — Druploy Docs</title>
-  <meta name="description" content="How to configure a Drupal project for preview environments with Druploy.">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    :root {
-      --bg: #0a0a0b;
-      --surface: #141416;
-      --border: #23232a;
-      --text: #e4e4e7;
-      --text-muted: #8b8b96;
-      --accent: #6d5cff;
-      --accent-hover: #8475ff;
-      --green: #22c55e;
-    }
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for Druploy — Drupal preview environments per merge request.">
+      
+      
+        <meta name="author" content="Druploy">
+      
+      
+        <link rel="canonical" href="https://druploy.com/docs/configuration/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="../environment-variables/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Configuration - Druploy Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
 
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      -webkit-font-smoothing: antialiased;
-    }
 
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { color: var(--accent-hover); }
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CJetBrains+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"JetBrains Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
 
-    /* Nav */
-    nav {
-      padding: 20px 0;
-      border-bottom: 1px solid var(--border);
-      position: sticky;
-      top: 0;
-      background: var(--bg);
-      z-index: 100;
-    }
-    nav .nav-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 24px;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-    .logo {
-      font-size: 18px;
-      font-weight: 700;
-      color: var(--text);
-      letter-spacing: -0.02em;
-    }
-    .logo span { color: var(--accent); }
-    .nav-links {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-    .nav-link {
-      font-size: 14px;
-      padding: 8px 20px;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      color: var(--text-muted);
-      transition: border-color 0.2s, color 0.2s;
-    }
-    .nav-link:hover { border-color: var(--accent); color: var(--text); }
-    .nav-link.active { border-color: var(--accent); color: var(--text); }
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#project-configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
 
-    /* Layout */
-    .page-layout {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 24px;
-      display: flex;
-      gap: 48px;
-      align-items: flex-start;
-    }
+  
 
-    /* Sidebar */
-    .sidebar {
-      position: sticky;
-      top: 85px;
-      width: 220px;
-      flex-shrink: 0;
-      padding: 32px 0;
-    }
-    .sidebar-title {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      margin-bottom: 16px;
-    }
-    .sidebar-nav {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-    .sidebar-nav a {
-      display: block;
-      font-size: 13px;
-      color: var(--text-muted);
-      padding: 6px 12px;
-      border-radius: 6px;
-      border-left: 2px solid transparent;
-      transition: color 0.15s, background 0.15s, border-color 0.15s;
-    }
-    .sidebar-nav a:hover {
-      color: var(--text);
-      background: rgba(109, 92, 255, 0.06);
-    }
-    .sidebar-nav a.active {
-      color: var(--accent);
-      background: rgba(109, 92, 255, 0.08);
-      border-left-color: var(--accent);
-    }
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="https://druploy.com" title="Druploy Docs" class="md-header__button md-logo" aria-label="Druploy Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m13.13 22.19-1.63-3.83c1.57-.58 3.04-1.36 4.4-2.27zM5.64 12.5l-3.83-1.63 6.1-2.77C7 9.46 6.22 10.93 5.64 12.5M19.22 4c.28 0 .53 0 .74.05.17 1.39-.02 4.25-3.3 7.53-1.7 1.71-3.73 3.02-6.01 3.89l-2.15-2.1c.92-2.31 2.23-4.34 3.92-6.03C15.18 4.58 17.64 4 19.22 4m0-2c-1.98 0-4.98.69-8.22 3.93-2.19 2.19-3.5 4.6-4.35 6.71-.28.75-.09 1.57.46 2.13l2.13 2.12c.38.38.89.61 1.42.61.23 0 .47-.06.7-.15A19.1 19.1 0 0 0 18.07 13c5.66-5.66 3.54-10.61 3.54-10.61S20.7 2 19.22 2m-4.68 7.46c-.78-.78-.78-2.05 0-2.83s2.05-.78 2.83 0c.77.78.78 2.05 0 2.83s-2.05.78-2.83 0m-5.66 7.07-1.41-1.41zM6.24 22l3.64-3.64c-.34-.09-.67-.24-.97-.45L4.83 22zM2 22h1.41l4.77-4.76-1.42-1.41L2 20.59zm0-2.83 4.09-4.08c-.21-.3-.36-.62-.45-.97L2 17.76z"/></svg>
 
-    /* Content */
-    .content {
-      flex: 1;
-      min-width: 0;
-      padding: 40px 0 80px;
-      max-width: 780px;
-    }
-    .content h1 {
-      font-size: 36px;
-      font-weight: 800;
-      letter-spacing: -0.03em;
-      line-height: 1.15;
-      margin-bottom: 12px;
-    }
-    .content .subtitle {
-      font-size: 16px;
-      color: var(--text-muted);
-      margin-bottom: 48px;
-      line-height: 1.6;
-    }
-    .content .subtitle code {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 14px;
-      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-    }
-    .content h2 {
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      margin-top: 56px;
-      margin-bottom: 16px;
-      padding-top: 24px;
-      border-top: 1px solid var(--border);
-      scroll-margin-top: 90px;
-    }
-    .content h2:first-of-type {
-      margin-top: 0;
-      border-top: none;
-      padding-top: 0;
-    }
-    .content h3 {
-      font-size: 16px;
-      font-weight: 600;
-      margin-top: 32px;
-      margin-bottom: 12px;
-    }
-    .content p {
-      margin-bottom: 16px;
-      color: var(--text);
-      font-size: 15px;
-    }
-    .content p.note {
-      color: var(--text-muted);
-      font-size: 14px;
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px 16px;
-      margin-bottom: 16px;
-    }
-    .content p.note code {
-      background: rgba(109, 92, 255, 0.1);
-      border: 1px solid rgba(109, 92, 255, 0.2);
-    }
-
-    /* Code blocks */
-    .code-block {
-      position: relative;
-      margin-bottom: 24px;
-      border-radius: 8px;
-      overflow: hidden;
-      border: 1px solid var(--border);
-    }
-    .code-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 16px;
-      background: #18181b;
-      border-bottom: 1px solid var(--border);
-    }
-    .code-lang {
-      font-size: 11px;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--text-muted);
-    }
-    .copy-btn {
-      background: none;
-      border: 1px solid var(--border);
-      color: var(--text-muted);
-      font-size: 12px;
-      padding: 4px 10px;
-      border-radius: 4px;
-      cursor: pointer;
-      transition: color 0.15s, border-color 0.15s;
-      font-family: inherit;
-    }
-    .copy-btn:hover {
-      color: var(--text);
-      border-color: var(--accent);
-    }
-    .copy-btn.copied {
-      color: var(--green);
-      border-color: var(--green);
-    }
-    .code-block pre {
-      background: var(--surface);
-      padding: 16px;
-      overflow-x: auto;
-      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-      font-size: 13px;
-      line-height: 1.7;
-      color: var(--text);
-    }
-    .code-block pre code {
-      font-family: inherit;
-    }
-
-    /* Inline code */
-    code {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 13px;
-      font-family: "SF Mono", "Fira Code", "Fira Mono", Menlo, Consolas, monospace;
-    }
-
-    /* Tables */
-    .table-wrap {
-      overflow-x: auto;
-      margin-bottom: 24px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 14px;
-    }
-    thead {
-      background: #18181b;
-    }
-    th {
-      text-align: left;
-      padding: 10px 16px;
-      font-weight: 600;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-      color: var(--text-muted);
-      border-bottom: 1px solid var(--border);
-    }
-    td {
-      padding: 10px 16px;
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
-    }
-    td code {
-      font-size: 12px;
-    }
-    tr:last-child td {
-      border-bottom: none;
-    }
-    tbody tr:hover {
-      background: rgba(109, 92, 255, 0.03);
-    }
-
-    /* Footer */
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 32px 0;
-      text-align: center;
-      color: var(--text-muted);
-      font-size: 13px;
-    }
-
-    /* YAML syntax highlighting */
-    .hl-comment { color: #6b6b76; }
-    .hl-key { color: #7dd3fc; }
-    .hl-string { color: #86efac; }
-    .hl-value { color: #fbbf24; }
-    .hl-bool { color: #f472b6; }
-
-    /* PHP syntax highlighting */
-    .hl-php-tag { color: #f472b6; }
-    .hl-php-comment { color: #6b6b76; }
-    .hl-php-keyword { color: #c084fc; }
-    .hl-php-function { color: #7dd3fc; }
-    .hl-php-string { color: #86efac; }
-    .hl-php-var { color: #fbbf24; }
-    .hl-php-const { color: #f472b6; }
-
-    /* Bash syntax highlighting */
-    .hl-bash-comment { color: #6b6b76; }
-    .hl-bash-var { color: #fbbf24; }
-    .hl-bash-string { color: #86efac; }
-    .hl-bash-cmd { color: #7dd3fc; }
-
-    /* Responsive */
-    @media (max-width: 768px) {
-      .sidebar {
-        display: none;
-      }
-      .page-layout {
-        gap: 0;
-      }
-      .content h1 {
-        font-size: 28px;
-      }
-      .content h2 {
-        font-size: 20px;
-      }
-    }
-  </style>
-</head>
-<body>
-
-<nav>
-  <div class="nav-inner">
-    <a href="/" class="logo">Preview<span>.</span></a>
-    <div class="nav-links">
-      <a href="/docs/configuration" class="nav-link active">Docs</a>
-      <a href="/cli" class="nav-link">CLI</a>
-      <a href="https://druploy.dev" class="nav-link">Open App</a>
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Druploy Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 7a5 5 0 0 1 5 5 5 5 0 0 1-5 5 5 5 0 0 1-5-5 5 5 0 0 1 5-5m0 2a3 3 0 0 0-3 3 3 3 0 0 0 3 3 3 3 0 0 0 3-3 3 3 0 0 0-3-3m0-7 2.39 3.42C13.65 5.15 12.84 5 12 5s-1.65.15-2.39.42zM3.34 7l4.16-.35A7.2 7.2 0 0 0 5.94 8.5c-.44.74-.69 1.5-.83 2.29zm.02 10 1.76-3.77a7.131 7.131 0 0 0 2.38 4.14zM20.65 7l-1.77 3.79a7.02 7.02 0 0 0-2.38-4.15zm-.01 10-4.14.36c.59-.51 1.12-1.14 1.54-1.86.42-.73.69-1.5.83-2.29zM12 22l-2.41-3.44c.74.27 1.55.44 2.41.44.82 0 1.63-.17 2.37-.44z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="deep-purple" data-md-color-accent="deep-purple"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m17.75 4.09-2.53 1.94.91 3.06-2.63-1.81-2.63 1.81.91-3.06-2.53-1.94L12.44 4l1.06-3 1.06 3zm3.5 6.91-1.64 1.25.59 1.98-1.7-1.17-1.7 1.17.59-1.98L15.75 11l2.06-.05L18.5 9l.69 1.95zm-2.28 4.95c.83-.08 1.72 1.1 1.19 1.85-.32.45-.66.87-1.08 1.27C15.17 23 8.84 23 4.94 19.07c-3.91-3.9-3.91-10.24 0-14.14.4-.4.82-.76 1.27-1.08.75-.53 1.93.36 1.85 1.19-.27 2.86.69 5.83 2.89 8.02a9.96 9.96 0 0 0 8.02 2.89m-1.64 2.02a12.08 12.08 0 0 1-7.8-3.47c-2.17-2.19-3.33-5-3.49-7.82-2.81 3.14-2.7 7.96.31 10.98 3.02 3.01 7.84 3.12 10.98.31"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+          <a href="javascript:void(0)" class="md-search__icon md-icon" title="Share" aria-label="Share" data-clipboard data-clipboard-text="" data-md-component="search-share" tabindex="-1">
+            
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9a3 3 0 0 0-3 3 3 3 0 0 0 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.15c-.05.21-.08.43-.08.66 0 1.61 1.31 2.91 2.92 2.91s2.92-1.3 2.92-2.91A2.92 2.92 0 0 0 18 16.08"/></svg>
+          </a>
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
     </div>
   </div>
-</nav>
-
-<div class="page-layout">
-  <aside class="sidebar">
-    <div class="sidebar-title">On this page</div>
-    <ul class="sidebar-nav">
-      <li><a href="#file-structure" class="active">File structure</a></li>
-      <li><a href="#preview-yml">druploy.yml</a></li>
-      <li><a href="#settings-php-include">settings.php include</a></li>
-      <li><a href="#settings-druploy-php">settings.druploy.php</a></li>
-      <li><a href="#deploy-scripts">Deploy scripts</a></li>
-      <li><a href="#environment-variables">Environment variables</a></li>
-      <li><a href="#base-database-files">Base database &amp; files</a></li>
-    </ul>
-  </aside>
-
-  <main class="content">
-    <h1>Project Configuration</h1>
-    <p class="subtitle">How to configure a Drupal project for preview environments. Run <code>druploy setup project</code> from your project root to scaffold these files automatically.</p>
-
-    <!-- File structure -->
-    <h2 id="file-structure">File structure</h2>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">Directory</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code>your-project/
-&#x251C;&#x2500;&#x2500; druploy.yml                          # Preview configuration
-&#x251C;&#x2500;&#x2500; web/sites/default/                   # (or docroot/)
-&#x2502;   &#x251C;&#x2500;&#x2500; settings.php                     # Modified: include snippet added
-&#x2502;   &#x2514;&#x2500;&#x2500; settings.druploy.php             # Created: environment overrides
-&#x2514;&#x2500;&#x2500; scripts/druploy/
-    &#x251C;&#x2500;&#x2500; new/deploy.sh                    # Runs on first deploy
-    &#x2514;&#x2500;&#x2500; update/deploy.sh                 # Runs on code updates</code></pre>
-    </div>
-
-    <!-- preview.yml -->
-    <h2 id="preview-yml">druploy.yml</h2>
-    <p>The main configuration file for your project. Place it in the repository root.</p>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">YAML</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code><span class="hl-comment"># Druploy configuration</span>
-<span class="hl-comment"># See: https://druploy.dev/docs/configuration</span>
-
-<span class="hl-comment"># PHP version for the preview container.</span>
-<span class="hl-comment"># Supported: 8.1, 8.2, 8.3, 8.4</span>
-<span class="hl-key">php_version</span>: <span class="hl-string">"8.3"</span>
-
-<span class="hl-comment"># Database engine and version.</span>
-<span class="hl-comment"># Examples: mysql:5.7, mysql:8.0, mysql:8.4, mariadb:10.6, mariadb:11.4</span>
-<span class="hl-key">database</span>: <span class="hl-value">mysql:8.0</span>
-
-<span class="hl-comment"># Document root relative to the project root.</span>
-<span class="hl-comment"># Auto-detected if not set (checks web/ then docroot/).</span>
-<span class="hl-key">docroot</span>: <span class="hl-value">web</span>
-
-<span class="hl-comment"># Optional services. Set a version to enable, false to disable.</span>
-<span class="hl-comment"># When enabled, PREV_*_HOST env vars are set automatically.</span>
-<span class="hl-comment"># Note: redis and valkey are mutually exclusive (valkey wins).</span>
-<span class="hl-key">redis</span>: <span class="hl-bool">false</span>          <span class="hl-comment"># e.g. "7", "6"</span>
-<span class="hl-key">valkey</span>: <span class="hl-bool">false</span>         <span class="hl-comment"># e.g. "8", "7" (Redis-compatible fork)</span>
-<span class="hl-key">solr</span>: <span class="hl-bool">false</span>           <span class="hl-comment"># e.g. "9", "8"</span>
-
-<span class="hl-comment"># Solr configset &mdash; path relative to project root with schema.xml etc.</span>
-<span class="hl-comment"># Generate with: drush search-api-solr:get-server-config</span>
-<span class="hl-comment"># solr_configset: "etc/solr"</span>
-
-<span class="hl-comment"># Custom environment variables injected into the PHP container.</span>
-<span class="hl-comment"># Available in settings.druploy.php via getenv().</span>
-<span class="hl-comment"># env:</span>
-<span class="hl-comment">#   APP_ENV: preview</span>
-<span class="hl-comment">#   MY_CUSTOM_VAR: some-value</span>
-
-<span class="hl-comment"># Domain aliases &mdash; additional subdomains that route to this preview.</span>
-<span class="hl-comment"># Each prefix becomes {prefix}--{preview-domain}.druploy.dev</span>
-<span class="hl-comment"># Useful for multi-site setups. Available as PREV_DOMAIN_ALIASES env var.</span>
-<span class="hl-comment"># domain_aliases:</span>
-<span class="hl-comment">#   - admin</span>
-<span class="hl-comment">#   - fr</span>
-<span class="hl-comment">#   - de</span>
-
-<span class="hl-comment"># LiteSpeed Cache &mdash; enable the built-in OLS cache module.</span>
-<span class="hl-comment"># Requires the Drupal "lite_speed_cache" module.</span>
-<span class="hl-comment"># litespeed_cache: true</span>
-
-<span class="hl-comment"># Deploy scripts &mdash; executed inside the PHP container.</span>
-<span class="hl-comment"># Paths relative to the project root. Set to false or omit to skip.</span>
-<span class="hl-key">deploy</span>:
-  <span class="hl-key">new</span>: <span class="hl-value">scripts/druploy/new/deploy.sh</span>
-  <span class="hl-key">update</span>: <span class="hl-value">scripts/druploy/update/deploy.sh</span></code></pre>
-    </div>
-
-    <h3>Defaults</h3>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Option</th><th>Default</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>PHP version</td><td><code>8.3</code></td></tr>
-          <tr><td>Database</td><td><code>mysql:8.0</code></td></tr>
-          <tr><td>Docroot</td><td><code>web</code> (auto-detected)</td></tr>
-          <tr><td>Redis / Valkey</td><td>disabled</td></tr>
-          <tr><td>Solr</td><td>disabled</td></tr>
-          <tr><td>LiteSpeed Cache</td><td>disabled</td></tr>
-          <tr><td>Domain aliases</td><td>none</td></tr>
-          <tr><td>Deploy scripts</td><td>none</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- settings.php include -->
-    <h2 id="settings-php-include">settings.php include</h2>
-    <p>Add this snippet at the end of your <code>settings.php</code> file to load preview-specific configuration when running inside a preview container.</p>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">PHP</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code><span class="hl-php-comment">// Preview environment settings.</span>
-<span class="hl-php-keyword">if</span> (<span class="hl-php-function">getenv</span>(<span class="hl-php-string">'PREV_IS_PREVIEW'</span>)) {
-  <span class="hl-php-keyword">include</span> <span class="hl-php-const">__DIR__</span> . <span class="hl-php-string">'/settings.druploy.php'</span>;
-}</code></pre>
-    </div>
-    <p class="note"><code>PREV_IS_PREVIEW</code> is only set inside preview containers, so this snippet has no effect in other environments.</p>
-
-    <!-- settings.druploy.php -->
-    <h2 id="settings-druploy-php">settings.druploy.php</h2>
-    <p>This file is managed by you for custom overrides. The internal configuration (database connection, file paths, trusted host patterns) is handled automatically by <code>settings.druploy.internal.php</code>, which is generated by the deployer.</p>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">PHP</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code><span class="hl-php-tag">&lt;?php</span>
-
-<span class="hl-php-comment">/**
- * @file
- * Preview environment overrides.
- *
- * Loaded after the internal preview configuration which sets up
- * database, file paths, and trusted host patterns automatically.
- */</span>
-
-<span class="hl-php-comment">// Example: disable CSS/JS aggregation</span>
-<span class="hl-php-comment">// $config['system.performance']['css']['preprocess'] = FALSE;</span>
-<span class="hl-php-comment">// $config['system.performance']['js']['preprocess'] = FALSE;</span></code></pre>
-    </div>
-
-    <!-- Deploy scripts -->
-    <h2 id="deploy-scripts">Deploy scripts</h2>
-    <p>Deploy scripts run inside the PHP container at two distinct phases:</p>
-    <p><strong>new</strong> &mdash; Runs on the first deploy, after the database and files have been imported. Use this for initial setup tasks like running <code>drush deploy</code>.</p>
-    <p><strong>update</strong> &mdash; Runs on subsequent code updates (new commits pushed to the branch). The database and files are not re-imported.</p>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">Bash</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code><span class="hl-bash-comment">#!/usr/bin/env bash</span>
-<span class="hl-bash-cmd">set</span> -euo pipefail
-
-<span class="hl-bash-var">DRUSH</span>=<span class="hl-bash-string">"vendor/bin/drush"</span>
-<span class="hl-bash-cmd">echo</span> <span class="hl-bash-string">"Running new preview deploy script..."</span>
-<span class="hl-bash-var">$DRUSH</span> deploy
-<span class="hl-bash-cmd">echo</span> <span class="hl-bash-string">"Deploy complete."</span></code></pre>
-    </div>
-
-    <h3>Per-preview overrides</h3>
-    <p>Create a file named <code>scripts/druploy/new/mr-123-deploy.sh</code> to override the default deploy script for a specific preview (in this case, <code>mr-123</code>).</p>
-
-    <!-- Environment variables -->
-    <h2 id="environment-variables">Environment variables</h2>
-    <p>These variables are available inside preview containers and in <code>settings.druploy.php</code> via <code>getenv()</code>.</p>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Variable</th><th>Description</th></tr>
-        </thead>
-        <tbody>
-          <tr><td><code>PREV_IS_PREVIEW</code></td><td>Always <code>"true"</code> in preview environments</td></tr>
-          <tr><td><code>PREV_PROJECT_NAME</code></td><td>Project slug</td></tr>
-          <tr><td><code>PREV_PREVIEW_NAME</code></td><td>Preview name (e.g. <code>mr-123</code>, <code>branch-develop</code>)</td></tr>
-          <tr><td><code>PREV_MR_IID</code></td><td>Merge request IID</td></tr>
-          <tr><td><code>PREV_BRANCH</code></td><td>Git branch name</td></tr>
-          <tr><td><code>PREV_COMMIT_SHA</code></td><td>Git commit SHA</td></tr>
-          <tr><td><code>PREV_URL</code></td><td>Full preview URL (<code>https://...</code>)</td></tr>
-          <tr><td><code>PREV_DOMAIN</code></td><td>Preview domain (without protocol)</td></tr>
-          <tr><td><code>PREV_DB_HOST</code></td><td>Database hostname</td></tr>
-          <tr><td><code>PREV_DB_NAME</code></td><td>Database name</td></tr>
-          <tr><td><code>PREV_DB_USER</code></td><td>Database username</td></tr>
-          <tr><td><code>PREV_DB_PASSWORD</code></td><td>Database password</td></tr>
-          <tr><td><code>PREV_FILE_PUBLIC_PATH</code></td><td>Public files path</td></tr>
-          <tr><td><code>PREV_FILE_PRIVATE_PATH</code></td><td>Private files path</td></tr>
-          <tr><td><code>PREV_FILE_TEMP_PATH</code></td><td>Temp files path</td></tr>
-          <tr><td><code>PREV_FILE_TRANSLATIONS_PATH</code></td><td>Translations directory</td></tr>
-          <tr><td><code>PREV_REDIS_HOST</code></td><td>Redis hostname (if redis/valkey enabled)</td></tr>
-          <tr><td><code>PREV_SOLR_HOST</code></td><td>Solr hostname (if enabled)</td></tr>
-          <tr><td><code>PREV_SOLR_CORE</code></td><td>Solr core name (if enabled)</td></tr>
-          <tr><td><code>PREV_DOMAIN_ALIASES</code></td><td>Comma-separated alias domains</td></tr>
-          <tr><td><code>PREV_LITESPEED_CACHE</code></td><td><code>"true"</code> if LiteSpeed Cache enabled</td></tr>
-        </tbody>
-      </table>
-    </div>
-    <p class="note">Custom variables defined in the <code>env</code> key of <code>druploy.yml</code> are injected without the <code>PREV_</code> prefix.</p>
-
-    <!-- Base database & files -->
-    <h2 id="base-database-files">Base database &amp; files</h2>
-    <p>Preview environments need a starting database and optionally public files to work with.</p>
-
-    <h3>Database (required)</h3>
-    <p>Upload a gzipped SQL dump using the CLI:</p>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">Shell</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code>druploy push db</code></pre>
-    </div>
-
-    <h3>Files (optional)</h3>
-    <p>Upload public files as a tar.gz archive. Use the <code>--strip-heavy-files</code> flag to exclude large files above a given threshold:</p>
-    <div class="code-block">
-      <div class="code-header">
-        <span class="code-lang">Shell</span>
-        <button class="copy-btn" onclick="copyCode(this)">Copy</button>
-      </div>
-      <pre><code>druploy push files --strip-heavy-files 2mb</code></pre>
-    </div>
-  </main>
 </div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
 
-<footer>
-  <p>Druploy</p>
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="https://druploy.com" title="Druploy Docs" class="md-nav__button md-logo" aria-label="Druploy Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m13.13 22.19-1.63-3.83c1.57-.58 3.04-1.36 4.4-2.27zM5.64 12.5l-3.83-1.63 6.1-2.77C7 9.46 6.22 10.93 5.64 12.5M19.22 4c.28 0 .53 0 .74.05.17 1.39-.02 4.25-3.3 7.53-1.7 1.71-3.73 3.02-6.01 3.89l-2.15-2.1c.92-2.31 2.23-4.34 3.92-6.03C15.18 4.58 17.64 4 19.22 4m0-2c-1.98 0-4.98.69-8.22 3.93-2.19 2.19-3.5 4.6-4.35 6.71-.28.75-.09 1.57.46 2.13l2.13 2.12c.38.38.89.61 1.42.61.23 0 .47-.06.7-.15A19.1 19.1 0 0 0 18.07 13c5.66-5.66 3.54-10.61 3.54-10.61S20.7 2 19.22 2m-4.68 7.46c-.78-.78-.78-2.05 0-2.83s2.05-.78 2.83 0c.77.78.78 2.05 0 2.83s-2.05.78-2.83 0m-5.66 7.07-1.41-1.41zM6.24 22l3.64-3.64c-.34-.09-.67-.24-.97-.45L4.83 22zM2 22h1.41l4.77-4.76-1.42-1.41L2 20.59zm0-2.83 4.09-4.08c-.21-.3-.36-.62-.45-.97L2 17.76z"/></svg>
+
+    </a>
+    Druploy Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#druployyml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        druploy.yml
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="druploy.yml">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#defaults-when-druployyml-is-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults when druploy.yml is missing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settingsphp-include" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        settings.php include
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settingsdruployphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        settings.druploy.php
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy scripts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploy scripts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-preview-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-preview overrides
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#base-database-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Base database &amp; files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Base database &amp; files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#database-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database (required)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#files-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../environment-variables/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#file-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        File structure
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#druployyml" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        druploy.yml
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="druploy.yml">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#defaults-when-druployyml-is-missing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Defaults when druploy.yml is missing
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settingsphp-include" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        settings.php include
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#settingsdruployphp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        settings.druploy.php
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#deploy-scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deploy scripts
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Deploy scripts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#per-preview-overrides" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Per-preview overrides
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#base-database-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Base database &amp; files
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Base database &amp; files">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#database-required" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Database (required)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#files-optional" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Files (optional)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="project-configuration">Project configuration<a class="headerlink" href="#project-configuration" title="Permanent link">&para;</a></h1>
+<p>How to configure a Drupal project for preview environments. Run <code>druploy setup</code> from your project root to scaffold these files automatically.</p>
+<hr />
+<h2 id="file-structure">File structure<a class="headerlink" href="#file-structure" title="Permanent link">&para;</a></h2>
+<p>After running <code>druploy setup</code>, your project will have the following new files:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>your-project/
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>├── druploy.yml                          # Preview configuration
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>├── web/sites/default/                   # (or docroot/)
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>│   ├── settings.php                     # Modified: include snippet added
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>│   └── settings.druploy.php             # Created: per-project overrides
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>└── scripts/druploy/
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    ├── new/deploy.sh                    # Runs on first deploy
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>    └── update/deploy.sh                 # Runs on code updates
+</span></code></pre></div>
+<hr />
+<h2 id="druployyml"><code>druploy.yml</code><a class="headerlink" href="#druployyml" title="Permanent link">&para;</a></h2>
+<p>This file lives in the project root and defines how preview environments are built. <strong>All fields are optional</strong> — sensible defaults are used when omitted.</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># PHP version for the preview container.</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="c1"># Supported: 8.1, 8.2, 8.3, 8.4</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="nt">php_version</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;8.3&quot;</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># Database engine and version (same format as DDEV).</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Examples:</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1">#   mysql:5.7    (≈ mariadb:10.3)</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="c1">#   mysql:8.0    (≈ mariadb:10.6)</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="c1">#   mysql:8.4    (≈ mariadb:11.4)</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1">#   mariadb:10.6 (≈ mysql:8.0)</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1">#   mariadb:11.4 (≈ mysql:8.4)</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="nt">database</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">mysql:8.0</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a>
+</span><span id="__span-1-14"><a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="c1"># Document root relative to the project root.</span>
+</span><span id="__span-1-15"><a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="c1"># Auto-detected if not set (checks web/ then docroot/).</span>
+</span><span id="__span-1-16"><a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="nt">docroot</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">web</span>
+</span><span id="__span-1-17"><a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a>
+</span><span id="__span-1-18"><a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="c1"># Optional services. Set a version to enable, false to disable.</span>
+</span><span id="__span-1-19"><a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="c1"># When enabled, PREV_*_HOST env vars are set automatically.</span>
+</span><span id="__span-1-20"><a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="c1"># Note: redis and valkey are mutually exclusive (valkey wins).</span>
+</span><span id="__span-1-21"><a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="nt">redis</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">          </span><span class="c1"># e.g. &quot;7&quot;, &quot;6&quot;</span>
+</span><span id="__span-1-22"><a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="nt">valkey</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">         </span><span class="c1"># e.g. &quot;8&quot;, &quot;7&quot; (Redis-compatible fork)</span>
+</span><span id="__span-1-23"><a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="nt">solr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span><span class="w">           </span><span class="c1"># e.g. &quot;9&quot;, &quot;8&quot;</span>
+</span><span id="__span-1-24"><a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a>
+</span><span id="__span-1-25"><a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="c1"># Solr configset — path relative to project root with schema.xml etc.</span>
+</span><span id="__span-1-26"><a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="c1"># Generate with: drush search-api-solr:get-server-config</span>
+</span><span id="__span-1-27"><a id="__codelineno-1-27" name="__codelineno-1-27" href="#__codelineno-1-27"></a><span class="c1"># solr_configset: &quot;etc/solr&quot;</span>
+</span><span id="__span-1-28"><a id="__codelineno-1-28" name="__codelineno-1-28" href="#__codelineno-1-28"></a>
+</span><span id="__span-1-29"><a id="__codelineno-1-29" name="__codelineno-1-29" href="#__codelineno-1-29"></a><span class="c1"># Custom environment variables injected into the PHP container.</span>
+</span><span id="__span-1-30"><a id="__codelineno-1-30" name="__codelineno-1-30" href="#__codelineno-1-30"></a><span class="c1"># Available in settings.druploy.php via getenv().</span>
+</span><span id="__span-1-31"><a id="__codelineno-1-31" name="__codelineno-1-31" href="#__codelineno-1-31"></a><span class="c1"># env:</span>
+</span><span id="__span-1-32"><a id="__codelineno-1-32" name="__codelineno-1-32" href="#__codelineno-1-32"></a><span class="c1">#   APP_ENV: preview</span>
+</span><span id="__span-1-33"><a id="__codelineno-1-33" name="__codelineno-1-33" href="#__codelineno-1-33"></a><span class="c1">#   MY_CUSTOM_VAR: some-value</span>
+</span><span id="__span-1-34"><a id="__codelineno-1-34" name="__codelineno-1-34" href="#__codelineno-1-34"></a>
+</span><span id="__span-1-35"><a id="__codelineno-1-35" name="__codelineno-1-35" href="#__codelineno-1-35"></a><span class="c1"># Domain aliases — additional subdomains that route to this preview.</span>
+</span><span id="__span-1-36"><a id="__codelineno-1-36" name="__codelineno-1-36" href="#__codelineno-1-36"></a><span class="c1"># Each prefix becomes {prefix}--{preview-domain}.druploy.dev</span>
+</span><span id="__span-1-37"><a id="__codelineno-1-37" name="__codelineno-1-37" href="#__codelineno-1-37"></a><span class="c1"># Useful for multi-site setups. Available as PREV_DOMAIN_ALIASES env var.</span>
+</span><span id="__span-1-38"><a id="__codelineno-1-38" name="__codelineno-1-38" href="#__codelineno-1-38"></a><span class="c1"># domain_aliases:</span>
+</span><span id="__span-1-39"><a id="__codelineno-1-39" name="__codelineno-1-39" href="#__codelineno-1-39"></a><span class="c1">#   - admin</span>
+</span><span id="__span-1-40"><a id="__codelineno-1-40" name="__codelineno-1-40" href="#__codelineno-1-40"></a><span class="c1">#   - fr</span>
+</span><span id="__span-1-41"><a id="__codelineno-1-41" name="__codelineno-1-41" href="#__codelineno-1-41"></a><span class="c1">#   - de</span>
+</span><span id="__span-1-42"><a id="__codelineno-1-42" name="__codelineno-1-42" href="#__codelineno-1-42"></a>
+</span><span id="__span-1-43"><a id="__codelineno-1-43" name="__codelineno-1-43" href="#__codelineno-1-43"></a><span class="c1"># Drush URI — custom URI for drush --uri flag (used in drush uli, etc).</span>
+</span><span id="__span-1-44"><a id="__codelineno-1-44" name="__codelineno-1-44" href="#__codelineno-1-44"></a><span class="c1"># Can be a domain alias name (e.g. &quot;admin&quot;) or a full URL.</span>
+</span><span id="__span-1-45"><a id="__codelineno-1-45" name="__codelineno-1-45" href="#__codelineno-1-45"></a><span class="c1"># If not set or false, the preview URL is used automatically.</span>
+</span><span id="__span-1-46"><a id="__codelineno-1-46" name="__codelineno-1-46" href="#__codelineno-1-46"></a><span class="c1"># drush_uri: admin</span>
+</span><span id="__span-1-47"><a id="__codelineno-1-47" name="__codelineno-1-47" href="#__codelineno-1-47"></a>
+</span><span id="__span-1-48"><a id="__codelineno-1-48" name="__codelineno-1-48" href="#__codelineno-1-48"></a><span class="c1"># LiteSpeed Cache — enable the built-in OLS cache module.</span>
+</span><span id="__span-1-49"><a id="__codelineno-1-49" name="__codelineno-1-49" href="#__codelineno-1-49"></a><span class="c1"># Requires the Drupal &quot;lite_speed_cache&quot; module.</span>
+</span><span id="__span-1-50"><a id="__codelineno-1-50" name="__codelineno-1-50" href="#__codelineno-1-50"></a><span class="c1"># litespeed_cache: true</span>
+</span><span id="__span-1-51"><a id="__codelineno-1-51" name="__codelineno-1-51" href="#__codelineno-1-51"></a>
+</span><span id="__span-1-52"><a id="__codelineno-1-52" name="__codelineno-1-52" href="#__codelineno-1-52"></a><span class="c1"># Deploy scripts — executed inside the PHP container.</span>
+</span><span id="__span-1-53"><a id="__codelineno-1-53" name="__codelineno-1-53" href="#__codelineno-1-53"></a><span class="c1"># Paths are relative to the project root.</span>
+</span><span id="__span-1-54"><a id="__codelineno-1-54" name="__codelineno-1-54" href="#__codelineno-1-54"></a><span class="c1"># Set to false or omit to skip.</span>
+</span><span id="__span-1-55"><a id="__codelineno-1-55" name="__codelineno-1-55" href="#__codelineno-1-55"></a><span class="nt">deploy</span><span class="p">:</span>
+</span><span id="__span-1-56"><a id="__codelineno-1-56" name="__codelineno-1-56" href="#__codelineno-1-56"></a><span class="w">  </span><span class="nt">new</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scripts/druploy/new/deploy.sh</span>
+</span><span id="__span-1-57"><a id="__codelineno-1-57" name="__codelineno-1-57" href="#__codelineno-1-57"></a><span class="w">  </span><span class="nt">update</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">scripts/druploy/update/deploy.sh</span>
+</span></code></pre></div>
+<h3 id="defaults-when-druployyml-is-missing">Defaults when <code>druploy.yml</code> is missing<a class="headerlink" href="#defaults-when-druployyml-is-missing" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Default</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>PHP version</td>
+<td><code>8.3</code></td>
+</tr>
+<tr>
+<td>Database</td>
+<td><code>mysql:8.0</code></td>
+</tr>
+<tr>
+<td>Docroot</td>
+<td><code>web</code> (auto-detected)</td>
+</tr>
+<tr>
+<td>Redis / Valkey</td>
+<td>disabled</td>
+</tr>
+<tr>
+<td>Solr</td>
+<td>disabled</td>
+</tr>
+<tr>
+<td>LiteSpeed Cache</td>
+<td>disabled</td>
+</tr>
+<tr>
+<td>Domain aliases</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Deploy scripts</td>
+<td>none</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="settingsphp-include"><code>settings.php</code> include<a class="headerlink" href="#settingsphp-include" title="Permanent link">&para;</a></h2>
+<p>The <code>druploy setup</code> command appends this snippet at the end of your <code>settings.php</code>. It conditionally loads preview-specific settings only when running inside a preview environment.</p>
+<div class="language-php highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="x">// Preview environment settings.</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="x">if (getenv(&#39;PREV_IS_PREVIEW&#39;)) {</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="x">  include __DIR__ . &#39;/settings.druploy.php&#39;;</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="x">}</span>
+</span></code></pre></div>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p><code>PREV_IS_PREVIEW</code> is only set inside preview containers, so this snippet has no effect in your local or production environments.</p>
+</div>
+<hr />
+<h2 id="settingsdruployphp"><code>settings.druploy.php</code><a class="headerlink" href="#settingsdruployphp" title="Permanent link">&para;</a></h2>
+<p>This file is <strong>managed by you</strong> for custom overrides. The internal preview configuration (database connection, file paths, trusted host patterns) is handled automatically by <code>settings.druploy.internal.php</code>, which is generated by the deployer and included before this file.</p>
+<div class="language-php highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="cp">&lt;?php</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="sd">/**</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="sd"> * @file</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="sd"> * Preview environment overrides.</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="sd"> *</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="sd"> * Loaded after the internal preview configuration, which sets up</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="sd"> * database, file paths, and trusted host patterns automatically.</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="sd"> */</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="c1">// Example: disable CSS/JS aggregation in previews.</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="c1">// $config[&#39;system.performance&#39;][&#39;css&#39;][&#39;preprocess&#39;] = FALSE;</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="c1">// $config[&#39;system.performance&#39;][&#39;js&#39;][&#39;preprocess&#39;] = FALSE;</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="c1">// Example: enable stage_file_proxy pointing to production.</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1">// $config[&#39;stage_file_proxy.settings&#39;][&#39;origin&#39;] = &#39;https://example.com&#39;;</span>
+</span></code></pre></div>
+<p>You can extend this file with any project-specific overrides — disabling caches, enabling <code>stage_file_proxy</code>, tweaking trusted host patterns, etc.</p>
+<hr />
+<h2 id="deploy-scripts">Deploy scripts<a class="headerlink" href="#deploy-scripts" title="Permanent link">&para;</a></h2>
+<p>Deploy scripts run <strong>inside the PHP container</strong> after the environment is ready. There are two phases:</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1"><code>new</code> — First deploy</label><label for="__tabbed_1_2"><code>update</code> — Code updates</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Runs after database import and file setup. Typically runs <code>drush deploy</code> (updatedb + config-import + cache-rebuild).</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="ch">#!/usr/bin/env bash</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nv">DRUSH</span><span class="o">=</span><span class="s2">&quot;vendor/bin/drush&quot;</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Running new preview deploy script...&quot;</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="nv">$DRUSH</span><span class="w"> </span>deploy
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;Deploy complete.&quot;</span>
+</span></code></pre></div>
+</div>
+<div class="tabbed-block">
+<p>Runs when new commits are pushed to the MR. Same as above but without re-importing database or files.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="ch">#!/usr/bin/env bash</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="nv">DRUSH</span><span class="o">=</span><span class="s2">&quot;vendor/bin/drush&quot;</span>
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
+</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="nv">$DRUSH</span><span class="w"> </span>deploy
+</span></code></pre></div>
+</div>
+</div>
+</div>
+<h3 id="per-preview-overrides">Per-preview overrides<a class="headerlink" href="#per-preview-overrides" title="Permanent link">&para;</a></h3>
+<p>You can create preview-specific scripts that override the default:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>scripts/druploy/new/mr-123-deploy.sh
+</span></code></pre></div>
+<p>This script will run <strong>instead of</strong> the default <code>deploy.sh</code> for preview <code>mr-123</code> only. Useful when one MR needs a special migration step.</p>
+<hr />
+<h2 id="environment-variables">Environment variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<p>All preview environment variables use the <code>PREV_</code> prefix. They are available in PHP via <code>getenv()</code> and in deploy scripts as shell variables.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>PREV_IS_PREVIEW</code></td>
+<td>Always <code>"true"</code> in preview environments</td>
+</tr>
+<tr>
+<td><code>PREV_PROJECT_NAME</code></td>
+<td>Project slug (e.g. <code>my-project</code>)</td>
+</tr>
+<tr>
+<td><code>PREV_PREVIEW_NAME</code></td>
+<td>Preview name (e.g. <code>mr-42</code>, <code>branch-develop</code>)</td>
+</tr>
+<tr>
+<td><code>PREV_MR_IID</code></td>
+<td>Merge request IID (empty for branch previews)</td>
+</tr>
+<tr>
+<td><code>PREV_BRANCH</code></td>
+<td>Git branch name</td>
+</tr>
+<tr>
+<td><code>PREV_COMMIT_SHA</code></td>
+<td>Git commit SHA</td>
+</tr>
+<tr>
+<td><code>PREV_URL</code></td>
+<td>Full preview URL (<code>https://...</code>)</td>
+</tr>
+<tr>
+<td><code>PREV_DOMAIN</code></td>
+<td>Preview domain (without protocol)</td>
+</tr>
+<tr>
+<td><code>PREV_DB_HOST</code></td>
+<td>Database hostname</td>
+</tr>
+<tr>
+<td><code>PREV_DB_NAME</code></td>
+<td>Database name</td>
+</tr>
+<tr>
+<td><code>PREV_DB_USER</code></td>
+<td>Database username</td>
+</tr>
+<tr>
+<td><code>PREV_DB_PASSWORD</code></td>
+<td>Database password</td>
+</tr>
+<tr>
+<td><code>PREV_FILE_PUBLIC_PATH</code></td>
+<td>Public files path</td>
+</tr>
+<tr>
+<td><code>PREV_FILE_PRIVATE_PATH</code></td>
+<td>Private files path</td>
+</tr>
+<tr>
+<td><code>PREV_FILE_TEMP_PATH</code></td>
+<td>Temp files path</td>
+</tr>
+<tr>
+<td><code>PREV_FILE_TRANSLATIONS_PATH</code></td>
+<td>Translations directory</td>
+</tr>
+<tr>
+<td><code>PREV_REDIS_HOST</code></td>
+<td>Redis hostname (if redis/valkey enabled)</td>
+</tr>
+<tr>
+<td><code>PREV_SOLR_HOST</code></td>
+<td>Solr hostname (if enabled)</td>
+</tr>
+<tr>
+<td><code>PREV_SOLR_CORE</code></td>
+<td>Solr core name (if enabled)</td>
+</tr>
+<tr>
+<td><code>PREV_DOMAIN_ALIASES</code></td>
+<td>Comma-separated alias domains</td>
+</tr>
+<tr>
+<td><code>PREV_LITESPEED_CACHE</code></td>
+<td><code>"1"</code> if LiteSpeed Cache enabled</td>
+</tr>
+<tr>
+<td><code>PREV_HTTP_PROXY</code></td>
+<td>HTTP proxy URL (if proxy configured)</td>
+</tr>
+<tr>
+<td><code>PREV_HTTPS_PROXY</code></td>
+<td>HTTPS proxy URL (if proxy configured)</td>
+</tr>
+</tbody>
+</table>
+<div class="admonition tip">
+<p class="admonition-title">Tip</p>
+<p>Custom variables defined under the <code>env:</code> key in <code>druploy.yml</code> are injected <strong>as-is</strong> (without the <code>PREV_</code> prefix).</p>
+</div>
+<p><a class="md-button" href="../environment-variables/">See the full environment variables reference →</a></p>
+<hr />
+<h2 id="base-database-files">Base database &amp; files<a class="headerlink" href="#base-database-files" title="Permanent link">&para;</a></h2>
+<p>Each preview starts from a base database dump. Base files (Drupal public files) are optional.</p>
+<h3 id="database-required">Database (required)<a class="headerlink" href="#database-required" title="Permanent link">&para;</a></h3>
+<p>Upload a gzipped SQL dump using the CLI:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>druploy<span class="w"> </span>push<span class="w"> </span>db
+</span></code></pre></div>
+<p>The CLI can generate it automatically from your local DDEV environment.</p>
+<h3 id="files-optional">Files (optional)<a class="headerlink" href="#files-optional" title="Permanent link">&para;</a></h3>
+<p>Upload the public files directory. If not provided, an empty files directory is created.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Exclude image styles (Drupal regenerates them on demand)</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>druploy<span class="w"> </span>push<span class="w"> </span>files<span class="w"> </span>--no-image-styles
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
+</span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Also exclude files larger than 2 MB</span>
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>druploy<span class="w"> </span>push<span class="w"> </span>files<span class="w"> </span>--no-image-styles<span class="w"> </span>--strip-heavy-files<span class="w"> </span>2mb
+</span></code></pre></div>
+<p>Both commands auto-detect the project from the git remote in your current directory. Files are shared across previews using an overlay filesystem — each preview gets its own writable layer on top of the shared base.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+    <a href="https://druploy.com" target="_blank" rel="noopener" title="druploy.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M351.9 280H161c2.9 64.5 17.2 123.9 37.5 167.4 11.4 24.5 23.7 41.8 35.1 52.4 11.2 10.5 18.9 12.2 22.9 12.2s11.7-1.7 22.9-12.2c11.4-10.6 23.7-28 35.1-52.4 20.3-43.5 34.6-102.9 37.5-167.4zm-191-48h190.9c-2.8-64.5-17.1-123.9-37.4-167.4-11.4-24.4-23.7-41.8-35.1-52.4C268.1 1.7 260.4 0 256.4 0s-11.7 1.7-22.9 12.2c-11.4 10.6-23.7 28-35.1 52.4-20.3 43.5-34.6 102.9-37.5 167.4m-48 0c3.5-85.6 25.6-165.1 57.9-217.3C78.7 47.3 10.9 131.2 1.5 232zM1.5 280c9.4 100.8 77.2 184.7 169.3 217.3-32.3-52.2-54.4-131.7-57.9-217.3zm398.4 0c-3.5 85.6-25.6 165.1-57.9 217.3 92.1-32.7 159.9-116.5 169.3-217.3zm111.4-48C501.9 131.2 434.1 47.3 342 14.7c32.3 52.2 54.4 131.7 57.9 217.3z"/></svg>
+    </a>
+  
+    
+    
+    
+    
+    <a href="https://druploy.dev" target="_blank" rel="noopener" title="Open App" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M9.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L146.7 256zM224 384h256c17.7 0 32 14.3 32 32s-14.3 32-32 32H224c-17.7 0-32-14.3-32-32s14.3-32 32-32"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
 </footer>
-
-<script>
-function copyCode(btn) {
-  const pre = btn.closest('.code-block').querySelector('pre');
-  const text = pre.textContent;
-  navigator.clipboard.writeText(text).then(() => {
-    btn.textContent = 'Copied!';
-    btn.classList.add('copied');
-    setTimeout(() => {
-      btn.textContent = 'Copy';
-      btn.classList.remove('copied');
-    }, 2000);
-  });
-}
-
-// Sidebar active section highlight
-document.addEventListener('DOMContentLoaded', () => {
-  const links = document.querySelectorAll('.sidebar-nav a');
-  const sections = [];
-
-  links.forEach(link => {
-    const id = link.getAttribute('href').slice(1);
-    const el = document.getElementById(id);
-    if (el) sections.push({ id, el, link });
-  });
-
-  function updateActive() {
-    let current = sections[0];
-    for (const s of sections) {
-      if (s.el.getBoundingClientRect().top <= 120) {
-        current = s;
-      }
-    }
-    links.forEach(l => l.classList.remove('active'));
-    if (current) current.link.classList.add('active');
-  }
-
-  window.addEventListener('scroll', updateActive, { passive: true });
-  updateActive();
-});
-</script>
-
-</body>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "navigation.tracking", "search.suggest", "search.highlight", "search.share", "content.code.copy", "content.code.annotate", "content.tabs.link", "toc.follow"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
 </html>

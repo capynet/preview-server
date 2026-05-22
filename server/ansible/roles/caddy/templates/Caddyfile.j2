@@ -9,6 +9,11 @@ api.{{ domain }} {
 
 # Frontend app (root domain)
 {{ domain }} {
+	# Docs live on druploy.com — redirect any /docs request from the app domain
+	# to the public site so the canonical URL is druploy.com/docs/*.
+	@docs path /docs /docs/*
+	redir @docs https://druploy.com{uri} permanent
+
 	reverse_proxy host.docker.internal:3000
 }
 

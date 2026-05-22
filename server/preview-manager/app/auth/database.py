@@ -231,7 +231,9 @@ async def delete_ssh_key(key_id: int, user_id: int) -> bool:
 
 async def get_all_ssh_keys() -> list[dict]:
     pool = await get_pool()
-    rows = await pool.fetch("SELECT public_key FROM ssh_keys ORDER BY id")
+    rows = await pool.fetch(
+        "SELECT DISTINCT ON (fingerprint) public_key FROM ssh_keys ORDER BY fingerprint, id"
+    )
     return [dict(r) for r in rows]
 
 

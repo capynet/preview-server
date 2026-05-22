@@ -1,0 +1,90 @@
+site_name: Druploy Docs
+site_url: https://druploy.com/docs/
+site_description: Documentation for Druploy — Drupal preview environments per merge request.
+site_author: Druploy
+
+docs_dir: docs
+site_dir: ../server/preview-manager/landing/docs
+
+theme:
+  name: material
+  language: en
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: deep purple
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  features:
+    - navigation.sections
+    - navigation.indexes
+    - navigation.top
+    - navigation.tracking
+    - search.suggest
+    - search.highlight
+    - search.share
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - toc.follow
+  icon:
+    logo: material/rocket-launch-outline
+    repo: fontawesome/brands/git-alt
+
+extra:
+  homepage: https://druploy.com
+  social:
+    - icon: fontawesome/solid/globe
+      link: https://druploy.com
+      name: druploy.com
+    - icon: fontawesome/solid/terminal
+      link: https://druploy.dev
+      name: Open App
+
+extra_css:
+  - stylesheets/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 3
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+  - pymdownx.keys
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+
+nav:
+  - Home: index.md
+  - Configuration: configuration.md
+  - Environment variables: environment-variables.md
+  - CLI: cli.md
+
+strict: false
