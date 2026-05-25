@@ -6,36 +6,24 @@ Druploy spins up a fresh, isolated Drupal preview for every merge request — wi
 
 ---
 
-## Where to start
-
-<div class="grid cards" markdown>
-
--   :material-file-cog-outline: __[Configuration](configuration.md)__
-
-    ---
-
-    Configure your Drupal project for preview environments: `druploy.yml`, settings includes, deploy scripts.
-
--   :material-tune-variant: __[Environment variables](environment-variables.md)__
-
-    ---
-
-    All `PREV_*` variables available inside preview containers — in PHP via `getenv()` and in deploy scripts as shell variables.
-
--   :material-console: __[CLI](cli.md)__
-
-    ---
-
-    Install and use the `druploy` CLI to manage previews from your terminal: list, ssh, drush, push DB/files.
-
-</div>
-
----
-
 ## Quick start
 
 1. **Connect your GitLab project** to Druploy from the [app](https://druploy.dev).
-2. In your project root, run:
+2. Install the `druploy` CLI (Linux/macOS, `amd64` and `arm64`):
+
+    ```bash
+    curl -fsSL https://api.druploy.dev/api/cli/install.sh | sh
+    ```
+
+    The CLI installs into `~/.local/bin/` — no `sudo` required. See the [CLI docs](cli.md) for more.
+
+3. Authenticate (opens a browser for device-flow login):
+
+    ```bash
+    druploy login
+    ```
+
+4. In your project root, run:
 
     ```bash
     druploy setup
@@ -43,29 +31,15 @@ Druploy spins up a fresh, isolated Drupal preview for every merge request — wi
 
     This scaffolds `druploy.yml`, `settings.druploy.php` and the `scripts/druploy/` directory.
 
-3. Upload a base database (so previews boot with real content):
+5. Upload a base database (so previews boot with real content):
 
     ```bash
     druploy push db
     ```
 
-4. Open a merge request. Druploy builds the preview automatically and posts the URL on the MR.
+6. Open a merge request. Druploy builds the preview automatically and posts the URL on the MR.
 
 That's it — every new MR gets `https://mr-{id}-{your-project}.druploy.dev` end-to-end.
-
----
-
-## How it works
-
-Druploy is a coordinator that orchestrates per-MR VMs:
-
-- **Webhook**: GitLab notifies Druploy when an MR opens, updates, or closes.
-- **VM**: A fresh VM is allocated from a warm pool (instant assignment).
-- **Build**: The VM Agent clones your repo, parses `druploy.yml`, generates `docker-compose.yml`, imports your base DB/files, and runs your deploy scripts.
-- **Routing**: Caddy auto-discovers the new containers and issues a wildcard SSL cert (one cert covers every preview).
-- **Cleanup**: Auto-erase removes inactive previews after N days. Each preview can be stopped/started/rebuilt from the app or the CLI.
-
-Each preview is **fully isolated** (no shared database, no shared cache), so two MRs cannot leak state into each other.
 
 ---
 
