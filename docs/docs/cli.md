@@ -1,6 +1,22 @@
 # CLI
 
-The `druploy` CLI lets you manage previews from your terminal — list, ssh, run drush, push base DB/files, rebuild from a branch, and more. It auto-detects the project and preview from your current git branch.
+The `druploy` CLI lets you manage previews from your terminal — list, ssh, run drush, push base DB/files, rebuild from a branch, and more.
+
+## Context-aware
+
+The CLI is **context-aware**: when you run it from inside a project's git working tree, it figures out the project and preview from your current branch — no need to pass them as arguments.
+
+For example, from a checked-out feature branch with an open MR:
+
+```bash
+druploy update     # updates the preview for this MR
+druploy ssh        # SSH into the preview's PHP container
+druploy drush cr   # runs `drush cr` on this MR's preview
+```
+
+The same commands work from a branch preview (e.g. `develop`) — `druploy update`, `druploy ssh`, `druploy drush` all resolve to the `branch-develop` preview automatically.
+
+If you're outside a project directory, pass the project/preview explicitly: `druploy list my-project`, `druploy ssh my-project/mr-42`, etc.
 
 ---
 
