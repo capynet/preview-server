@@ -694,6 +694,32 @@ async def delete_preview(
 # ---------------------------------------------------------------------------
 
 
+async def get_previews_for_user(user_id: int, is_superadmin: bool, include_docker_status: bool = True) -> dict:
+    """Return the preview list a user is allowed to see.
+
+    Superadmin sees everything. Regular users see previews only in orgs they
+    belong to (full org membership) or in specific projects they were added to.
+    """
+    if is_superadmin:
+        return await get_preview_list_base(include_docker_status=include_docker_status)
+
+    from app.database import get_org_member, list_user_projects
+    user_orgs = await list_user_organizations(user_id)
+    all_previews = []
+    for org in user_orgs:
+        org_result = await get_preview_list_base(include_docker_status=include_docker_status, org_id=org["id"])
+        org_membership = await get_org_member(user_id, org["id"])
+        if org_membership:
+            all_previews.extend(org_result["previews"])
+        else:
+            accessible = await list_user_projects(org["id"], user_id)
+            accessible_slugs = {p["slug"] for p in accessible}
+            all_previews.extend(
+                p for p in org_result["previews"] if p.get("project_slug") in accessible_slugs
+            )
+    return {"previews": all_previews, "total": len(all_previews)}
+
+
 @global_router.get("/api/previews")
 async def list_previews(
     status: bool = True,
@@ -703,29 +729,7 @@ async def list_previews(
 
     Superadmin sees all previews. Regular users see previews for their orgs only.
     """
-    if user.is_superadmin:
-        result = await get_preview_list_base(include_docker_status=status)
-    else:
-        from app.database import get_org_member, list_user_projects
-        # Gather previews across all user's orgs
-        user_orgs = await list_user_organizations(user.id)
-        all_previews = []
-        for org in user_orgs:
-            org_result = await get_preview_list_base(include_docker_status=status, org_id=org["id"])
-            # Check if user is a real org member or project-only
-            org_membership = await get_org_member(user.id, org["id"])
-            if org_membership:
-                all_previews.extend(org_result["previews"])
-            else:
-                # Project-only: filter to accessible projects
-                accessible = await list_user_projects(org["id"], user.id)
-                accessible_slugs = {p["slug"] for p in accessible}
-                all_previews.extend(
-                    p for p in org_result["previews"] if p.get("project_slug") in accessible_slugs
-                )
-        result = {"previews": all_previews, "total": len(all_previews)}
-
-    return result
+    return await get_previews_for_user(user.id, user.is_superadmin, include_docker_status=status)
 
 
 # ---------------------------------------------------------------------------

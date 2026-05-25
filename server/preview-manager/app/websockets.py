@@ -220,85 +220,91 @@ deployment_log_broadcaster = DeploymentLogBroadcaster()
 
 
 class PreviewListManager:
-    """Manages WebSocket connections and broadcasts full preview list updates"""
+    """Manages WebSocket connections and broadcasts per-user-filtered preview list updates."""
 
     def __init__(self):
-        self.active_connections: list[WebSocket] = []
+        # Each entry pairs the socket with the authenticated user so we can
+        # filter the broadcast payload by the user's actual access.
+        self.active_connections: list[tuple[WebSocket, int]] = []
         self.last_state: str = ""
         self.check_interval = 30  # seconds (fallback; docker_events provides real-time updates)
         self.background_task = None
 
-    async def connect(self, websocket: WebSocket):
-        """Accept new WebSocket connection"""
+    async def connect(self, websocket: WebSocket, user_id: int):
+        """Accept new WebSocket connection and remember which user it belongs to."""
         await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"Preview list WS connection. Total: {len(self.active_connections)}")
+        self.active_connections.append((websocket, user_id))
+        logger.info(f"Preview list WS connection (user_id={user_id}). Total: {len(self.active_connections)}")
 
         if self.background_task is None and len(self.active_connections) > 0:
             self.background_task = asyncio.create_task(self.check_and_broadcast_loop())
 
     def disconnect(self, websocket: WebSocket):
-        """Remove WebSocket connection"""
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
+        """Remove WebSocket connection."""
+        self.active_connections = [(ws, uid) for (ws, uid) in self.active_connections if ws is not websocket]
         logger.info(f"Preview list WS disconnected. Total: {len(self.active_connections)}")
 
         if len(self.active_connections) == 0 and self.background_task:
             self.background_task.cancel()
             self.background_task = None
 
-    async def broadcast(self, message: dict):
-        """Broadcast message to all connected clients"""
-        disconnected = []
+    async def _push_filtered(self, msg_type: str, include_docker_status: bool = True) -> None:
+        """Send each connected client their own access-filtered preview list."""
+        if not self.active_connections:
+            return
 
-        for connection in self.active_connections:
+        from app.routes.previews import get_previews_for_user
+        from app.auth import database as auth_db
+
+        now = datetime.utcnow().isoformat()
+        disconnected: list[WebSocket] = []
+
+        for ws, user_id in list(self.active_connections):
             try:
-                await connection.send_json(message)
+                user = await auth_db.get_user_by_id(user_id)
+                if not user:
+                    disconnected.append(ws)
+                    continue
+                result = await get_previews_for_user(
+                    user_id,
+                    bool(user.get("is_superadmin")),
+                    include_docker_status=include_docker_status,
+                )
+                await ws.send_json({
+                    "type": msg_type,
+                    "previews": result["previews"],
+                    "total": result["total"],
+                    "checked_at": now,
+                })
             except Exception as e:
-                logger.warning(f"Error broadcasting preview list to client: {e}")
-                disconnected.append(connection)
+                logger.warning(f"Error sending filtered preview list to client (user_id={user_id}): {e}")
+                disconnected.append(ws)
 
-        for connection in disconnected:
-            self.disconnect(connection)
+        for ws in disconnected:
+            self.disconnect(ws)
 
     async def force_broadcast(self):
-        """Immediately broadcast the current preview list to all clients.
+        """Immediately push an updated preview list to every connected client.
 
         Also publishes a Valkey event so other workers can pick it up.
         """
-        # Publish event to Valkey for cross-worker notification
         try:
             from app.valkey import publish_event
             await publish_event("previews:global", {"action": "refresh"})
         except Exception:
             pass  # Valkey may not be available yet during startup
 
-        if not self.active_connections:
-            return
         try:
-            from app.routes.previews import get_preview_list_base
-            result = await get_preview_list_base(include_docker_status=False)
-            current_state = json.dumps(result["previews"], sort_keys=True, default=str)
-            self.last_state = current_state
-            await self.broadcast({
-                "type": "update",
-                "previews": result["previews"],
-                "total": result["total"],
-                "checked_at": datetime.utcnow().isoformat(),
-            })
+            await self._push_filtered("update", include_docker_status=False)
         except Exception as e:
             logger.error(f"Force broadcast error: {e}", exc_info=True)
 
     async def check_and_broadcast_loop(self):
-        """Background task that listens for Valkey pub/sub events and broadcasts updates.
-
-        Falls back to periodic polling if Valkey is unavailable.
-        """
+        """Listen for Valkey pub/sub events and push per-user filtered updates."""
         from app.routes.previews import get_preview_list_base
 
         logger.info("Starting preview list event listener")
 
-        # Try Valkey pub/sub first
         pubsub = None
         try:
             from app.valkey import subscribe
@@ -311,7 +317,6 @@ class PreviewListManager:
             try:
                 got_event = False
                 if pubsub:
-                    # Wait for event with timeout (so we can check connections)
                     msg = await asyncio.wait_for(
                         pubsub.get_message(ignore_subscribe_messages=True, timeout=self.check_interval),
                         timeout=self.check_interval + 1,
@@ -321,25 +326,21 @@ class PreviewListManager:
                 else:
                     await asyncio.sleep(self.check_interval)
 
-                # Fetch and broadcast if event received or periodic check
-                result = await get_preview_list_base()
-                current_state = json.dumps(result["previews"], sort_keys=True, default=str)
+                # The state-change check uses the global list, since per-user
+                # filtering is applied at send time. If the global state hasn't
+                # changed, no client needs an update.
+                global_result = await get_preview_list_base()
+                current_state = json.dumps(global_result["previews"], sort_keys=True, default=str)
 
                 if current_state != self.last_state:
                     logger.info(f"Preview list changed - broadcasting to {len(self.active_connections)} client(s)")
-                    await self.broadcast({
-                        "type": "update",
-                        "previews": result["previews"],
-                        "total": result["total"],
-                        "checked_at": datetime.utcnow().isoformat()
-                    })
+                    await self._push_filtered("update")
                     self.last_state = current_state
 
             except asyncio.CancelledError:
                 logger.info("Preview list event listener cancelled")
                 break
             except asyncio.TimeoutError:
-                # Normal timeout from wait_for, just continue
                 continue
             except Exception as e:
                 logger.error(f"Error in preview list event listener: {e}", exc_info=True)
@@ -592,19 +593,23 @@ async def stream_subprocess_output(
 @router.websocket("/ws/previews")
 async def websocket_previews(websocket: WebSocket):
     """
-    WebSocket endpoint for real-time full preview list updates.
-    Real-time preview list updates via WebSocket.
-    """
-    from app.routes.previews import get_preview_list_base
+    WebSocket endpoint for real-time per-user preview list updates.
 
-    await _authenticate_ws(websocket)
-    await preview_list_manager.connect(websocket)
+    The user is identified at authentication time and the broadcast payload is
+    filtered to the previews they are allowed to see.
+    """
+    from app.routes.previews import get_preview_list_base, get_previews_for_user
+
+    user_id = await _authenticate_ws(websocket)
+    user_row = await auth_db.get_user_by_id(user_id)
+    is_superadmin = bool(user_row and user_row.get("is_superadmin"))
+    await preview_list_manager.connect(websocket, user_id)
 
     async def send_two_phase(msg_type: str):
         t_ws = time.monotonic()
 
-        # Phase 1: filesystem only (fast)
-        result = await get_preview_list_base(include_docker_status=False)
+        # Phase 1: filesystem only (fast), already filtered per user
+        result = await get_previews_for_user(user_id, is_superadmin, include_docker_status=False)
         t_phase1 = time.monotonic()
         await websocket.send_json({
             "type": msg_type,
@@ -614,10 +619,12 @@ async def websocket_previews(websocket: WebSocket):
         })
         logger.info(f"[TIMING] WS phase 1 ({msg_type}): {t_phase1 - t_ws:.3f}s")
 
-        # Phase 2: with Docker status (slow)
-        result = await get_preview_list_base(include_docker_status=True)
+        # Phase 2: with Docker status (slow), still per-user filtered
+        result = await get_previews_for_user(user_id, is_superadmin, include_docker_status=True)
         t_phase2 = time.monotonic()
-        preview_list_manager.last_state = json.dumps(result["previews"], sort_keys=True, default=str)
+        # last_state tracks the global preview list so change detection stays consistent
+        global_state = await get_preview_list_base(include_docker_status=True)
+        preview_list_manager.last_state = json.dumps(global_state["previews"], sort_keys=True, default=str)
         await websocket.send_json({
             "type": "update",
             "previews": result["previews"],
@@ -633,8 +640,9 @@ async def websocket_previews(websocket: WebSocket):
             try:
                 msg = await asyncio.wait_for(websocket.receive_text(), timeout=60.0)
                 if msg == "refresh":
-                    result = await get_preview_list_base(include_docker_status=True)
-                    preview_list_manager.last_state = json.dumps(result["previews"], sort_keys=True, default=str)
+                    result = await get_previews_for_user(user_id, is_superadmin, include_docker_status=True)
+                    global_state = await get_preview_list_base(include_docker_status=True)
+                    preview_list_manager.last_state = json.dumps(global_state["previews"], sort_keys=True, default=str)
                     await websocket.send_json({
                         "type": "update",
                         "previews": result["previews"],

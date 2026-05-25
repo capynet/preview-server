@@ -35,7 +35,13 @@ Is the UI of preview manager ([server](server))
 - revisa la documentacion y añadir la documentacion de como configurar gitlab.
 - Es posible estar asignado a organizaciones de otros owner? por ejemplo marcelo.tosco.diodati@gmail.com parte de Druploy y Dropsolid ademas de ser owner de su propio org?
 - Post deploy sigue mostrando el tag "Deploying" aunque haya temrinado el deploy principal
+
 # TODO
+- Todo el sistema de mails esta listo. Solo probe el de añadir a un usuario a un grupo o org sin que el user exista y cuando existe. Me queda probar los demas. No es urgente pero hace falta.
+- Voy a tener que auditar todoas las url y endpoint. no vaya que un ususario sin privilegios pueda acceder o realizar accioones get o post sin tener los permisos necesarios.
+- Cuando se haga un druplot push db deberia haber un flag que sanitize la db. de hecho por defecto la tiene que sanitizar. 
+- el usuario admin deberia ser reseteado? eso podria ser una opcion de druploy.yml o de la ui
+- El codigo de python ha ido creciendo a lo largo del tiempo y tengo la sensacion que archivos grandes dificultan a claude analizar y hacer cambios ya que consumen muchos token. Sio esto es asi estaria genial hacer algun refactor y separar los archivos en archivos mas pequeños. idealmete por funcionalidad? organization, user, account, emails, etc 
 - A veces queres mandar un preview a druploy incluso si las regla required_jobs no pasa. Estariab bueno poder marcar a nivel preview la desactivacion (o a nivel proyecto por lo menos podes espefificar que ramas o MR se bypasean asi se logra crear la primer preview) 
 - los preview estaria bueno que muestren la fecha de creacion de la VM, ultima actualizacion y tiempo rstante hasta que se elimine si no esta bloqueada.
 - Posibilidad de configurar un proyecot para que use VM mas grandes. Es necesario por si algun proyecto se considera muy pesado. 

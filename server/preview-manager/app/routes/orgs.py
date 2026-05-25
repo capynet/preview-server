@@ -246,23 +246,33 @@ async def list_invitations(user: UserWithContext = Depends(require_org_role(OrgR
 async def create_invitation(body: InviteBody, user: UserWithContext = Depends(require_org_role(OrgRole.admin))):
     from app.auth import database as auth_db
 
+    scope = f"project '{body.project_slug}'" if body.project_slug else "organization"
+    logger.info(
+        f"[invite] {user.email} requested invite for {body.email} as {body.role.value} "
+        f"to {scope} in org '{user.org.slug}'"
+    )
+
     # Resolve project_id if project_slug provided
     project_id = None
     if body.project_slug:
         project = await get_project_by_slug(user.org.id, body.project_slug)
         if not project:
+            logger.warning(f"[invite] project '{body.project_slug}' not found in org '{user.org.slug}'")
             raise HTTPException(status_code=404, detail=f"Project '{body.project_slug}' not found")
         project_id = project["id"]
 
     # If user already exists, add directly instead of sending invitation
     existing_user = await auth_db.get_user_by_email(body.email)
     if existing_user:
+        logger.info(f"[invite] {body.email} already exists (user_id={existing_user['id']}) → adding directly")
         if project_id:
             from app.database import get_project_member
             existing_pm = await get_project_member(existing_user["id"], project_id)
             if existing_pm:
+                logger.info(f"[invite] {body.email} is already a member of project '{body.project_slug}' → 409")
                 raise HTTPException(status_code=409, detail=f"{body.email} is already a member of this project")
             await add_project_member(existing_user["id"], project_id, user.id, body.role.value)
+            logger.info(f"[invite] added user_id={existing_user['id']} as project_member of '{body.project_slug}' (role={body.role.value})")
             try:
                 send_added_to_project_email(
                     body.email,
@@ -270,27 +280,34 @@ async def create_invitation(body: InviteBody, user: UserWithContext = Depends(re
                     project.get("name") or body.project_slug or "project",
                     body.role.value,
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"[invite] failed to send added-to-project email to {body.email}: {e}")
             return {"success": True, "added_directly": True, "message": f"User {body.email} added to project"}
         else:
             from app.database import get_org_member
             existing_om = await get_org_member(existing_user["id"], user.org.id)
             if existing_om:
+                logger.info(f"[invite] {body.email} is already a member of org '{user.org.slug}' → 409")
                 raise HTTPException(status_code=409, detail=f"{body.email} is already a member of this organization")
             await add_org_member(existing_user["id"], user.org.id, body.role.value)
+            logger.info(f"[invite] added user_id={existing_user['id']} as org_member of '{user.org.slug}' (role={body.role.value})")
             try:
                 send_added_to_org_email(body.email, user.org.name, body.role.value)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error(f"[invite] failed to send added-to-org email to {body.email}: {e}")
             return {"success": True, "added_directly": True, "message": f"User {body.email} added to organization"}
 
     existing_inv = await get_invitation_by_email(body.email, user.org.id)
     if existing_inv:
+        logger.info(f"[invite] pending invitation already exists for {body.email} in org '{user.org.slug}' → 400")
         raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
 
     invitation = await create_org_invitation(
         user.org.id, body.email, body.role.value, user.id, project_id
+    )
+    logger.info(
+        f"[invite] created invitation_id={invitation['id']} for {body.email} as {body.role.value} "
+        f"to {scope}; sending email"
     )
 
     try:
@@ -311,8 +328,8 @@ async def create_invitation(body: InviteBody, user: UserWithContext = Depends(re
                 invitation["token"],
                 user.name,
             )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"[invite] failed to send invitation email for invitation_id={invitation['id']}: {e}")
 
     return invitation
 
@@ -390,18 +407,27 @@ async def add_proj_member(
     user: UserWithContext = Depends(require_org_role(OrgRole.admin)),
 ):
     """Add a member to a project. If user exists, add directly. Otherwise send invitation."""
+    logger.info(
+        f"[invite] {user.email} requested add of {body.email} as {body.role.value} "
+        f"to project '{slug}' in org '{user.org.slug}'"
+    )
+
     project = await get_project_by_slug(user.org.id, slug)
     if not project:
+        logger.warning(f"[invite] project '{slug}' not found in org '{user.org.slug}'")
         raise HTTPException(status_code=404, detail=f"Project '{slug}' not found")
 
     from app.auth import database as auth_db
     existing_user = await auth_db.get_user_by_email(body.email)
 
     if existing_user:
+        logger.info(f"[invite] {body.email} already exists (user_id={existing_user['id']}) → adding directly")
         existing_pm = await get_project_member(existing_user["id"], project["id"])
         if existing_pm:
+            logger.info(f"[invite] {body.email} is already a member of project '{slug}' → 409")
             raise HTTPException(status_code=409, detail=f"{body.email} is already a member of this project")
         await add_project_member(existing_user["id"], project["id"], user.id, body.role.value)
+        logger.info(f"[invite] added user_id={existing_user['id']} as project_member of '{slug}' (role={body.role.value})")
         try:
             send_added_to_project_email(
                 body.email,
@@ -409,17 +435,22 @@ async def add_proj_member(
                 project.get("name") or slug,
                 body.role.value,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"[invite] failed to send added-to-project email to {body.email}: {e}")
         return {"success": True, "added_directly": True, "message": f"User {body.email} added to project"}
 
     # User doesn't exist — send invitation email
     existing_inv = await get_invitation_by_email(body.email, user.org.id)
     if existing_inv:
+        logger.info(f"[invite] pending invitation already exists for {body.email} in org '{user.org.slug}' → 400")
         raise HTTPException(status_code=400, detail="A pending invitation for this email already exists")
 
     invitation = await create_org_invitation(
         user.org.id, body.email, body.role.value, user.id, project["id"]
+    )
+    logger.info(
+        f"[invite] created invitation_id={invitation['id']} for {body.email} as {body.role.value} "
+        f"to project '{slug}'; sending email"
     )
     try:
         send_project_invitation_email(
@@ -430,8 +461,8 @@ async def add_proj_member(
             invitation["token"],
             user.name,
         )
-    except Exception:
-        pass
+    except Exception as e:
+        logger.error(f"[invite] failed to send invitation email for invitation_id={invitation['id']}: {e}")
 
     return {"success": True, "added_directly": False, "message": f"Invitation sent to {body.email}"}
 

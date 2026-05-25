@@ -152,10 +152,11 @@ async def _resolve_oauth_user(info) -> tuple[dict | None, bool]:
         logger.info(f"First user {info.email} assigned superadmin")
     elif invitation:
         await mark_invitation_accepted(invitation["id"])
-        await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
         if invitation.get("project_id"):
             from app.database import add_project_member
             await add_project_member(user["id"], invitation["project_id"], invitation["invited_by"], invitation["role"])
+        else:
+            await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
         logger.info(f"User {info.email} accepted invitation for org {invitation['organization_id']} with role {invitation['role']}")
     elif domain_match:
         await add_org_member(user["id"], domain_match["organization_id"], domain_match["default_role"])
@@ -316,13 +317,13 @@ async def accept_invitation(body: AcceptInviteBody):
         # New user — create without password (OAuth only)
         user = await db.create_user(invitation["email"], body.name or invitation["email"].split("@")[0])
 
-    await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
     await mark_invitation_accepted(invitation["id"])
 
-    # Auto-add to project if invitation was for a specific project
     if invitation.get("project_id"):
         from app.database import add_project_member
         await add_project_member(user["id"], invitation["project_id"], invitation["invited_by"], invitation["role"])
+    else:
+        await add_org_member(user["id"], invitation["organization_id"], invitation["role"])
 
     session_id = await db.create_session(user["id"])
     response = Response(content='{"success": true}', media_type="application/json")
@@ -339,11 +340,15 @@ class MagicLinkRequestBody(BaseModel):
 @router.post("/magic/request")
 async def magic_link_request(body: MagicLinkRequestBody):
     """Send a magic link email. Always returns success to prevent email enumeration."""
-    user = await db.get_user_by_email(body.email.strip().lower())
+    email = body.email.strip().lower()
+    user = await db.get_user_by_email(email)
     if user:
         token = await db.create_magic_link_token(user["id"])
         from app.auth.email import send_magic_link_email
         send_magic_link_email(user["email"], token)
+        logger.info(f"[magic-link] requested for {email} → user_id={user['id']}, link sent")
+    else:
+        logger.info(f"[magic-link] requested for {email} → no account, silently ignored")
     return {"success": True}
 
 
@@ -354,15 +359,18 @@ async def magic_link_verify(token: str):
 
     result = await db.validate_and_consume_magic_link_token(token)
     if not result:
+        logger.info("[magic-link] verify failed: invalid or expired token")
         return RedirectResponse(f"{frontend}/auth/login?error=magic_expired")
 
     user = await db.get_user_by_id(result["user_id"])
     if not user:
+        logger.info(f"[magic-link] verify failed: user_id={result['user_id']} no longer exists")
         return RedirectResponse(f"{frontend}/auth/login?error=magic_expired")
 
     session_id = await db.create_session(user["id"])
     response = RedirectResponse(frontend, status_code=302)
     _set_session_cookie(response, session_id)
+    logger.info(f"[magic-link] verified for {user['email']} (user_id={user['id']}) → session created")
     return response
 
 
@@ -499,20 +507,27 @@ class CreateOwnerBody(BaseModel):
     email: str
 
 
-@router.get("/admin/owners")
-async def list_owners(user: UserWithContext = Depends(require_superadmin())):
-    """List all users in the system (superadmin only)."""
-    users = await db.list_users()
+@router.get("/admin/users")
+async def list_all_users(user: UserWithContext = Depends(require_superadmin())):
+    """List every user in the system with their org/project memberships."""
+    users = await db.list_users_with_memberships()
     return {"users": [
-        {"id": u["id"], "email": u["email"], "name": u["name"], "avatar_url": u.get("avatar_url"),
-         "is_superadmin": bool(u["is_superadmin"]), "system_role": u.get("system_role"), "created_at": u["created_at"]}
+        {
+            "id": u["id"], "email": u["email"], "name": u["name"],
+            "avatar_url": u.get("avatar_url"),
+            "is_superadmin": bool(u["is_superadmin"]),
+            "system_role": u.get("system_role"),
+            "created_at": u["created_at"],
+            "org_memberships": u["org_memberships"],
+            "project_memberships": u["project_memberships"],
+        }
         for u in users
     ]}
 
 
-@router.post("/admin/owners")
-async def create_owner(body: CreateOwnerBody, user: UserWithContext = Depends(require_superadmin())):
-    """Create a new user by email (superadmin only). The user can then login via OAuth and create orgs."""
+@router.post("/admin/users")
+async def create_owner_user(body: CreateOwnerBody, user: UserWithContext = Depends(require_superadmin())):
+    """Pre-register a user as an owner. They can then sign in via OAuth and create organizations."""
     email = body.email.strip().lower()
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Invalid email")
@@ -525,9 +540,23 @@ async def create_owner(body: CreateOwnerBody, user: UserWithContext = Depends(re
     return {"id": new_user["id"], "email": new_user["email"], "message": f"User '{email}' created as owner. They can now sign in via OAuth and create organizations."}
 
 
-@router.delete("/admin/owners/{user_id}")
-async def delete_owner(user_id: int, user: UserWithContext = Depends(require_superadmin())):
-    """Delete a user (superadmin only). Cannot delete yourself."""
+@router.post("/admin/users/{user_id}/revoke")
+async def revoke_user(user_id: int, user: UserWithContext = Depends(require_superadmin())):
+    """Revoke all org/project memberships and clear system_role. Keeps the user row intact."""
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="Cannot revoke your own access")
+    target = await db.get_user_by_id(user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target["is_superadmin"]:
+        raise HTTPException(status_code=400, detail="Cannot revoke access from a superadmin")
+    await db.revoke_user_access(user_id)
+    return {"success": True}
+
+
+@router.delete("/admin/users/{user_id}")
+async def delete_user(user_id: int, user: UserWithContext = Depends(require_superadmin())):
+    """Anonymize the user: wipe PII + credentials + memberships, keep the row as audit anchor."""
     if user_id == user.id:
         raise HTTPException(status_code=400, detail="Cannot delete yourself")
     target = await db.get_user_by_id(user_id)
@@ -535,7 +564,7 @@ async def delete_owner(user_id: int, user: UserWithContext = Depends(require_sup
         raise HTTPException(status_code=404, detail="User not found")
     if target["is_superadmin"]:
         raise HTTPException(status_code=400, detail="Cannot delete a superadmin")
-    await db.delete_user(user_id)
+    await db.anonymize_user(user_id)
     return {"success": True}
 
 

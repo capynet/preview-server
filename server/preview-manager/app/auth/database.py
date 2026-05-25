@@ -58,9 +58,106 @@ async def list_users() -> list[dict]:
     return [_row_to_dict(r) for r in rows]
 
 
+async def list_users_with_memberships() -> list[dict]:
+    """Return non-anonymized users, each enriched with their org and project memberships."""
+    pool = await get_pool()
+    user_rows = await pool.fetch("SELECT * FROM users WHERE deleted_at IS NULL ORDER BY id")
+    org_rows = await pool.fetch(
+        """SELECT om.user_id, o.id AS org_id, o.slug AS org_slug,
+                  o.name AS org_name, o.color AS org_color, om.role
+           FROM org_members om
+           JOIN organizations o ON om.organization_id = o.id"""
+    )
+    proj_rows = await pool.fetch(
+        """SELECT pm.user_id, p.id AS project_id, p.slug AS project_slug,
+                  p.name AS project_name, o.id AS org_id, o.slug AS org_slug,
+                  o.name AS org_name, o.color AS org_color, pm.role
+           FROM project_members pm
+           JOIN projects p ON pm.project_id = p.id
+           JOIN organizations o ON p.organization_id = o.id"""
+    )
+
+    orgs_by_user: dict[int, list[dict]] = {}
+    for r in org_rows:
+        orgs_by_user.setdefault(r["user_id"], []).append({
+            "org_id": r["org_id"], "org_slug": r["org_slug"],
+            "org_name": r["org_name"], "org_color": r["org_color"],
+            "role": r["role"],
+        })
+
+    projs_by_user: dict[int, list[dict]] = {}
+    for r in proj_rows:
+        projs_by_user.setdefault(r["user_id"], []).append({
+            "project_id": r["project_id"], "project_slug": r["project_slug"],
+            "project_name": r["project_name"],
+            "org_id": r["org_id"], "org_slug": r["org_slug"],
+            "org_name": r["org_name"], "org_color": r["org_color"],
+            "role": r["role"],
+        })
+
+    out = []
+    for u in user_rows:
+        d = _row_to_dict(u)
+        d["org_memberships"] = orgs_by_user.get(u["id"], [])
+        d["project_memberships"] = projs_by_user.get(u["id"], [])
+        out.append(d)
+    return out
+
+
 async def delete_user(user_id: int):
     pool = await get_pool()
     await pool.execute("DELETE FROM users WHERE id = $1", user_id)
+
+
+async def revoke_user_access(user_id: int) -> None:
+    """Remove the user from every org and project, and clear their system_role.
+
+    Keeps the user row so they can be re-invited without re-registering, but
+    leaves them with zero memberships (UI degrades to the empty-state chrome).
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM org_members WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM project_members WHERE user_id = $1", user_id)
+            await conn.execute(
+                "UPDATE users SET system_role = NULL, updated_at = $1 WHERE id = $2",
+                _now(), user_id,
+            )
+
+
+async def anonymize_user(user_id: int) -> None:
+    """Delete the user's PII and credentials, keep the row as an audit anchor.
+
+    Memberships, sessions, OAuth accounts, API tokens, magic-link tokens and
+    SSH keys are deleted. Email is rewritten to a synthetic value so the
+    original address can be reused, and `deleted_at` is set so listings can
+    filter the user out. References from `org_invitations.invited_by` and
+    `project_members.added_by` remain valid because the row stays.
+    """
+    pool = await get_pool()
+    now = _now()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("DELETE FROM sessions WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM api_tokens WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM oauth_accounts WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM magic_link_tokens WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM ssh_keys WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM org_members WHERE user_id = $1", user_id)
+            await conn.execute("DELETE FROM project_members WHERE user_id = $1", user_id)
+            await conn.execute(
+                """UPDATE users SET
+                       email = 'deleted-user-' || id || '@anonymized.local',
+                       name = 'Deleted user',
+                       avatar_url = NULL,
+                       is_superadmin = 0,
+                       system_role = NULL,
+                       deleted_at = $1,
+                       updated_at = $1
+                   WHERE id = $2""",
+                now, user_id,
+            )
 
 
 async def is_setup_complete() -> bool:
