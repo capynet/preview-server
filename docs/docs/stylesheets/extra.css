@@ -72,6 +72,8 @@
 /* Inline code in tables: keep identifiers on one line */
 .md-typeset table:not([class]) code {
   white-space: nowrap;
+  word-break: keep-all;
+  overflow-wrap: normal;
 }
 
 /* Inline links — purple to match landing */
