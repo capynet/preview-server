@@ -62,27 +62,18 @@ When `PROJECT/PREVIEW` is not provided, the CLI auto-detects it from the current
 
 | Command | Description |
 |---|---|
-| `druploy login` | Authenticate via browser (device flow).<br>**Options:**<br>• `--no-browser` — print the authorization URL instead of opening a browser. |
-| `druploy setup` | Scaffold a Drupal project for previews: creates `druploy.yml`, `web/sites/default/settings.druploy.php`, and `scripts/druploy/`. Run from the project root.<br>**Options:**<br>• `--override` — overwrite existing files with the latest templates. |
+| `druploy login` | Authenticate via browser (device flow).<br>**Usage:** `druploy login [--no-browser]`<br>**Options:**<br>• `--no-browser` — print the authorization URL instead of opening a browser. _Example:_ `druploy login --no-browser` |
+| `druploy setup` | Scaffold a Drupal project for previews: creates `druploy.yml`, `web/sites/default/settings.druploy.php`, and `scripts/druploy/`. Run from the project root.<br>**Usage:** `druploy setup [--override]`<br>**Options:**<br>• `--override` — overwrite existing files with the latest templates. _Example:_ `druploy setup --override` |
 | `druploy logout` | Log out and clear saved credentials. |
 | `druploy whoami` | Show the current authenticated user (name, email, role). |
-| `druploy list` | List previews. Opens an interactive project selector if no project is given.<br>**Options:**<br>• `PROJECT` — project slug to list previews for.<br>• `--no-status` — skip the Docker status check (faster). |
-| `druploy ssh` | Open an interactive shell in a container on the preview VM. SSH key is registered on first use.<br>**Options:**<br>• `container` — `php` (default, lands in `/var/www/html`) or `db`.<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). |
-| `druploy gen-drush-aliases` | Generate `drush/sites/druploy.site.yml` with site aliases pointing to the preview. After running, use native drush: `drush @druploy.default status`, `drush @druploy.default cr`, etc.<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). |
-| `druploy update` | Update the preview with the latest code from the current branch — syncs code, runs `composer install` and `update` deploy scripts. Does **not** re-import the database or files. |
-| `druploy rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import.<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). |
-| `druploy push db` | Upload a base database used to seed every new preview. By default, generates a dump from local DDEV (excluding `cache_*` tables) and uploads it.<br>**Options:**<br>• `FILE` — path to an existing `.sql.gz` to upload directly, skipping the dump step.<br>• `-y`, `--yes` — skip confirmation prompts. |
-| `druploy push files` | Upload the base files archive. By default, packages the local Drupal files dir into `.tar.gz` and uploads it.<br>**Options:**<br>• `FILE` — path to an existing `.tar.gz` to upload directly, skipping packaging.<br>• `--no-image-styles` — exclude `styles/` (Drupal regenerates them on demand).<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE` (e.g. `10mb`).<br>• `-y`, `--yes` — skip confirmation prompts. |
+| `druploy list` | List previews. Opens an interactive project selector if no project is given.<br>**Usage:** `druploy list [PROJECT] [--no-status]`<br>**Options:**<br>• `PROJECT` — project slug to list previews for. _Example:_ `druploy list my-drupal-site`<br>• `--no-status` — skip the Docker status check (faster). _Example:_ `druploy list --no-status` |
+| `druploy ssh` | Open an interactive shell in a container on the preview VM. SSH key is registered on first use.<br>**Usage:** `druploy ssh [container] [PROJECT/PREVIEW]`<br>**Options:**<br>• `container` — `php` (default, lands in `/var/www/html`) or `db`. _Example:_ `druploy ssh db`<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy ssh db my-site/mr-1597` |
+| `druploy gen-drush-aliases` | Generate `drush/sites/druploy.site.yml` with site aliases pointing to the preview. After running, use native drush: `drush @druploy.default status`, `drush @druploy.default cr`, etc.<br>**Usage:** `druploy gen-drush-aliases [PROJECT/PREVIEW]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy gen-drush-aliases my-site/branch-develop` |
+| `druploy update` | Update the preview with the latest code from the current branch — syncs code, runs `composer install` and `update` deploy scripts. Does **not** re-import the database or files.<br>**Usage:** `druploy update` |
+| `druploy rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import.<br>**Usage:** `druploy rebuild [PROJECT/PREVIEW]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy rebuild my-site/mr-1597` |
+| `druploy push db` | Upload a base database used to seed every new preview. By default, generates a dump from local DDEV (excluding `cache_*` tables) and uploads it.<br>**Usage:** `druploy push db [FILE] [-y\|--yes]`<br>**Options:**<br>• `FILE` — path to an existing `.sql.gz` to upload directly, skipping the dump step. _Example:_ `druploy push db ./base.sql.gz`<br>• `-y`, `--yes` — skip confirmation prompts. _Example:_ `druploy push db -y` |
+| `druploy push files` | Upload the base files archive. By default, packages the local Drupal files dir into `.tar.gz` and uploads it.<br>**Usage:** `druploy push files [FILE] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `FILE` — path to an existing `.tar.gz` to upload directly, skipping packaging. _Example:_ `druploy push files ./files.tar.gz`<br>• `--no-image-styles` — exclude `styles/` (Drupal regenerates them on demand). _Example:_ `druploy push files --no-image-styles`<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`. _Example:_ `druploy push files --strip-heavy-files 10mb`<br>• `-y`, `--yes` — skip confirmation prompts. _Example:_ `druploy push files -y` |
 | `druploy self-update` | Update the CLI to the latest version in place. |
-
-### `ssh` examples
-
-```bash
-druploy ssh                       # auto-detect, php container
-druploy ssh db                    # auto-detect, db container
-druploy ssh my-site/mr-1597       # explicit preview, php container
-druploy ssh db my-site/mr-1597    # explicit preview, db container
-```
 
 ---
 
