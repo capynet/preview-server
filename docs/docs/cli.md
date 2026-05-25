@@ -58,21 +58,21 @@ The CLI installs into `~/.local/bin/` — no `sudo` required.
 
 ## Commands
 
-Arguments shown in `[brackets]` are optional. When `PROJECT/PREVIEW` is optional, the CLI auto-detects it from the current git remote and branch — see [Context-aware](#context-aware).
+When `PROJECT/PREVIEW` is not provided, the CLI auto-detects it from the current git remote and branch — see [Context-aware](#context-aware).
 
 | Command | Description |
 |---|---|
-| `druploy login [--no-browser]` | Authenticate via browser (device flow). `--no-browser` prints the URL instead of opening it. |
-| `druploy setup [--override]` | Scaffold a Drupal project for previews: creates `druploy.yml`, `web/sites/default/settings.druploy.php`, and `scripts/druploy/`. Run from the project root. `--override` overwrites existing files. |
+| `druploy login` | Authenticate via browser (device flow).<br>**Options:**<br>• `--no-browser` — print the authorization URL instead of opening a browser. |
+| `druploy setup` | Scaffold a Drupal project for previews: creates `druploy.yml`, `web/sites/default/settings.druploy.php`, and `scripts/druploy/`. Run from the project root.<br>**Options:**<br>• `--override` — overwrite existing files with the latest templates. |
 | `druploy logout` | Log out and clear saved credentials. |
 | `druploy whoami` | Show the current authenticated user (name, email, role). |
-| `druploy list [PROJECT] [--no-status]` | List previews. With no `PROJECT`, opens an interactive selector. `--no-status` skips the Docker status check (faster). |
-| `druploy ssh [container] [PROJECT/PREVIEW]` | Open an interactive shell in a container on the preview VM. `container` is `php` (default, lands in `/var/www/html`) or `db`. SSH key is registered on first use. |
-| `druploy gen-drush-aliases [PROJECT/PREVIEW]` | Generate `drush/sites/druploy.site.yml` with site aliases pointing to the preview. After running, use native drush: `drush @druploy.default status`, `drush @druploy.default cr`, etc. |
+| `druploy list` | List previews. Opens an interactive project selector if no project is given.<br>**Options:**<br>• `PROJECT` — project slug to list previews for.<br>• `--no-status` — skip the Docker status check (faster). |
+| `druploy ssh` | Open an interactive shell in a container on the preview VM. SSH key is registered on first use.<br>**Options:**<br>• `container` — `php` (default, lands in `/var/www/html`) or `db`.<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). |
+| `druploy gen-drush-aliases` | Generate `drush/sites/druploy.site.yml` with site aliases pointing to the preview. After running, use native drush: `drush @druploy.default status`, `drush @druploy.default cr`, etc.<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). |
 | `druploy update` | Update the preview with the latest code from the current branch — syncs code, runs `composer install` and `update` deploy scripts. Does **not** re-import the database or files. |
-| `druploy rebuild [PROJECT/PREVIEW]` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. |
-| `druploy push db [FILE] [-y\|--yes]` | Upload a base database used to seed every new preview. With no `FILE`, generates a dump from local DDEV (excluding `cache_*` tables) and uploads it. Pass a `.sql.gz` path to upload directly. `-y`/`--yes` skips confirmation. |
-| `druploy push files [FILE] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]` | Upload the base files archive. With no `FILE`, packages the local Drupal files dir into `.tar.gz`. Pass a `.tar.gz` path to upload directly. `--no-image-styles` excludes `styles/` (Drupal regenerates them). `--strip-heavy-files SIZE` excludes files larger than `SIZE` (e.g. `10mb`). `-y`/`--yes` skips confirmation. |
+| `druploy rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import.<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). |
+| `druploy push db` | Upload a base database used to seed every new preview. By default, generates a dump from local DDEV (excluding `cache_*` tables) and uploads it.<br>**Options:**<br>• `FILE` — path to an existing `.sql.gz` to upload directly, skipping the dump step.<br>• `-y`, `--yes` — skip confirmation prompts. |
+| `druploy push files` | Upload the base files archive. By default, packages the local Drupal files dir into `.tar.gz` and uploads it.<br>**Options:**<br>• `FILE` — path to an existing `.tar.gz` to upload directly, skipping packaging.<br>• `--no-image-styles` — exclude `styles/` (Drupal regenerates them on demand).<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE` (e.g. `10mb`).<br>• `-y`, `--yes` — skip confirmation prompts. |
 | `druploy self-update` | Update the CLI to the latest version in place. |
 
 ### `ssh` examples
