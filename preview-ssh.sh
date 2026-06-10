@@ -10,8 +10,8 @@
 set -euo pipefail
 
 MAIN_SERVER="91.99.157.66"
-SSH_KEY="/home/preview-manager/.ssh/preview-vm"
-DB_CONTAINER="preview-postgres"
+SSH_KEY="/home/druploy/.ssh/druploy-vm"
+DB_CONTAINER="druploy-postgres"
 DB_USER="preview_manager"
 
 if [[ $# -lt 1 ]]; then
@@ -79,7 +79,10 @@ echo "→ ${PROJECT}/${PREVIEW} @ ${VM_IP}"
 # Connect to VM through main server
 # The SSH key lives on the main server, so we SSH there first and then hop to the VM
 if [[ $# -gt 0 ]]; then
-    ssh_main "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR preview@${VM_IP} $*"
+    # Escape the command once so the main server's shell passes it intact to the
+    # inner ssh — otherwise ';' or '&&' would split it and run half on the server
+    REMOTE_CMD=$(printf '%q ' "$@")
+    ssh_main "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR preview@${VM_IP} ${REMOTE_CMD}"
 else
     ssh -t "root@${MAIN_SERVER}" "ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -t preview@${VM_IP}"
 fi
