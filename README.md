@@ -187,6 +187,24 @@ Otro asunto para resolver:
     3. Hace docker commit → preview-db:{project}:latest
     4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
 
+  Hardening del canal coordinador ↔ VM agent
+
+    - [ ] Firewall en las VMs (mayor impacto, menor riesgo). Agregar un Hetzner Cloud firewall al crear la VM en cloud.py que solo permita :8022
+      (agent) y :2222 (SSH container) desde la IP del coordinador. Hoy las VMs tienen IP pública con todos los puertos abiertos (iptables ACCEPT, ufw
+      inactivo).
+    - [ ] Token en el endpoint /deploy del agent. Hoy solo /terminal valida el HMAC (validateToken); /deploy, /deploy/status, /deploy/logs, /info,
+      /containers, /ssh-keys están sin auth. Cualquiera que alcance :8022 puede disparar deploys o leer info.
+    - [ ] Token de GitLab en texto plano sobre HTTP. El payload de /deploy incluye GitCloneURL = https://oauth2:{gitlab_token}@.../repo.git y viaja
+      por HTTP sin cifrar (http://{vm_ip}:8022/deploy). Mitigado parcialmente porque es tráfico intra-datacenter (Hetzner Falkenstein), pero el token
+      queda expuesto.
+    - [ ] Cifrar el canal coordinador → agent. Pasar :8022 de HTTP plano a HTTPS (TLS, aunque sea self-signed con pinning) o tunelizarlo. Resuelve de
+      raíz los dos puntos anteriores.
+
+  Hardening del canal CLI ↔ preview (menor prioridad)
+
+    - [ ] Sin verificación de host en SSH. El CLI usa StrictHostKeyChecking=no + UserKnownHostsFile=/dev/null en ssh/push files/push db. El tráfico va
+      cifrado, pero no hay TOFU: un MITM activo podría suplantar el preview. Evaluar pinning del host key de la VM (el coordinador ya conoce su
+      fingerprint).
 
 
 Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. 

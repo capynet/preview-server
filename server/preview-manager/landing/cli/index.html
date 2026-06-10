@@ -427,6 +427,7 @@ druploy list</pre>
       { group: 'Preview — act on a remote preview VM', name: 'preview ssh', usage: 'druploy preview ssh [container] [PROJECT/PREVIEW]', desc: 'Open an interactive shell in a preview container (php by default, db also available)', flags: [] },
       { group: 'Preview — act on a remote preview VM', name: 'preview update', usage: 'druploy preview update', desc: 'Update the preview with the latest code from the current branch, preserving DB and files', flags: [] },
       { group: 'Preview — act on a remote preview VM', name: 'preview rebuild', usage: 'druploy preview rebuild [PROJECT/PREVIEW]', desc: 'Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. Asks for confirmation.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
+      { group: 'Preview — act on a remote preview VM', name: 'preview push db', usage: 'druploy preview push db [PROJECT/PREVIEW]', desc: 'Replace this preview\'s database with your local one (dump via ddev, drush cr afterwards). The project base DB is not touched.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
       { group: 'Preview — act on a remote preview VM', name: 'preview push files', usage: 'druploy preview push files [PROJECT/PREVIEW]', desc: 'Rsync the local Drupal files dir to this preview only — the project base files are not touched. Additive by default.', flags: [['--dry-run', 'Local payload report (no connection, nothing sent) — tune exclusions before sending'], ['--replace', 'Wipe the preview files dir completely before sending'], ['--no-image-styles', 'Exclude styles/ (Drupal regenerates them on demand)'], ['--strip-heavy-files SIZE', 'Exclude files larger than SIZE'], ['--yes, -y', 'Skip confirmation prompt']] },
       { group: 'CLI', name: 'login', usage: 'druploy login', desc: 'Authenticate via browser (device flow)', flags: [['--no-browser', 'Print URL instead of opening browser']] },
       { group: 'CLI', name: 'logout', usage: 'druploy logout', desc: 'Log out and clear credentials', flags: [] },
@@ -480,6 +481,14 @@ druploy list</pre>
 
     // Changelog data
     const changelog = [
+      {
+        version: '2.2.0', date: '2026-06-10',
+        sections: [
+          { tag: 'Added', type: 'added', items: [
+            '<code>druploy preview push db</code>: replace a single preview\'s database with your local one (dump via ddev, import over SSH, <code>drush cr</code> afterwards). The project base DB is untouched.'
+          ]}
+        ]
+      },
       {
         version: '2.1.0', date: '2026-06-10',
         sections: [

@@ -5,6 +5,24 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-06-10
+
+### Added
+
+- **`druploy preview push db`**: replace a single preview's database with your local one. Dumps via ddev (cache tables structure-only, same as `project push db`), streams it over SSH into `drush sql:cli` (dropping the old DB first) and rebuilds caches with `drush cr`. The project's base DB is not touched. `-y` to skip confirmation.
+
+## [2.1.4] - 2026-06-10
+
+### Added
+
+- **`preview push files`**: the payload summary (unfiltered size, filtered payload, savings) is now also shown before the confirmation prompt on a real push, so you know what you're about to send.
+
+## [2.1.2] - 2026-06-10
+
+### Changed
+
+- **`preview push files --dry-run`**: compact summary (unfiltered size, filtered payload, savings) instead of rsync's full stats block. The real sync no longer prints the stats block either — the progress bar already shows totals.
+
 ## [2.1.1] - 2026-06-10
 
 ### Changed

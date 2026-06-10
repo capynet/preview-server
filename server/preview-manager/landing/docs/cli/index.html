@@ -492,6 +492,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#v22-2026-06-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.2 — 2026-06-10
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#v21-2026-06-10" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -703,6 +714,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#v22-2026-06-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.2 — 2026-06-10
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#v21-2026-06-10" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -898,8 +920,12 @@
 <td>Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. Asks for confirmation before destroying the current VM.<br><strong>Usage:</strong> <code>druploy preview rebuild [PROJECT/PREVIEW] [-y\|--yes]</code><br><strong>Options:</strong><br>• <code>PROJECT/PREVIEW</code> — explicit preview (otherwise auto-detected). <em>Example:</em> <code>druploy preview rebuild my-site/mr-1597</code><br>• <code>-y</code>, <code>--yes</code> — skip the confirmation prompt. <em>Example:</em> <code>druploy preview rebuild -y</code></td>
 </tr>
 <tr>
+<td><code>druploy preview push db</code></td>
+<td>Dump the local database (via ddev, cache tables structure-only) and import it into <strong>this preview only</strong>, replacing its current database. Rebuilds caches afterwards (<code>drush cr</code>). The project's base DB is not touched.<br><strong>Usage:</strong> <code>druploy preview push db [PROJECT/PREVIEW] [-y\|--yes]</code><br><strong>Options:</strong><br>• <code>PROJECT/PREVIEW</code> — explicit preview (otherwise auto-detected). <em>Example:</em> <code>druploy preview push db my-site/mr-1597</code><br>• <code>-y</code>, <code>--yes</code> — skip the confirmation prompt.</td>
+</tr>
+<tr>
 <td><code>druploy preview push files</code></td>
-<td>Rsync the local Drupal files dir to <strong>this preview only</strong> (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as <code>project push files</code>.<br><strong>Usage:</strong> <code>druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]</code><br><strong>Options:</strong><br>• <code>--dry-run</code> — local payload report (no connection, nothing sent); "Total transferred file size" is what a real push would send. <em>Example:</em> <code>druploy preview push files --dry-run --strip-heavy-files 5mb</code><br>• <code>--replace</code> — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• <code>--no-image-styles</code> — exclude <code>styles/</code>.<br>• <code>--strip-heavy-files SIZE</code> — exclude files larger than <code>SIZE</code>.<br>• <code>-y</code>, <code>--yes</code> — skip confirmation prompts.</td>
+<td>Rsync the local Drupal files dir to <strong>this preview only</strong> (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as <code>project push files</code>. Shows a payload summary before asking for confirmation.<br><strong>Usage:</strong> <code>druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]</code><br><strong>Options:</strong><br>• <code>--dry-run</code> — compact local report (no connection, nothing sent): unfiltered dir size, payload after filters, and how much the filters save. <em>Example:</em> <code>druploy preview push files --dry-run --strip-heavy-files 5mb</code><br>• <code>--replace</code> — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• <code>--no-image-styles</code> — exclude <code>styles/</code>.<br>• <code>--strip-heavy-files SIZE</code> — exclude files larger than <code>SIZE</code>.<br>• <code>-y</code>, <code>--yes</code> — skip confirmation prompts.</td>
 </tr>
 </tbody>
 </table>
@@ -936,6 +962,11 @@
 </table>
 <hr />
 <h2 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h2>
+<h3 id="v22-2026-06-10">v2.2 — 2026-06-10<a class="headerlink" href="#v22-2026-06-10" title="Permanent link">&para;</a></h3>
+<p><strong>Added</strong></p>
+<ul>
+<li><code>druploy preview push db</code>: replace a single preview's database with your local one (dump via ddev, import over SSH, <code>drush cr</code> afterwards). The project's base DB is untouched.</li>
+</ul>
 <h3 id="v21-2026-06-10">v2.1 — 2026-06-10<a class="headerlink" href="#v21-2026-06-10" title="Permanent link">&para;</a></h3>
 <p><strong>Added</strong></p>
 <ul>

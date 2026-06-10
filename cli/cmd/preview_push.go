@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,6 +20,83 @@ var previewPushCmd = &cobra.Command{
 
 Unlike "druploy project push" (which updates the shared base used to seed
 every new preview), these commands only touch the target preview.`,
+}
+
+var previewPushDBCmd = &cobra.Command{
+	Use:   "db [PROJECT/PREVIEW-NAME]",
+	Short: "Replace the preview's database with your local one",
+	Long: `Dump the local database (via ddev, cache tables structure-only) and import
+it into the target preview, replacing its current database completely.
+
+Only the target preview is touched — the project's base database is not
+modified. After the import, caches are rebuilt with drush cr.
+
+Examples:
+  druploy preview push db
+  druploy preview push db my-site/mr-1597`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runPreviewPushDB,
+}
+
+func runPreviewPushDB(cmd *cobra.Command, args []string) error {
+	sshBin, err := findSSHBinary()
+	if err != nil {
+		return err
+	}
+
+	r, _, err := resolvePreviewPushTarget(args)
+	if err != nil {
+		return err
+	}
+
+	// Make sure SSH access works (key registered + injected into the preview)
+	if err := ensureSSHKeyRegistered(); err != nil {
+		return err
+	}
+	if err := ensureSSHKeyOnPreview(r); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not inject SSH key: %v\n", err)
+	}
+
+	if !confirm(fmt.Sprintf("REPLACE the database of preview %s/%s with your local database? Its current database will be lost.", r.Project, r.PreviewName)) {
+		fmt.Fprintln(os.Stderr, "Aborted.")
+		return nil
+	}
+
+	// Ensure ddev is running before piping stdout, so startup messages
+	// don't get mixed into the SQL dump
+	if err := ensureDdevRunning(); err != nil {
+		return err
+	}
+
+	fmt.Fprintln(os.Stderr, "Generating database dump...")
+	dump, compressorName, wait, err := startLocalDBDump()
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Importing into %s/%s (compressor: %s -6)... this may take a while\n", r.Project, r.PreviewName, compressorName)
+
+	remoteCmd := "cd /var/www/html && vendor/bin/drush sql:drop -y && gzip -dc | vendor/bin/drush sql:cli && vendor/bin/drush cr"
+	c := exec.Command(sshBin,
+		"-p", "2222",
+		"-o", "StrictHostKeyChecking=no",
+		"-o", "UserKnownHostsFile=/dev/null",
+		"-o", "LogLevel=ERROR",
+		fmt.Sprintf("preview@%s", r.VmIP),
+		remoteCmd,
+	)
+	c.Stdin = dump
+	c.Stdout = os.Stdout
+	c.Stderr = os.Stderr
+	if err := c.Run(); err != nil {
+		return fmt.Errorf("database import failed: %w", err)
+	}
+	if err := wait(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Done! Database of %s/%s replaced.\n", r.Project, r.PreviewName)
+	return nil
 }
 
 var previewPushFilesCmd = &cobra.Command{
@@ -47,6 +125,26 @@ Examples:
 	RunE: runPreviewPushFiles,
 }
 
+// resolvePreviewPushTarget resolves the target preview from an optional
+// explicit PROJECT/PREVIEW-NAME arg and announces it. The bool reports
+// whether the target was explicit.
+func resolvePreviewPushTarget(args []string) (*resolvedPreview, bool, error) {
+	if len(args) == 1 {
+		r, err := resolveExplicitPreview(args[0])
+		if err != nil {
+			return nil, false, err
+		}
+		announcePreview(r.Project, r.PreviewName, "")
+		return r, true, nil
+	}
+	r, err := resolvePreview()
+	if err != nil {
+		return nil, false, err
+	}
+	announcePreview(r.Project, r.PreviewName, r.Branch)
+	return r, false, nil
+}
+
 func runPreviewPushFiles(cmd *cobra.Command, args []string) error {
 	rsyncBin, err := exec.LookPath("rsync")
 	if err != nil {
@@ -73,24 +171,19 @@ func runPreviewPushFiles(cmd *cobra.Command, args []string) error {
 
 	// Dry run: purely local payload report, no connection needed
 	if previewPushDryRun {
-		return previewPushDryRunReport(rsyncBin, localDir)
+		fmt.Fprintf(os.Stderr, "Dry run — computing payload from %s...\n", localDir)
+		payload, err := previewPushPayloadReport(rsyncBin, localDir)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "\nNothing was sent (dry run). A real push would transfer %s.\n", formatBytesShort(payload))
+		return nil
 	}
 
 	// Resolve target preview
-	var r *resolvedPreview
-	explicit := len(args) == 1
-	if explicit {
-		r, err = resolveExplicitPreview(args[0])
-		if err != nil {
-			return err
-		}
-		announcePreview(r.Project, r.PreviewName, "")
-	} else {
-		r, err = resolvePreview()
-		if err != nil {
-			return err
-		}
-		announcePreview(r.Project, r.PreviewName, r.Branch)
+	r, explicit, err := resolvePreviewPushTarget(args)
+	if err != nil {
+		return err
 	}
 
 	// Remote files dir: /var/www/html[/docroot]/<relFiles>
@@ -116,6 +209,12 @@ func runPreviewPushFiles(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: could not inject SSH key: %v\n", err)
 	}
 
+	// Show the payload summary before asking for confirmation
+	if _, err := previewPushPayloadReport(rsyncBin, localDir); err != nil {
+		return err
+	}
+	fmt.Fprintln(os.Stderr)
+
 	msg := fmt.Sprintf("Sync local files to preview %s/%s?", r.Project, r.PreviewName)
 	if previewPushReplace {
 		msg = fmt.Sprintf("WIPE the files dir of preview %s/%s completely and upload your local content? Nothing currently on the preview will be kept.", r.Project, r.PreviewName)
@@ -135,7 +234,7 @@ func runPreviewPushFiles(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		fmt.Fprintf(os.Stderr, "Syncing %s → %s...\n", localDir, remoteDir)
+		fmt.Fprintf(os.Stderr, "Syncing local: %s → preview: %s...\n", localDir, remoteDir)
 		c := exec.Command(rsyncBin, buildPreviewRsyncArgs(localDir, remoteDir, r.VmIP)...)
 		c.Stdout = os.Stdout
 		c.Stderr = os.Stderr
@@ -165,29 +264,67 @@ func runPreviewPushFiles(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// previewPushDryRunReport computes the payload size locally by dry-running
-// rsync against an empty directory with the same filters applied.
-func previewPushDryRunReport(rsyncBin, localDir string) error {
+// previewPushPayloadReport computes the payload size locally by dry-running
+// rsync against an empty directory with the same filters applied, and prints
+// a compact summary. Returns the payload size in bytes.
+func previewPushPayloadReport(rsyncBin, localDir string) (int64, error) {
 	tmp, err := os.MkdirTemp("", "druploy-dryrun-")
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
+		return 0, fmt.Errorf("failed to create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tmp)
 
 	args := append([]string{"--dry-run"}, previewRsyncFilterArgs()...)
-	args = append(args, "-rlpt", "--stats", "--human-readable",
+	args = append(args, "-rlpt", "--stats",
 		strings.TrimSuffix(localDir, "/")+"/", tmp+"/")
 
-	fmt.Fprintf(os.Stderr, "Dry run — computing payload from %s with the current flags...\n\n", localDir)
 	c := exec.Command(rsyncBin, args...)
-	c.Stdout = os.Stdout
 	c.Stderr = os.Stderr
-	if err := c.Run(); err != nil {
-		return fmt.Errorf("rsync dry run failed: %w", err)
+	out, err := c.Output()
+	if err != nil {
+		return 0, fmt.Errorf("rsync dry run failed: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "\nNothing was sent (local dry run). \"Total transferred file size\" is the payload a real push would send.")
-	return nil
+	payload := parseRsyncStat(string(out), "Total transferred file size:")
+	fileCount := parseRsyncStat(string(out), "Number of regular files transferred:")
+	original, _ := dirSize(localDir)
+
+	fmt.Fprintln(os.Stderr)
+	if original > 0 {
+		fmt.Fprintf(os.Stderr, "  Files dir (unfiltered):  %s\n", formatBytesShort(original))
+	}
+	fmt.Fprintf(os.Stderr, "  Payload after filters:   %s (%s files)\n", formatBytesShort(payload), formatCount(fileCount))
+	if original > payload {
+		saved := original - payload
+		fmt.Fprintf(os.Stderr, "  Excluded by filters:     %s (%d%%)\n", formatBytesShort(saved), saved*100/original)
+	}
+	return payload, nil
+}
+
+// parseRsyncStat extracts an integer value from a line of rsync --stats output.
+func parseRsyncStat(out, prefix string) int64 {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, prefix) {
+			continue
+		}
+		v := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		v = strings.ReplaceAll(strings.Fields(v)[0], ",", "")
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err == nil {
+			return n
+		}
+	}
+	return 0
+}
+
+// formatCount renders an integer with thousands separators (e.g. 82,464).
+func formatCount(n int64) string {
+	s := strconv.FormatInt(n, 10)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
 
 // previewRsyncFilterArgs returns the exclusion/size filters shared by the
@@ -210,7 +347,7 @@ func buildPreviewRsyncArgs(localDir, remoteDir, vmIP string) []string {
 	sshCmd := "ssh -p 2222 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
 	args := []string{"-rlptz", "-e", sshCmd}
 	args = append(args, previewRsyncFilterArgs()...)
-	args = append(args, "--stats", "--human-readable", "--info=progress2",
+	args = append(args, "--human-readable", "--info=progress2",
 		strings.TrimSuffix(localDir, "/")+"/",
 		fmt.Sprintf("preview@%s:%s/", vmIP, remoteDir),
 	)
@@ -223,6 +360,8 @@ func init() {
 	previewPushFilesCmd.Flags().BoolVar(&previewPushReplace, "replace", false, "Wipe the preview's files dir completely before sending")
 	previewPushFilesCmd.Flags().BoolVar(&previewPushDryRun, "dry-run", false, "Local size report of the payload, without connecting or sending anything")
 	previewPushFilesCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
+	previewPushDBCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
+	previewPushCmd.AddCommand(previewPushDBCmd)
 	previewPushCmd.AddCommand(previewPushFilesCmd)
 	previewCmd.AddCommand(previewPushCmd)
 }

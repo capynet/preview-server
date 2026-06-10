@@ -90,7 +90,8 @@ The base DB and files are **project-level resources**: every new preview of the 
 | `druploy preview ssh` | Open an interactive shell in a container on the preview VM. SSH key is registered on first use.<br>**Usage:** `druploy preview ssh [container] [PROJECT/PREVIEW]`<br>**Options:**<br>• `container` — `php` (default, lands in `/var/www/html`) or `db`. _Example:_ `druploy preview ssh db`<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview ssh db my-site/mr-1597` |
 | `druploy preview update` | Update the preview with the latest code from the current branch — syncs code, runs `composer install` and `update` deploy scripts. Does **not** re-import the database or files.<br>**Usage:** `druploy preview update` |
 | `druploy preview rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. Asks for confirmation before destroying the current VM.<br>**Usage:** `druploy preview rebuild [PROJECT/PREVIEW] [-y\|--yes]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview rebuild my-site/mr-1597`<br>• `-y`, `--yes` — skip the confirmation prompt. _Example:_ `druploy preview rebuild -y` |
-| `druploy preview push files` | Rsync the local Drupal files dir to **this preview only** (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as `project push files`.<br>**Usage:** `druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `--dry-run` — local payload report (no connection, nothing sent); "Total transferred file size" is what a real push would send. _Example:_ `druploy preview push files --dry-run --strip-heavy-files 5mb`<br>• `--replace` — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• `--no-image-styles` — exclude `styles/`.<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`.<br>• `-y`, `--yes` — skip confirmation prompts. |
+| `druploy preview push db` | Dump the local database (via ddev, cache tables structure-only) and import it into **this preview only**, replacing its current database. Rebuilds caches afterwards (`drush cr`). The project's base DB is not touched.<br>**Usage:** `druploy preview push db [PROJECT/PREVIEW] [-y\|--yes]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview push db my-site/mr-1597`<br>• `-y`, `--yes` — skip the confirmation prompt. |
+| `druploy preview push files` | Rsync the local Drupal files dir to **this preview only** (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as `project push files`. Shows a payload summary before asking for confirmation.<br>**Usage:** `druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `--dry-run` — compact local report (no connection, nothing sent): unfiltered dir size, payload after filters, and how much the filters save. _Example:_ `druploy preview push files --dry-run --strip-heavy-files 5mb`<br>• `--replace` — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• `--no-image-styles` — exclude `styles/`.<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`.<br>• `-y`, `--yes` — skip confirmation prompts. |
 
 !!! warning "Moved in v2.0"
     The old top-level forms (`druploy ssh`, `druploy update`, `druploy rebuild`, `druploy push`) were removed in v2.0. Running them prints an error pointing to the new location.
@@ -107,6 +108,12 @@ The base DB and files are **project-level resources**: every new preview of the 
 ---
 
 ## Changelog
+
+### v2.2 — 2026-06-10
+
+**Added**
+
+- `druploy preview push db`: replace a single preview's database with your local one (dump via ddev, import over SSH, `drush cr` afterwards). The project's base DB is untouched.
 
 ### v2.1 — 2026-06-10
 

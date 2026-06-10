@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -331,10 +332,34 @@ func generateAndUploadDB(slug string) error {
 		return err
 	}
 
+	compressedOut, compressorName, wait, err := startLocalDBDump()
+	if err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Uploading database dump (compressor: %s -6)...\n", compressorName)
+
+	filename := fmt.Sprintf("%s-base.sql.gz", slug)
+	if err := apiClient.UploadBaseFileChunked(slug, "db", compressedOut, filename, 0); err != nil {
+		return fmt.Errorf("upload failed: %w", err)
+	}
+
+	if err := wait(); err != nil {
+		return err
+	}
+
+	fmt.Fprintf(os.Stderr, "Done! Base database for %q updated.\n", slug)
+	return nil
+}
+
+// startLocalDBDump starts the ddev dump + gzip pipeline and returns the
+// compressed stream, the compressor name, and a wait func that must be called
+// after the stream has been fully consumed.
+func startLocalDBDump() (io.Reader, string, func() error, error) {
 	// Get database credentials from Drupal's configuration
 	creds, err := getDrupalDBCredentials()
 	if err != nil {
-		return fmt.Errorf("could not detect database credentials: %w", err)
+		return nil, "", nil, fmt.Errorf("could not detect database credentials: %w", err)
 	}
 
 	// In DDEV, the db container always has root/root access.
@@ -398,7 +423,7 @@ func generateAndUploadDB(slug string) error {
 
 	dumperOut, err := dumper.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create pipe: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
 	// Use pigz if available, else gzip. Level 6 for good balance.
@@ -415,32 +440,27 @@ func generateAndUploadDB(slug string) error {
 
 	compressedOut, err := compressor.StdoutPipe()
 	if err != nil {
-		return fmt.Errorf("failed to create %s pipe: %w", compressorName, err)
+		return nil, "", nil, fmt.Errorf("failed to create %s pipe: %w", compressorName, err)
 	}
 
 	if err := dumper.Start(); err != nil {
-		return fmt.Errorf("failed to start database dump: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to start database dump: %w", err)
 	}
 	if err := compressor.Start(); err != nil {
-		return fmt.Errorf("failed to start %s: %w", compressorName, err)
+		return nil, "", nil, fmt.Errorf("failed to start %s: %w", compressorName, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Uploading database dump (compressor: %s -6)...\n", compressorName)
-
-	filename := fmt.Sprintf("%s-base.sql.gz", slug)
-	if err := apiClient.UploadBaseFileChunked(slug, "db", compressedOut, filename, 0); err != nil {
-		return fmt.Errorf("upload failed: %w", err)
+	wait := func() error {
+		if err := compressor.Wait(); err != nil {
+			return fmt.Errorf("%s failed: %w", compressorName, err)
+		}
+		if err := dumper.Wait(); err != nil {
+			return fmt.Errorf("database dump failed: %w", err)
+		}
+		return nil
 	}
 
-	if err := compressor.Wait(); err != nil {
-		return fmt.Errorf("%s failed: %w", compressorName, err)
-	}
-	if err := dumper.Wait(); err != nil {
-		return fmt.Errorf("database dump failed: %w", err)
-	}
-
-	fmt.Fprintf(os.Stderr, "Done! Base database for %q updated.\n", slug)
-	return nil
+	return compressedOut, compressorName, wait, nil
 }
 
 // parseSizeMB parses a size string like "10mb", "5MB", "10" into bytes.
