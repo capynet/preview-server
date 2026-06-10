@@ -12,13 +12,32 @@ import (
 
 // resolvedPreview holds cached preview connection info.
 type resolvedPreview struct {
-	OrgSlug       string `json:"org_slug"`
-	Project       string `json:"project"`
-	PreviewName   string `json:"preview_name"`
-	VmIP          string `json:"vm_ip"`
-	JumpHost      string `json:"jump_host"`
-	Status        string `json:"status"`
-	Branch        string `json:"branch"`
+	OrgSlug     string `json:"org_slug"`
+	Project     string `json:"project"`
+	PreviewName string `json:"preview_name"`
+	VmIP        string `json:"vm_ip"`
+	JumpHost    string `json:"jump_host"`
+	Status      string `json:"status"`
+	Branch      string `json:"branch"`
+}
+
+// announcePreview prints the preview a command is about to act on.
+// Pass the branch when the preview was auto-detected from git; empty for explicit targets.
+func announcePreview(project, previewName, branch string) {
+	if branch != "" {
+		fmt.Fprintf(os.Stderr, "→ preview: %s/%s (auto-detected from branch %q)\n", project, previewName, branch)
+	} else {
+		fmt.Fprintf(os.Stderr, "→ preview: %s/%s\n", project, previewName)
+	}
+}
+
+// announceProject prints the project a command is about to act on.
+func announceProject(slug string, autoDetected bool) {
+	if autoDetected {
+		fmt.Fprintf(os.Stderr, "→ project: %s (auto-detected from git remote)\n", slug)
+	} else {
+		fmt.Fprintf(os.Stderr, "→ project: %s\n", slug)
+	}
 }
 
 // cacheKey returns a unique key based on the git repo root + branch.

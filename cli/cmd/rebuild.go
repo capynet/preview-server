@@ -16,9 +16,9 @@ If PROJECT/PREVIEW-NAME is given, rebuilds that specific preview.
 Otherwise, auto-detects from git remote and current branch.
 
 Examples:
-  druploy rebuild
-  druploy rebuild soudal/branch-master
-  druploy rebuild soudal/mr-1584`,
+  druploy preview rebuild
+  druploy preview rebuild soudal/branch-master
+  druploy preview rebuild soudal/mr-1584`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		var project, previewName string
@@ -32,6 +32,7 @@ Examples:
 			if err := resolveOrgForProject(project); err != nil {
 				return err
 			}
+			announcePreview(project, previewName, "")
 		} else {
 			r, err := resolvePreview()
 			if err != nil {
@@ -39,9 +40,15 @@ Examples:
 			}
 			project = r.Project
 			previewName = r.PreviewName
+			announcePreview(project, previewName, r.Branch)
 		}
 
-		fmt.Fprintf(os.Stderr, "Rebuilding %s/%s...\n", project, previewName)
+		if !confirm("Rebuild destroys the current VM and redeploys from scratch (DB and files are reimported from the base). Continue?") {
+			fmt.Fprintln(os.Stderr, "Aborted.")
+			return nil
+		}
+
+		fmt.Fprintln(os.Stderr, "Rebuilding...")
 		result, err := apiClient.PostActionByName(project, previewName, "rebuild?force_new=true")
 		if err != nil {
 			return err
@@ -55,5 +62,6 @@ Examples:
 }
 
 func init() {
-	rootCmd.AddCommand(rebuildCmd)
+	rebuildCmd.Flags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
+	previewCmd.AddCommand(rebuildCmd)
 }

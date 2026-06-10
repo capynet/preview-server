@@ -12,9 +12,10 @@ import (
 )
 
 var selfUpdateCmd = &cobra.Command{
-	Use:   "self-update",
-	Short: "Update the CLI to the latest version",
-	Args:  cobra.NoArgs,
+	Use:     "self-update",
+	Short:   "Update the CLI to the latest version",
+	GroupID: groupCLI,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := loadConfig()
 		if cfg.APIURL == "" {

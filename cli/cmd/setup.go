@@ -5,8 +5,9 @@ import (
 )
 
 var setupCmd = &cobra.Command{
-	Use:   "setup",
-	Short: "Scaffold a Drupal project for preview environments",
+	Use:     "setup",
+	Short:   "Scaffold a Drupal project for preview environments",
+	GroupID: groupLocal,
 	Long: `Creates the necessary files for druploy compatibility:
 
   1. Creates web/sites/default/settings.druploy.php for custom overrides

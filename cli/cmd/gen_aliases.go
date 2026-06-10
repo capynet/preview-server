@@ -21,6 +21,7 @@ func resolvePreviewTarget(args []string) (project, previewName string, err error
 		if err := resolveOrgForProject(project); err != nil {
 			return "", "", err
 		}
+		announcePreview(project, previewName, "")
 		return project, previewName, nil
 	}
 
@@ -39,21 +40,21 @@ func resolvePreviewTarget(args []string) (project, previewName string, err error
 	if err != nil {
 		return "", "", err
 	}
-	fmt.Fprintf(os.Stderr, "Detected branch: %s\n", branch)
 
 	// Find preview matching this branch
 	preview, err := findPreviewByBranch(project, branch)
 	if err != nil {
 		return "", "", err
 	}
-	fmt.Fprintf(os.Stderr, "Found preview: %s (branch: %s)\n", preview.Name, preview.Branch)
+	announcePreview(project, preview.Name, branch)
 
 	return project, preview.Name, nil
 }
 
 var genAliasesCmd = &cobra.Command{
-	Use:   "gen-drush-aliases [PROJECT/PREVIEW-NAME]",
-	Short: "Generate local drush site aliases for a preview",
+	Use:     "gen-drush-aliases [PROJECT/PREVIEW-NAME]",
+	Short:   "Generate local drush site aliases for a preview",
+	GroupID: groupLocal,
 	Long: `Generate a drush/sites/druploy.site.yml file with aliases pointing
 to the preview environment, including SSH connection info for remote drush.
 

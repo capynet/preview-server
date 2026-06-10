@@ -16,10 +16,11 @@ import (
 var listNoStatus bool
 
 var listCmd = &cobra.Command{
-	Use:   "list [PROJECT]",
-	Short: "List previews, optionally filtered by project",
-	Long:  "List previews for a project. If no project is specified, shows a project selector.",
-	Args:  cobra.MaximumNArgs(1),
+	Use:     "list [PROJECT]",
+	Short:   "List the previews of a project",
+	Long:    "List previews for a project. If no project is specified, auto-detects from the git remote or shows a project selector.",
+	GroupID: groupProject,
+	Args:    cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		result, err := apiClient.ListPreviews(!listNoStatus)
 		if err != nil {
@@ -45,6 +46,7 @@ var listCmd = &cobra.Command{
 			if slug, err := detectProjectSlug(); err == nil {
 				if _, ok := projects[slug]; ok {
 					project = slug
+					announceProject(slug, true)
 				}
 			}
 			// Fallback to interactive selector

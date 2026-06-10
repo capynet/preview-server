@@ -5,6 +5,44 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-06-10
+
+### Changed
+
+- **`preview push files --replace`**: now wipes the preview's files dir completely before sending (the dir ends up containing exactly what you send), instead of rsync `--delete` mirroring.
+- **`preview push files --dry-run`**: now computes the payload locally (against an empty dir) — no connection to the preview needed, and the report reflects the full payload regardless of what's already on the preview.
+
+## [2.1.0] - 2026-06-10
+
+### Added
+
+- **`druploy preview push files`**: rsync the local Drupal files dir directly to a single preview, without touching the project's base files. Same exclusions as `project push files` (`css/js/php` always, `--no-image-styles`, `--strip-heavy-files`), plus:
+  - `--replace` — full mirror: deletes files on the preview that don't exist locally (excluded dirs and size-stripped files are never deleted).
+  - `--dry-run` — size report ("Total transferred file size") without sending anything, to tune the exclusion flags.
+
+## [2.0.0] - 2026-06-10
+
+### Changed
+
+- **Noun-verb command structure (gcloud style)**: preview operations now live under the `preview` noun — `druploy preview ssh`, `druploy preview update`, `druploy preview rebuild`. `list` stays top-level as the everyday read-only command.
+
+### Removed
+
+- **Top-level `ssh`, `update`, `rebuild` and the deprecated `push`**: running them now prints an error pointing to the new command (`druploy preview <verb>` / `druploy project push`).
+
+## [1.10.0] - 2026-06-10
+
+### Added
+
+- **Command groups in help**: `druploy --help` now groups commands by where they act — Local (your machine / working copy), Project (shared project resources), Preview (remote preview VM), and CLI.
+- **`druploy project push db|files`**: New canonical location for pushing base DB/files, making explicit that they are project-level resources shared by every preview.
+- **Target announcement**: Commands that act remotely now print the resolved target before doing anything, e.g. `→ preview: drupal-test/mr-123 (auto-detected from branch "feature/foo")` or `→ project: drupal-test (auto-detected from git remote)`.
+- **Rebuild confirmation**: `druploy rebuild` now asks for confirmation (it destroys the current VM and redeploys from scratch). Use `-y`/`--yes` to skip in scripts/CI.
+
+### Deprecated
+
+- **`druploy push`**: Still works but is hidden from help and prints a deprecation warning. Use `druploy project push` instead.
+
 ## [1.8.1] - 2026-03-04
 
 ### Fixed

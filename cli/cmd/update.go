@@ -18,15 +18,16 @@ without reimporting the database or files.
 Auto-detects the project and preview from the current git branch.
 
 Examples:
-  druploy update`,
+  druploy preview update`,
 	Args: cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		r, err := resolvePreview()
 		if err != nil {
 			return err
 		}
+		announcePreview(r.Project, r.PreviewName, r.Branch)
 
-		fmt.Fprintf(os.Stderr, "Updating %s/%s...\n", r.Project, r.PreviewName)
+		fmt.Fprintln(os.Stderr, "Updating...")
 		result, err := apiClient.PostActionByName(r.Project, r.PreviewName, "rebuild")
 		if err != nil {
 			return err
@@ -40,5 +41,5 @@ Examples:
 }
 
 func init() {
-	rootCmd.AddCommand(updateCmd)
+	previewCmd.AddCommand(updateCmd)
 }

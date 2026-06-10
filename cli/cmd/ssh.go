@@ -27,10 +27,10 @@ If project/preview-name is not given, auto-detects from the current git branch.
 On first use, you'll be asked to register your SSH key.
 
 Examples:
-  druploy ssh                        # auto-detect, php container
-  druploy ssh db                     # auto-detect, db container
-  druploy ssh soudal/mr-1597         # explicit preview, php container
-  druploy ssh db soudal/mr-1597      # explicit preview, db container`,
+  druploy preview ssh                        # auto-detect, php container
+  druploy preview ssh db                     # auto-detect, db container
+  druploy preview ssh soudal/mr-1597         # explicit preview, php container
+  druploy preview ssh db soudal/mr-1597      # explicit preview, db container`,
 	Args: cobra.MaximumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		container := "php"
@@ -59,11 +59,16 @@ Examples:
 
 		if explicitPreview != "" {
 			r, err = resolveExplicitPreview(explicitPreview)
+			if err != nil {
+				return err
+			}
+			announcePreview(r.Project, r.PreviewName, "")
 		} else {
 			r, err = resolvePreview()
-		}
-		if err != nil {
-			return err
+			if err != nil {
+				return err
+			}
+			announcePreview(r.Project, r.PreviewName, r.Branch)
 		}
 
 		// For PHP container, SSH directly into the container on port 2222
@@ -326,5 +331,5 @@ func findSSHBinary() (string, error) {
 }
 
 func init() {
-	rootCmd.AddCommand(sshCmd)
+	previewCmd.AddCommand(sshCmd)
 }

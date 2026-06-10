@@ -17,107 +17,128 @@ var stripHeavyFiles string
 var noImageStyles bool
 var autoYes bool
 
-var pushCmd = &cobra.Command{
-	Use:   "push",
-	Short: "Push base files to the preview server",
-	Long:  "Upload base database or files from your local project to the preview server.",
-}
+// newPushCmd builds the "push" command tree (push db / push files),
+// mounted under "druploy project push".
+func newPushCmd() *cobra.Command {
+	pushCmd := &cobra.Command{
+		Use:   "push",
+		Short: "Push base DB or files used to seed every new preview",
+		Long: `Upload the base database or files archive from your local project.
 
-var pushDBCmd = &cobra.Command{
-	Use:   "db [file.sql.gz]",
-	Short: "Export and upload the base database",
-	Long: `Export the database using mariadb-dump/mysqldump (via ddev) and upload it as the base
+These are project-level resources: every new preview of the project is
+seeded from them.`,
+	}
+
+	pushDBCmd := &cobra.Command{
+		Use:   "db [file.sql.gz]",
+		Short: "Export and upload the base database",
+		Long: `Export the database using mariadb-dump/mysqldump (via ddev) and upload it as the base
 database for previews. Cache tables (cache_*) are excluded automatically.
 
 If a file path is given, upload that file instead of generating a dump.
 The project is detected automatically from the git remote in the current directory.`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		slug, err := detectProjectSlug()
-		if err != nil {
-			return err
-		}
+		Args: cobra.MaximumNArgs(1),
+		RunE: runPushDB,
+	}
 
-		if err := resolveOrgForProject(slug); err != nil {
-			return err
-		}
-
-		// Check current status on the server
-		status, err := apiClient.GetBaseFilesStatus(slug)
-		if err != nil {
-			return fmt.Errorf("failed to check base files status: %w", err)
-		}
-
-		if status.DB != nil && status.DB.Exists {
-			fmt.Fprintf(os.Stderr, "A base database already exists for project %q (%d bytes).\n", slug, status.DB.SizeBytes)
-		} else {
-			fmt.Fprintf(os.Stderr, "No base database exists yet for project %q.\n", slug)
-		}
-
-		action := "overwrite the existing"
-		if status.DB == nil || !status.DB.Exists {
-			action = "upload a new"
-		}
-		if !confirm(fmt.Sprintf("Do you want to %s base database for %q?", action, slug)) {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
-
-		// If a file was provided, upload it directly
-		if len(args) == 1 {
-			return uploadExistingFile(slug, "db", args[0])
-		}
-
-		// Generate dump with ddev drush sql-dump
-		return generateAndUploadDB(slug)
-	},
-}
-
-var pushFilesCmd = &cobra.Command{
-	Use:   "files [file.tar.gz]",
-	Short: "Package and upload the base files",
-	Long: `Package the Drupal files directory and upload it as the base files archive
+	pushFilesCmd := &cobra.Command{
+		Use:   "files [file.tar.gz]",
+		Short: "Package and upload the base files",
+		Long: `Package the Drupal files directory and upload it as the base files archive
 for previews.
 
 If a file path is given, upload that file instead of packaging.
 The project is detected automatically from the git remote in the current directory.`,
-	Args: cobra.MaximumNArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		slug, err := detectProjectSlug()
-		if err != nil {
-			return err
-		}
+		Args: cobra.MaximumNArgs(1),
+		RunE: runPushFiles,
+	}
 
-		if err := resolveOrgForProject(slug); err != nil {
-			return err
-		}
+	pushCmd.PersistentFlags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
+	pushFilesCmd.Flags().StringVar(&stripHeavyFiles, "strip-heavy-files", "", "Exclude files larger than this size, e.g. --strip-heavy-files 10mb")
+	pushFilesCmd.Flags().BoolVar(&noImageStyles, "no-image-styles", false, "Exclude Drupal image styles (styles/ directory) — they regenerate on demand")
 
-		status, err := apiClient.GetBaseFilesStatus(slug)
-		if err != nil {
-			return fmt.Errorf("failed to check base files status: %w", err)
-		}
+	pushCmd.AddCommand(pushDBCmd)
+	pushCmd.AddCommand(pushFilesCmd)
+	return pushCmd
+}
 
-		if status.Files != nil && status.Files.Exists {
-			fmt.Fprintf(os.Stderr, "A base files archive already exists for project %q (%d bytes).\n", slug, status.Files.SizeBytes)
-		} else {
-			fmt.Fprintf(os.Stderr, "No base files archive exists yet for project %q.\n", slug)
-		}
+func runPushDB(cmd *cobra.Command, args []string) error {
+	slug, err := detectProjectSlug()
+	if err != nil {
+		return err
+	}
 
-		action := "overwrite the existing"
-		if status.Files == nil || !status.Files.Exists {
-			action = "upload a new"
-		}
-		if !confirm(fmt.Sprintf("Do you want to %s base files archive for %q?", action, slug)) {
-			fmt.Fprintln(os.Stderr, "Aborted.")
-			return nil
-		}
+	if err := resolveOrgForProject(slug); err != nil {
+		return err
+	}
+	announceProject(slug, true)
 
-		if len(args) == 1 {
-			return uploadExistingFile(slug, "files", args[0])
-		}
+	// Check current status on the server
+	status, err := apiClient.GetBaseFilesStatus(slug)
+	if err != nil {
+		return fmt.Errorf("failed to check base files status: %w", err)
+	}
 
-		return generateAndUploadFiles(slug)
-	},
+	if status.DB != nil && status.DB.Exists {
+		fmt.Fprintf(os.Stderr, "A base database already exists for project %q (%d bytes).\n", slug, status.DB.SizeBytes)
+	} else {
+		fmt.Fprintf(os.Stderr, "No base database exists yet for project %q.\n", slug)
+	}
+
+	action := "overwrite the existing"
+	if status.DB == nil || !status.DB.Exists {
+		action = "upload a new"
+	}
+	if !confirm(fmt.Sprintf("Do you want to %s base database for %q? Every new preview will be seeded from it.", action, slug)) {
+		fmt.Fprintln(os.Stderr, "Aborted.")
+		return nil
+	}
+
+	// If a file was provided, upload it directly
+	if len(args) == 1 {
+		return uploadExistingFile(slug, "db", args[0])
+	}
+
+	// Generate dump with ddev drush sql-dump
+	return generateAndUploadDB(slug)
+}
+
+func runPushFiles(cmd *cobra.Command, args []string) error {
+	slug, err := detectProjectSlug()
+	if err != nil {
+		return err
+	}
+
+	if err := resolveOrgForProject(slug); err != nil {
+		return err
+	}
+	announceProject(slug, true)
+
+	status, err := apiClient.GetBaseFilesStatus(slug)
+	if err != nil {
+		return fmt.Errorf("failed to check base files status: %w", err)
+	}
+
+	if status.Files != nil && status.Files.Exists {
+		fmt.Fprintf(os.Stderr, "A base files archive already exists for project %q (%d bytes).\n", slug, status.Files.SizeBytes)
+	} else {
+		fmt.Fprintf(os.Stderr, "No base files archive exists yet for project %q.\n", slug)
+	}
+
+	action := "overwrite the existing"
+	if status.Files == nil || !status.Files.Exists {
+		action = "upload a new"
+	}
+	if !confirm(fmt.Sprintf("Do you want to %s base files archive for %q? Every new preview will be seeded from it.", action, slug)) {
+		fmt.Fprintln(os.Stderr, "Aborted.")
+		return nil
+	}
+
+	if len(args) == 1 {
+		return uploadExistingFile(slug, "files", args[0])
+	}
+
+	return generateAndUploadFiles(slug)
 }
 
 // detectProjectSlug reads the git remote "origin" URL in the current directory
@@ -148,7 +169,6 @@ func detectProjectSlug() (string, error) {
 		return "", fmt.Errorf("could not determine project slug from remote %q", remote)
 	}
 
-	fmt.Fprintf(os.Stderr, "Detected project: %s\n", slug)
 	return slug, nil
 }
 
@@ -251,11 +271,12 @@ func getDrupalDBCredentials() (*dbCredentials, error) {
 }
 
 // getDrupalFilesDir uses ddev drush status to detect the public files directory.
-// Returns a path relative to the project root (e.g. "docroot/sites/default/files").
-func getDrupalFilesDir() (string, error) {
+// Returns the path relative to the project root (e.g. "docroot/sites/default/files")
+// and the path relative to the Drupal root (e.g. "sites/default/files").
+func getDrupalFilesDir() (string, string, error) {
 	out, err := exec.Command("ddev", "drush", "status", "--format=json").Output()
 	if err != nil {
-		return "", fmt.Errorf("failed to run ddev drush status: %w", err)
+		return "", "", fmt.Errorf("failed to run ddev drush status: %w", err)
 	}
 
 	// Strip any non-JSON output (PHP warnings, deprecation notices, etc.)
@@ -263,13 +284,13 @@ func getDrupalFilesDir() (string, error) {
 	raw := string(out)
 	idx := strings.Index(raw, "{")
 	if idx < 0 {
-		return "", fmt.Errorf("drush status returned no JSON (output: %s)", raw[:min(len(raw), 200)])
+		return "", "", fmt.Errorf("drush status returned no JSON (output: %s)", raw[:min(len(raw), 200)])
 	}
 	jsonBytes := []byte(raw[idx:])
 
 	var status map[string]interface{}
 	if err := json.Unmarshal(jsonBytes, &status); err != nil {
-		return "", fmt.Errorf("failed to parse drush status: %w", err)
+		return "", "", fmt.Errorf("failed to parse drush status: %w", err)
 	}
 
 	// "root" is the Drupal root inside the container, e.g. "/var/www/html/docroot"
@@ -278,7 +299,7 @@ func getDrupalFilesDir() (string, error) {
 	files, _ := status["files"].(string)
 
 	if files == "" {
-		return "", fmt.Errorf("drush status did not return a files path")
+		return "", "", fmt.Errorf("drush status did not return a files path")
 	}
 
 	// Extract the docroot relative to /var/www/html (DDEV mount point)
@@ -298,7 +319,7 @@ func getDrupalFilesDir() (string, error) {
 		filesDir = files
 	}
 
-	return filesDir, nil
+	return filesDir, files, nil
 }
 
 func generateAndUploadDB(slug string) error {
@@ -475,7 +496,7 @@ func generateAndUploadFiles(slug string) error {
 	}
 
 	// Detect files directory via drush status
-	filesDir, err := getDrupalFilesDir()
+	filesDir, _, err := getDrupalFilesDir()
 	if err != nil {
 		return fmt.Errorf("could not detect files directory: %w", err)
 	}
@@ -624,10 +645,5 @@ func generateAndUploadFiles(slug string) error {
 }
 
 func init() {
-	pushCmd.PersistentFlags().BoolVarP(&autoYes, "yes", "y", false, "Skip confirmation prompts")
-	pushFilesCmd.Flags().StringVar(&stripHeavyFiles, "strip-heavy-files", "", "Exclude files larger than this size, e.g. --strip-heavy-files 10mb")
-	pushFilesCmd.Flags().BoolVar(&noImageStyles, "no-image-styles", false, "Exclude Drupal image styles (styles/ directory) — they regenerate on demand")
-	pushCmd.AddCommand(pushDBCmd)
-	pushCmd.AddCommand(pushFilesCmd)
-	rootCmd.AddCommand(pushCmd)
+	projectCmd.AddCommand(newPushCmd())
 }

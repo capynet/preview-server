@@ -22,11 +22,20 @@ var apiClient *client.Client
 // Version is set by main.go from the embedded VERSION file.
 var Version = "dev"
 
+// Command group IDs — every visible command belongs to one of these scopes
+// so the help output makes explicit where each command acts.
+const (
+	groupLocal   = "local"
+	groupProject = "project"
+	groupPreview = "preview"
+	groupCLI     = "cli"
+)
+
 var rootCmd = &cobra.Command{
-	Use:     "druploy",
-	Short:   "Druploy CLI",
-	Long:    "CLI tool to manage Drupal preview environments.\n\nRun 'druploy login' to authenticate.",
-	Version: Version,
+	Use:               "druploy",
+	Short:             "Druploy CLI",
+	Long:              "CLI tool to manage Drupal preview environments.\n\nRun 'druploy login' to authenticate.",
+	Version:           Version,
 	CompletionOptions: cobra.CompletionOptions{HiddenDefaultCmd: true},
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		cfg := loadConfig()
@@ -37,6 +46,11 @@ var rootCmd = &cobra.Command{
 			if cmd.Name() != "self-update" {
 				printVersionWarning(cfg)
 			}
+		}
+
+		// Moved-command stubs only print a pointer to the new location
+		if cmd.Annotations["moved"] != "" {
+			return
 		}
 
 		// Commands that don't require auth
@@ -151,7 +165,15 @@ func saveConfig(cfg config) error {
 }
 
 func init() {
+	rootCmd.AddGroup(
+		&cobra.Group{ID: groupLocal, Title: "Local Commands (act on your machine / working copy):"},
+		&cobra.Group{ID: groupProject, Title: "Project Commands (act on shared project resources):"},
+		&cobra.Group{ID: groupPreview, Title: "Preview Commands (act on a remote preview VM):"},
+		&cobra.Group{ID: groupCLI, Title: "CLI Commands:"},
+	)
+
 	// Hide "help" from command list — still works via `druploy help` or `--help`
+	rootCmd.SetHelpCommandGroupID(groupCLI)
 	rootCmd.InitDefaultHelpCmd()
 	for _, cmd := range rootCmd.Commands() {
 		if cmd.Name() == "help" {

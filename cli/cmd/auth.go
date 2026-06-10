@@ -35,10 +35,11 @@ const appURL = "https://druploy.dev"
 var loginNoBrowser bool
 
 var authLoginCmd = &cobra.Command{
-	Use:   "login",
-	Short: "Authenticate with Druploy",
-	Long:  "Opens the browser to authenticate. After approval, the CLI is logged in persistently.",
-	Args:  cobra.NoArgs,
+	Use:     "login",
+	Short:   "Authenticate with Druploy",
+	Long:    "Opens the browser to authenticate. After approval, the CLI is logged in persistently.",
+	GroupID: groupCLI,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := loadConfig()
 		if cfg.APIURL == "" {
@@ -151,9 +152,10 @@ func pollAuth(url string) (string, error) {
 }
 
 var authLogoutCmd = &cobra.Command{
-	Use:   "logout",
-	Short: "Log out of Druploy",
-	Args:  cobra.NoArgs,
+	Use:     "logout",
+	Short:   "Log out of Druploy",
+	GroupID: groupCLI,
+	Args:    cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg := loadConfig()
 		cfg.Token = ""
@@ -167,9 +169,10 @@ var authLogoutCmd = &cobra.Command{
 }
 
 var whoamiCmd = &cobra.Command{
-	Use:   "whoami",
-	Short: "Show current authenticated user",
-	Args:  cobra.NoArgs,
+	Use:     "whoami",
+	Short:   "Show current authenticated user",
+	GroupID: groupCLI,
+	Args:    cobra.NoArgs,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// Override: whoami doesn't need org to be set
 		cfg := loadConfig()
@@ -244,7 +247,6 @@ func fetchCurrentUser(cfg config) (*userInfo, error) {
 	}
 	return &user, nil
 }
-
 
 func init() {
 	authLoginCmd.Flags().BoolVar(&loginNoBrowser, "no-browser", false, "Don't open the URL in a browser")
