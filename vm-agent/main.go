@@ -455,7 +455,7 @@ func handleSSHKeys(w http.ResponseWriter, r *http.Request) {
 	// Inject the SSH key into the container's authorized_keys
 	// Uses grep -qF to avoid duplicates
 	shellCmd := fmt.Sprintf(
-		`grep -qF %q /home/preview/.ssh/authorized_keys 2>/dev/null || echo %q >> /home/preview/.ssh/authorized_keys && chown preview:preview /home/preview/.ssh/authorized_keys`,
+		`grep -qF %q /home/preview/.ssh/authorized_keys 2>/dev/null || echo %q >> /home/preview/.ssh/authorized_keys && chown preview:www-data /home/preview/.ssh/authorized_keys`,
 		req.PublicKey, req.PublicKey,
 	)
 

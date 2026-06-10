@@ -13,13 +13,17 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN groupadd -g 33 www-data 2>/dev/null || true \
     && useradd -u 33 -g 33 -s /usr/sbin/nologin -d /var/www www-data 2>/dev/null || true
 
-# Create preview user for SSH access (member of www-data group for file access)
-RUN useradd -m -d /home/preview -s /bin/bash -G www-data preview \
+# Create preview user for SSH access.
+# Shares UID/GID 33 with www-data (-o allows duplicate UID) so the SSH user IS
+# the owner of the files. Otherwise SSH lands as a distinct UID and can only
+# touch files via group membership, which is not enough for chgrp/chmod/utime
+# (those require being the owner) — breaking `drush rsync` and similar.
+RUN useradd -o -u 33 -g 33 -m -d /home/preview -s /bin/bash preview \
     && mkdir -p /home/preview/.ssh \
     && chmod 700 /home/preview/.ssh \
     && touch /home/preview/.ssh/authorized_keys \
     && chmod 600 /home/preview/.ssh/authorized_keys \
-    && chown -R preview:preview /home/preview
+    && chown -R preview:www-data /home/preview
 
 # Install OpenLiteSpeed and lsphp from official repo
 # Note: gd, mbstring, xml, zip, bcmath, bz2, sodium, gmp, exif, soap
@@ -302,6 +306,8 @@ set -e
 # host user, avoiding permission conflicts during rsync updates.
 if [ -n "${HOST_UID}" ] && [ "${HOST_UID}" != "33" ]; then
     usermod -u "${HOST_UID}" www-data 2>/dev/null || true
+    # Keep the SSH user (preview) aligned with www-data so it stays the owner.
+    usermod -o -u "${HOST_UID}" preview 2>/dev/null || true
 fi
 if [ -n "${HOST_GID}" ] && [ "${HOST_GID}" != "33" ]; then
     groupmod -g "${HOST_GID}" www-data 2>/dev/null || true
