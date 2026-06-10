@@ -9,8 +9,8 @@ The CLI is **context-aware**: when you run it from inside a project's git workin
 For example, from a checked-out feature branch with an open MR:
 
 ```bash
-druploy update              # updates the preview for this MR
-druploy ssh                 # SSH into the preview's PHP container
+druploy preview update      # updates the preview for this MR
+druploy preview ssh         # SSH into the preview's PHP container
 druploy gen-drush-aliases   # generates drush aliases for this MR's preview
 ```
 
@@ -18,7 +18,7 @@ The same commands work from a branch preview (e.g. `develop`) — they all resol
 
 For drush, the workflow is: run `druploy gen-drush-aliases` once, then use native drush from your project — `drush @druploy.default status`, `drush @druploy.default cr`, etc.
 
-If you're outside a project directory, pass the project/preview explicitly: `druploy list my-project`, `druploy ssh my-project/mr-42`, etc.
+If you're outside a project directory, pass the project/preview explicitly: `druploy list my-project`, `druploy preview ssh my-project/mr-42`, etc.
 
 ---
 
@@ -51,33 +51,88 @@ The CLI installs into `~/.local/bin/` — no `sudo` required.
 3. From inside a project directory, jump into the preview's PHP container:
 
     ```bash
-    druploy ssh
+    druploy preview ssh
     ```
 
 ---
 
 ## Commands
 
-When `PROJECT/PREVIEW` is not provided, the CLI auto-detects it from the current git remote and branch — see [Context-aware](#context-aware).
+Commands are grouped by **where they act**: on your local machine, on shared project resources, or on a remote preview VM. The same grouping appears in `druploy --help`.
+
+When `PROJECT/PREVIEW` is not provided, the CLI auto-detects it from the current git remote and branch — see [Context-aware](#context-aware). Commands that act remotely always print the resolved target before doing anything:
+
+```
+→ preview: my-site/mr-1597 (auto-detected from branch "feature/foo")
+```
+
+### Local commands (act on your machine / working copy)
+
+| Command | Description |
+|---|---|
+| `druploy setup` | Scaffold a Drupal project for previews: creates `druploy.yml`, `web/sites/default/settings.druploy.php`, and `scripts/druploy/`. Run from the project root.<br>**Usage:** `druploy setup [--override]`<br>**Options:**<br>• `--override` — overwrite existing files with the latest templates. _Example:_ `druploy setup --override` |
+| `druploy gen-drush-aliases` | Generate `drush/sites/druploy.site.yml` with site aliases pointing to the preview. After running, use native drush: `drush @druploy.default status`, `drush @druploy.default cr`, etc.<br>**Usage:** `druploy gen-drush-aliases [PROJECT/PREVIEW]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy gen-drush-aliases my-site/branch-develop` |
+
+### Project commands (act on shared project resources)
+
+The base DB and files are **project-level resources**: every new preview of the project is seeded from them.
+
+| Command | Description |
+|---|---|
+| `druploy list` | List the previews of a project. Auto-detects the project from the git remote, or opens an interactive selector.<br>**Usage:** `druploy list [PROJECT] [--no-status]`<br>**Options:**<br>• `PROJECT` — project slug to list previews for. _Example:_ `druploy list my-drupal-site`<br>• `--no-status` — skip the Docker status check (faster). _Example:_ `druploy list --no-status` |
+| `druploy project push db` | Upload a base database used to seed every new preview. By default, generates a dump from local DDEV (excluding `cache_*` tables) and uploads it.<br>**Usage:** `druploy project push db [FILE] [-y\|--yes]`<br>**Options:**<br>• `FILE` — path to an existing `.sql.gz` to upload directly, skipping the dump step. _Example:_ `druploy project push db ./base.sql.gz`<br>• `-y`, `--yes` — skip confirmation prompts. _Example:_ `druploy project push db -y` |
+| `druploy project push files` | Upload the base files archive. By default, packages the local Drupal files dir into `.tar.gz` and uploads it.<br>**Usage:** `druploy project push files [FILE] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `FILE` — path to an existing `.tar.gz` to upload directly, skipping packaging. _Example:_ `druploy project push files ./files.tar.gz`<br>• `--no-image-styles` — exclude `styles/` (Drupal regenerates them on demand). _Example:_ `druploy project push files --no-image-styles`<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`. _Example:_ `druploy project push files --strip-heavy-files 10mb`<br>• `-y`, `--yes` — skip confirmation prompts. _Example:_ `druploy project push files -y` |
+
+### Preview commands (act on a remote preview VM)
+
+| Command | Description |
+|---|---|
+| `druploy preview ssh` | Open an interactive shell in a container on the preview VM. SSH key is registered on first use.<br>**Usage:** `druploy preview ssh [container] [PROJECT/PREVIEW]`<br>**Options:**<br>• `container` — `php` (default, lands in `/var/www/html`) or `db`. _Example:_ `druploy preview ssh db`<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview ssh db my-site/mr-1597` |
+| `druploy preview update` | Update the preview with the latest code from the current branch — syncs code, runs `composer install` and `update` deploy scripts. Does **not** re-import the database or files.<br>**Usage:** `druploy preview update` |
+| `druploy preview rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. Asks for confirmation before destroying the current VM.<br>**Usage:** `druploy preview rebuild [PROJECT/PREVIEW] [-y\|--yes]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview rebuild my-site/mr-1597`<br>• `-y`, `--yes` — skip the confirmation prompt. _Example:_ `druploy preview rebuild -y` |
+| `druploy preview push files` | Rsync the local Drupal files dir to **this preview only** (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as `project push files`.<br>**Usage:** `druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `--dry-run` — local payload report (no connection, nothing sent); "Total transferred file size" is what a real push would send. _Example:_ `druploy preview push files --dry-run --strip-heavy-files 5mb`<br>• `--replace` — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• `--no-image-styles` — exclude `styles/`.<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`.<br>• `-y`, `--yes` — skip confirmation prompts. |
+
+!!! warning "Moved in v2.0"
+    The old top-level forms (`druploy ssh`, `druploy update`, `druploy rebuild`, `druploy push`) were removed in v2.0. Running them prints an error pointing to the new location.
+
+### CLI commands
 
 | Command | Description |
 |---|---|
 | `druploy login` | Authenticate via browser (device flow).<br>**Usage:** `druploy login [--no-browser]`<br>**Options:**<br>• `--no-browser` — print the authorization URL instead of opening a browser. _Example:_ `druploy login --no-browser` |
-| `druploy setup` | Scaffold a Drupal project for previews: creates `druploy.yml`, `web/sites/default/settings.druploy.php`, and `scripts/druploy/`. Run from the project root.<br>**Usage:** `druploy setup [--override]`<br>**Options:**<br>• `--override` — overwrite existing files with the latest templates. _Example:_ `druploy setup --override` |
 | `druploy logout` | Log out and clear saved credentials. |
 | `druploy whoami` | Show the current authenticated user (name, email, role). |
-| `druploy list` | List previews. Opens an interactive project selector if no project is given.<br>**Usage:** `druploy list [PROJECT] [--no-status]`<br>**Options:**<br>• `PROJECT` — project slug to list previews for. _Example:_ `druploy list my-drupal-site`<br>• `--no-status` — skip the Docker status check (faster). _Example:_ `druploy list --no-status` |
-| `druploy ssh` | Open an interactive shell in a container on the preview VM. SSH key is registered on first use.<br>**Usage:** `druploy ssh [container] [PROJECT/PREVIEW]`<br>**Options:**<br>• `container` — `php` (default, lands in `/var/www/html`) or `db`. _Example:_ `druploy ssh db`<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy ssh db my-site/mr-1597` |
-| `druploy gen-drush-aliases` | Generate `drush/sites/druploy.site.yml` with site aliases pointing to the preview. After running, use native drush: `drush @druploy.default status`, `drush @druploy.default cr`, etc.<br>**Usage:** `druploy gen-drush-aliases [PROJECT/PREVIEW]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy gen-drush-aliases my-site/branch-develop` |
-| `druploy update` | Update the preview with the latest code from the current branch — syncs code, runs `composer install` and `update` deploy scripts. Does **not** re-import the database or files.<br>**Usage:** `druploy update` |
-| `druploy rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import.<br>**Usage:** `druploy rebuild [PROJECT/PREVIEW]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy rebuild my-site/mr-1597` |
-| `druploy push db` | Upload a base database used to seed every new preview. By default, generates a dump from local DDEV (excluding `cache_*` tables) and uploads it.<br>**Usage:** `druploy push db [FILE] [-y\|--yes]`<br>**Options:**<br>• `FILE` — path to an existing `.sql.gz` to upload directly, skipping the dump step. _Example:_ `druploy push db ./base.sql.gz`<br>• `-y`, `--yes` — skip confirmation prompts. _Example:_ `druploy push db -y` |
-| `druploy push files` | Upload the base files archive. By default, packages the local Drupal files dir into `.tar.gz` and uploads it.<br>**Usage:** `druploy push files [FILE] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `FILE` — path to an existing `.tar.gz` to upload directly, skipping packaging. _Example:_ `druploy push files ./files.tar.gz`<br>• `--no-image-styles` — exclude `styles/` (Drupal regenerates them on demand). _Example:_ `druploy push files --no-image-styles`<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`. _Example:_ `druploy push files --strip-heavy-files 10mb`<br>• `-y`, `--yes` — skip confirmation prompts. _Example:_ `druploy push files -y` |
 | `druploy self-update` | Update the CLI to the latest version in place. |
 
 ---
 
 ## Changelog
+
+### v2.1 — 2026-06-10
+
+**Added**
+
+- `druploy preview push files`: rsync the local Drupal files dir directly to a single preview (the project's base files are untouched). Supports the same exclusion flags as `project push files`, plus `--replace` (wipes the preview's files dir before sending) and `--dry-run` (local payload report to tune exclusions before sending).
+
+### v2.0 — 2026-06-10
+
+**Breaking**
+
+- Noun-verb command structure (gcloud style): preview operations now live under the `preview` noun — `druploy preview ssh`, `druploy preview update`, `druploy preview rebuild`.
+- Removed top-level `druploy ssh`, `druploy update`, `druploy rebuild` and the deprecated `druploy push`. Running them prints an error pointing to the new command.
+
+### v1.10 — 2026-06-10
+
+**Added**
+
+- Command groups in help: `druploy --help` now groups commands by where they act — Local, Project, Preview, and CLI.
+- `druploy project push db|files`: new canonical location for pushing base DB/files, making explicit that they are project-level resources shared by every preview.
+- Target announcement: remote commands print the resolved target (e.g. `→ preview: my-site/mr-123 (auto-detected from branch "feature/foo")`) before doing anything.
+- Rebuild confirmation: rebuild asks for confirmation before destroying the current VM. Use `-y`/`--yes` to skip in scripts/CI.
+
+**Deprecated**
+
+- `druploy push` — replaced by `druploy project push` (removed in v2.0).
 
 ### v1.9 — 2026-03-16
 

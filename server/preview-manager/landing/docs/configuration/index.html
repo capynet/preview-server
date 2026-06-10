@@ -1018,16 +1018,16 @@
 <p>Each preview starts from a base database dump. Base files (Drupal public files) are optional.</p>
 <h3 id="database-required">Database (required)<a class="headerlink" href="#database-required" title="Permanent link">&para;</a></h3>
 <p>Upload a gzipped SQL dump using the CLI:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>druploy<span class="w"> </span>push<span class="w"> </span>db
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>druploy<span class="w"> </span>project<span class="w"> </span>push<span class="w"> </span>db
 </span></code></pre></div>
 <p>The CLI can generate it automatically from your local DDEV environment.</p>
 <h3 id="files-optional">Files (optional)<a class="headerlink" href="#files-optional" title="Permanent link">&para;</a></h3>
 <p>Upload the public files directory. If not provided, an empty files directory is created.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># Exclude image styles (Drupal regenerates them on demand)</span>
-</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>druploy<span class="w"> </span>push<span class="w"> </span>files<span class="w"> </span>--no-image-styles
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>druploy<span class="w"> </span>project<span class="w"> </span>push<span class="w"> </span>files<span class="w"> </span>--no-image-styles
 </span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
 </span><span id="__span-8-4"><a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># Also exclude files larger than 2 MB</span>
-</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>druploy<span class="w"> </span>push<span class="w"> </span>files<span class="w"> </span>--no-image-styles<span class="w"> </span>--strip-heavy-files<span class="w"> </span>2mb
+</span><span id="__span-8-5"><a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>druploy<span class="w"> </span>project<span class="w"> </span>push<span class="w"> </span>files<span class="w"> </span>--no-image-styles<span class="w"> </span>--strip-heavy-files<span class="w"> </span>2mb
 </span></code></pre></div>
 <p>Both commands auto-detect the project from the git remote in your current directory. Files are shared across previews using an overlay filesystem — each preview gets its own writable layer on top of the shared base.</p>
 

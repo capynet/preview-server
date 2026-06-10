@@ -235,7 +235,7 @@ Each preview starts from a base database dump. Base files (Drupal public files) 
 Upload a gzipped SQL dump using the CLI:
 
 ```bash
-druploy push db
+druploy project push db
 ```
 
 The CLI can generate it automatically from your local DDEV environment.
@@ -246,10 +246,10 @@ Upload the public files directory. If not provided, an empty files directory is 
 
 ```bash
 # Exclude image styles (Drupal regenerates them on demand)
-druploy push files --no-image-styles
+druploy project push files --no-image-styles
 
 # Also exclude files larger than 2 MB
-druploy push files --no-image-styles --strip-heavy-files 2mb
+druploy project push files --no-image-styles --strip-heavy-files 2mb
 ```
 
 Both commands auto-detect the project from the git remote in your current directory. Files are shared across previews using an overlay filesystem — each preview gets its own writable layer on top of the shared base.

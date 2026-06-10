@@ -417,30 +417,35 @@ druploy list</pre>
       });
     }
 
-    // Commands data
+    // Commands data, grouped by where each command acts
     const commands = [
-      { name: 'login', usage: 'druploy login', desc: 'Authenticate via browser (device flow)', flags: [['--no-browser', 'Print URL instead of opening browser']] },
-      { name: 'logout', usage: 'druploy logout', desc: 'Log out and clear credentials', flags: [] },
-      { name: 'whoami', usage: 'druploy whoami', desc: 'Show current authenticated user', flags: [] },
-      { name: 'list', usage: 'druploy list [PROJECT]', desc: 'List previews, interactive selector if no project specified', flags: [['--no-status', 'Skip fetching container status (faster)']] },
-      { name: 'start', usage: 'druploy start PROJECT/PREVIEW', desc: 'Start a stopped preview environment', flags: [] },
-      { name: 'stop', usage: 'druploy stop PROJECT/PREVIEW', desc: 'Stop a running preview environment', flags: [] },
-      { name: 'restart', usage: 'druploy restart PROJECT/PREVIEW', desc: 'Restart a preview environment', flags: [] },
-      { name: 'rebuild', usage: 'druploy rebuild PROJECT/PREVIEW', desc: 'Trigger a rebuild for a preview from the current branch', flags: [] },
-      { name: 'uli', usage: 'druploy uli PROJECT/PREVIEW', desc: 'Get a Drupal one-time login link', flags: [['--no-browser', 'Print URL instead of opening browser']] },
-      { name: 'drush', usage: 'druploy drush PROJECT/PREVIEW [args...]', desc: 'Run a drush command on a preview. Auto-detects project and preview from git context.', flags: [] },
-      { name: 'db download', usage: 'druploy db download PROJECT/PREVIEW', desc: 'Download a database dump (gzip compressed)', flags: [['-o, --output', 'Output file path']] },
-      { name: 'files download', usage: 'druploy files download PROJECT/PREVIEW', desc: 'Download files archive (tar.gz)', flags: [['-o, --output', 'Output file path']] },
-      { name: 'push db', usage: 'druploy push db [file.sql.gz]', desc: 'Upload base database. Auto-detects project from git remote.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
-      { name: 'push files', usage: 'druploy push files [file.tar.gz]', desc: 'Upload base files archive', flags: [['--strip-heavy-files SIZE', 'Remove files larger than SIZE before upload'], ['--yes, -y', 'Skip confirmation prompt']] },
-      { name: 'setup api', usage: 'druploy setup api API_URL', desc: 'Configure the API endpoint URL', flags: [] },
-      { name: 'setup project', usage: 'druploy setup project', desc: 'Scaffold a project for preview environments (generates druploy.yml and settings)', flags: [['--override', 'Overwrite existing configuration files']] },
-      { name: 'self-update', usage: 'druploy self-update', desc: 'Update the CLI to the latest version', flags: [] },
+      { group: 'Local — act on your machine / working copy', name: 'setup', usage: 'druploy setup', desc: 'Scaffold a Drupal project for previews (generates druploy.yml, settings and deploy scripts)', flags: [['--override', 'Overwrite existing files with the latest templates']] },
+      { group: 'Local — act on your machine / working copy', name: 'gen-drush-aliases', usage: 'druploy gen-drush-aliases [PROJECT/PREVIEW]', desc: 'Generate local drush site aliases pointing to the preview. Then use native drush: drush @druploy.default status', flags: [] },
+      { group: 'Project — act on shared project resources', name: 'list', usage: 'druploy list [PROJECT]', desc: 'List the previews of a project. Auto-detects the project from the git remote, interactive selector otherwise', flags: [['--no-status', 'Skip fetching container status (faster)']] },
+      { group: 'Project — act on shared project resources', name: 'project push db', usage: 'druploy project push db [file.sql.gz]', desc: 'Upload the base database used to seed every new preview. Auto-detects project from git remote.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
+      { group: 'Project — act on shared project resources', name: 'project push files', usage: 'druploy project push files [file.tar.gz]', desc: 'Upload the base files archive used to seed every new preview', flags: [['--no-image-styles', 'Exclude styles/ (Drupal regenerates them on demand)'], ['--strip-heavy-files SIZE', 'Remove files larger than SIZE before upload'], ['--yes, -y', 'Skip confirmation prompt']] },
+      { group: 'Preview — act on a remote preview VM', name: 'preview ssh', usage: 'druploy preview ssh [container] [PROJECT/PREVIEW]', desc: 'Open an interactive shell in a preview container (php by default, db also available)', flags: [] },
+      { group: 'Preview — act on a remote preview VM', name: 'preview update', usage: 'druploy preview update', desc: 'Update the preview with the latest code from the current branch, preserving DB and files', flags: [] },
+      { group: 'Preview — act on a remote preview VM', name: 'preview rebuild', usage: 'druploy preview rebuild [PROJECT/PREVIEW]', desc: 'Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. Asks for confirmation.', flags: [['--yes, -y', 'Skip confirmation prompt']] },
+      { group: 'Preview — act on a remote preview VM', name: 'preview push files', usage: 'druploy preview push files [PROJECT/PREVIEW]', desc: 'Rsync the local Drupal files dir to this preview only — the project base files are not touched. Additive by default.', flags: [['--dry-run', 'Local payload report (no connection, nothing sent) — tune exclusions before sending'], ['--replace', 'Wipe the preview files dir completely before sending'], ['--no-image-styles', 'Exclude styles/ (Drupal regenerates them on demand)'], ['--strip-heavy-files SIZE', 'Exclude files larger than SIZE'], ['--yes, -y', 'Skip confirmation prompt']] },
+      { group: 'CLI', name: 'login', usage: 'druploy login', desc: 'Authenticate via browser (device flow)', flags: [['--no-browser', 'Print URL instead of opening browser']] },
+      { group: 'CLI', name: 'logout', usage: 'druploy logout', desc: 'Log out and clear credentials', flags: [] },
+      { group: 'CLI', name: 'whoami', usage: 'druploy whoami', desc: 'Show current authenticated user', flags: [] },
+      { group: 'CLI', name: 'self-update', usage: 'druploy self-update', desc: 'Update the CLI to the latest version', flags: [] },
     ];
 
-    // Render commands
+    // Render commands with group headers
     const commandList = document.getElementById('commands');
+    let lastGroup = '';
     commands.forEach((cmd, i) => {
+      if (cmd.group !== lastGroup) {
+        lastGroup = cmd.group;
+        const groupHeader = document.createElement('div');
+        groupHeader.className = 'section-label';
+        groupHeader.style.cssText = 'margin: 32px 0 12px;';
+        groupHeader.textContent = cmd.group;
+        commandList.appendChild(groupHeader);
+      }
       const item = document.createElement('div');
       item.className = 'command-item';
       let flagsHTML = '';
@@ -475,6 +480,37 @@ druploy list</pre>
 
     // Changelog data
     const changelog = [
+      {
+        version: '2.1.0', date: '2026-06-10',
+        sections: [
+          { tag: 'Added', type: 'added', items: [
+            '<code>druploy preview push files</code>: rsync the local Drupal files dir directly to a single preview, without touching the project base files. Same exclusions as <code>project push files</code>, plus <code>--replace</code> (wipes the preview files dir before sending) and <code>--dry-run</code> (local payload report to tune exclusions).'
+          ]}
+        ]
+      },
+      {
+        version: '2.0.0', date: '2026-06-10',
+        sections: [
+          { tag: 'Changed', type: 'changed', items: [
+            'Noun-verb command structure (gcloud style): preview operations now live under the <code>preview</code> noun — <code>druploy preview ssh</code>, <code>druploy preview update</code>, <code>druploy preview rebuild</code>.',
+            'Removed top-level <code>ssh</code>, <code>update</code>, <code>rebuild</code> and the deprecated <code>push</code>: running them prints an error pointing to the new command.'
+          ]}
+        ]
+      },
+      {
+        version: '1.10.0', date: '2026-06-10',
+        sections: [
+          { tag: 'Added', type: 'added', items: [
+            'Command groups in help: <code>druploy --help</code> now groups commands by where they act — Local, Project, Preview, and CLI.',
+            '<code>druploy project push db|files</code>: new canonical location for pushing base DB/files, making explicit that they are project-level resources shared by every preview.',
+            'Target announcement: remote commands print the resolved target (e.g. <code>→ preview: my-site/mr-123</code>) before doing anything.',
+            'Rebuild confirmation: <code>druploy rebuild</code> asks for confirmation before destroying the current VM. Use <code>-y</code>/<code>--yes</code> to skip in scripts/CI.'
+          ]},
+          { tag: 'Deprecated', type: 'changed', items: [
+            '<code>druploy push</code> — use <code>druploy project push</code> instead. The old form still works but prints a deprecation warning.'
+          ]}
+        ]
+      },
       {
         version: '1.8.1', date: '2026-03-04',
         sections: [

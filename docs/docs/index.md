@@ -34,7 +34,7 @@ Druploy spins up a fresh, isolated Drupal preview for every merge request — wi
 5. Upload a base database (so previews boot with real content):
 
     ```bash
-    druploy push db
+    druploy project push db
     ```
 
 6. Open a merge request. Druploy builds the preview automatically and posts the URL on the MR.
