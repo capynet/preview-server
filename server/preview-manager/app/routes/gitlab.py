@@ -122,12 +122,18 @@ async def delete_project_webhook(org_id: int, org_slug: str, gitlab_project_id: 
 
 
 async def _get_org_gitlab_token(org_id: int) -> tuple[str, str]:
-    """Get gitlab_url and gitlab_access_token from the org."""
+    """Get gitlab_url and gitlab_access_token from the org.
+
+    Auto-rotates the token via the GitLab rotate API if it's near expiry, so
+    deploys and API calls never run with a lapsed token.
+    """
     from app.database import get_organization_by_id
+    from app.gitlab_token import maybe_rotate_org_token
     org = await get_organization_by_id(org_id)
     if not org or not org.get("gitlab_access_token"):
         raise HTTPException(status_code=400, detail="GitLab not connected for this organization")
-    return org["gitlab_url"], org["gitlab_access_token"]
+    token = await maybe_rotate_org_token(org)
+    return org["gitlab_url"], token
 
 
 # ---- GitLab user login (not org-scoped) ----
@@ -297,6 +303,7 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithContext = Dep
         raise HTTPException(status_code=400, detail="GitLab URL is required")
 
     headers = {"PRIVATE-TOKEN": body.token}
+    token_expires_at = None
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -312,6 +319,7 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithContext = Dep
                 if "api" not in pat_info.get("scopes", []):
                     logger.warning("GitLab connect failed: token missing 'api' scope (url=%s, scopes=%s)", gitlab_url, pat_info.get("scopes"))
                     raise HTTPException(status_code=401, detail="Token needs 'api' scope")
+                token_expires_at = pat_info.get("expires_at")
             elif resp.status_code in (401, 403):
                 logger.warning("GitLab connect failed: invalid token (url=%s, status=%d, body=%s)", gitlab_url, resp.status_code, resp.text[:200])
                 raise HTTPException(status_code=401, detail="Invalid token")
@@ -323,7 +331,12 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithContext = Dep
         raise HTTPException(status_code=502, detail=f"Could not reach GitLab at {gitlab_url}: {e}")
 
     from app.database import update_organization
-    await update_organization(user.org.id, gitlab_url=gitlab_url, gitlab_access_token=body.token)
+    await update_organization(
+        user.org.id,
+        gitlab_url=gitlab_url,
+        gitlab_access_token=body.token,
+        gitlab_token_expires_at=token_expires_at,
+    )
 
     return {"success": True, "gitlab_url": gitlab_url}
 
@@ -331,7 +344,7 @@ async def gitlab_connect(body: GitLabConnectRequest, user: UserWithContext = Dep
 @router.post("/orgs/{org}/gitlab/disconnect")
 async def gitlab_disconnect(user: UserWithContext = Depends(require_org_role(OrgRole.owner))):
     from app.database import update_organization
-    await update_organization(user.org.id, gitlab_url=None, gitlab_access_token=None)
+    await update_organization(user.org.id, gitlab_url=None, gitlab_access_token=None, gitlab_token_expires_at=None)
     _invalidate_projects_cache(user.org.id)
     return {"success": True}
 

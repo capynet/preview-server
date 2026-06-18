@@ -484,42 +484,61 @@ def get_disk_usage_cache() -> dict:
 
 
 async def disk_usage_loop():
-    """Background loop that calculates disk usage of key directories every minute."""
+    """Background loop that calculates disk usage of key directories.
+
+    Runs in every uvicorn worker, but a Valkey single-writer lock ensures only
+    ONE worker shells out to `sudo du` per interval. Otherwise each worker would
+    run the whole batch independently, multiplying the disk I/O and the sudo
+    journal entries by the worker count. The winner publishes the snapshot to
+    Valkey; every worker mirrors it locally so the API and the 2s WS broadcast
+    keep serving it without each hitting Valkey.
+    """
+    from app.valkey import acquire_compute_lock, set_disk_usage, get_disk_usage
+
     logger.info("Starting disk usage monitoring loop")
+    INTERVAL = 600  # 10 minutes — disk usage changes slowly
     while True:
         try:
-            dirs = []
-            for path, label in _DISK_USAGE_DIRS:
-                try:
-                    proc = await asyncio.create_subprocess_exec(
-                        "sudo", "du", "-sb", path,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                    )
-                    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-                    if proc.returncode == 0:
-                        size_bytes = int(stdout.decode().split()[0])
-                    else:
+            # TTL just under the interval so exactly one worker recomputes per
+            # cycle (the lock has expired by the time everyone wakes again).
+            if await acquire_compute_lock("disk_usage", ttl=INTERVAL - 30):
+                dirs = []
+                for path, label in _DISK_USAGE_DIRS:
+                    try:
+                        proc = await asyncio.create_subprocess_exec(
+                            "sudo", "du", "-sb", path,
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
+                        size_bytes = int(stdout.decode().split()[0]) if proc.returncode == 0 else 0
+                    except Exception:
                         size_bytes = 0
-                except Exception:
-                    size_bytes = 0
-                dirs.append({"path": path, "label": label, "size_bytes": size_bytes})
+                    dirs.append({"path": path, "label": label, "size_bytes": size_bytes})
 
-            dirs.sort(key=lambda d: d["size_bytes"], reverse=True)
-            disk = psutil.disk_usage("/")
-            _disk_usage_cache["directories"] = dirs
-            _disk_usage_cache["disk_total_bytes"] = disk.total
-            _disk_usage_cache["updated_at"] = datetime.utcnow().isoformat()
+                dirs.sort(key=lambda d: d["size_bytes"], reverse=True)
+                disk = psutil.disk_usage("/")
+                snapshot = {
+                    "directories": dirs,
+                    "disk_total_bytes": disk.total,
+                    "updated_at": datetime.utcnow().isoformat(),
+                }
+                await set_disk_usage(snapshot)
+                logger.debug(f"Disk usage updated: {len(dirs)} directories")
 
-            logger.debug(f"Disk usage updated: {len(dirs)} directories")
-            await asyncio.sleep(60)  # 1 minute
+            # Mirror the shared snapshot locally (winner and non-winners alike).
+            shared = await get_disk_usage()
+            if shared:
+                _disk_usage_cache.update(shared)
+
+            await asyncio.sleep(INTERVAL)
 
         except asyncio.CancelledError:
             logger.info("Disk usage loop cancelled")
             break
         except Exception as e:
             logger.error(f"Error in disk usage loop: {e}", exc_info=True)
-            await asyncio.sleep(60)
+            await asyncio.sleep(INTERVAL)
 
 
 async def stream_subprocess_output(

@@ -1,0 +1,17 @@
+# Managed by Ansible (hardening role)
+[DEFAULT]
+bantime  = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+ignoreip = {{ fail2ban_ignoreip }}
+
+# Read failures from the systemd journal (Ubuntu 24.04 has no /var/log/auth
+# parsing by default; the journal is the source of truth).
+backend  = systemd
+
+# Escalate repeat offenders.
+bantime.increment = {{ fail2ban_bantime_increment }}
+bantime.maxtime   = {{ fail2ban_bantime_maxtime }}
+
+[sshd]
+enabled = true

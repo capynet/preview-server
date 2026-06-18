@@ -492,6 +492,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#v25-2026-06-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.5 — 2026-06-10
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v24-2026-06-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.4 — 2026-06-10
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#v22-2026-06-10" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -714,6 +736,28 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#v25-2026-06-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.5 — 2026-06-10
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#v24-2026-06-10" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        v2.4 — 2026-06-10
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#v22-2026-06-10" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -927,6 +971,14 @@
 <td><code>druploy preview push files</code></td>
 <td>Rsync the local Drupal files dir to <strong>this preview only</strong> (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as <code>project push files</code>. Shows a payload summary before asking for confirmation.<br><strong>Usage:</strong> <code>druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]</code><br><strong>Options:</strong><br>• <code>--dry-run</code> — compact local report (no connection, nothing sent): unfiltered dir size, payload after filters, and how much the filters save. <em>Example:</em> <code>druploy preview push files --dry-run --strip-heavy-files 5mb</code><br>• <code>--replace</code> — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• <code>--no-image-styles</code> — exclude <code>styles/</code>.<br>• <code>--strip-heavy-files SIZE</code> — exclude files larger than <code>SIZE</code>.<br>• <code>-y</code>, <code>--yes</code> — skip confirmation prompts.</td>
 </tr>
+<tr>
+<td><code>druploy preview pull db</code></td>
+<td>Replace your local ddev database with the preview's one (cache tables structure-only), or download it as a local <code>.sql</code> file. The preview is never modified.<br><strong>Usage:</strong> <code>druploy preview pull db [PROJECT/PREVIEW] [FILE] [-y\|--yes]</code><br><strong>Options:</strong><br>• Without <code>FILE</code> — your local database is dropped completely, the preview's dump streams straight into it, and <code>drush cr</code> runs locally. Asks for confirmation. <em>Example:</em> <code>druploy preview pull db</code><br>• <code>FILE</code> — save the dump there instead (must end in <code>.sql</code> or <code>.gz</code>; relative or absolute; <code>.gz</code> compresses on the fly). Your local database is not touched. Asks before overwriting an existing file. <em>Example:</em> <code>druploy preview pull db dumps/staging.sql.gz</code><br>• <code>PROJECT/PREVIEW</code> — explicit preview (otherwise auto-detected). <em>Example:</em> <code>druploy preview pull db my-site/mr-1597 foo.sql</code><br>• <code>-y</code>, <code>--yes</code> — skip confirmation prompts.</td>
+</tr>
+<tr>
+<td><code>druploy preview pull files</code></td>
+<td>Rsync the preview's Drupal files dir down to your local one. Additive by default — nothing is deleted locally. Same exclusions as <code>preview push files</code>. Asks for confirmation. The preview is never modified.<br><strong>Usage:</strong> <code>druploy preview pull files [PROJECT/PREVIEW] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]</code><br><strong>Options:</strong><br>• <code>--replace</code> — wipe your local files dir completely before downloading, so it ends up containing exactly what the preview has. <em>Example:</em> <code>druploy preview pull files --replace</code><br>• <code>--no-image-styles</code> — exclude <code>styles/</code>.<br>• <code>--strip-heavy-files SIZE</code> — exclude files larger than <code>SIZE</code>.<br>• <code>PROJECT/PREVIEW</code> — explicit preview (otherwise auto-detected).<br>• <code>-y</code>, <code>--yes</code> — skip confirmation prompts.</td>
+</tr>
 </tbody>
 </table>
 <div class="admonition warning">
@@ -962,6 +1014,16 @@
 </table>
 <hr />
 <h2 id="changelog">Changelog<a class="headerlink" href="#changelog" title="Permanent link">&para;</a></h2>
+<h3 id="v25-2026-06-10">v2.5 — 2026-06-10<a class="headerlink" href="#v25-2026-06-10" title="Permanent link">&para;</a></h3>
+<p><strong>Added</strong></p>
+<ul>
+<li><code>druploy preview pull files</code>: rsync a preview's Drupal files dir down to your local one. Additive by default; <code>--replace</code> wipes the local files dir first. Same exclusion flags as <code>preview push files</code>.</li>
+</ul>
+<h3 id="v24-2026-06-10">v2.4 — 2026-06-10<a class="headerlink" href="#v24-2026-06-10" title="Permanent link">&para;</a></h3>
+<p><strong>Added</strong></p>
+<ul>
+<li><code>druploy preview pull db</code>: replace your local ddev database with a preview's one (your local DB is dropped completely first; asks for confirmation), or download it to a local <code>.sql</code>/<code>.sql.gz</code> file by passing a path. Streams a direct mysqldump over SSH with live progress.</li>
+</ul>
 <h3 id="v22-2026-06-10">v2.2 — 2026-06-10<a class="headerlink" href="#v22-2026-06-10" title="Permanent link">&para;</a></h3>
 <p><strong>Added</strong></p>
 <ul>

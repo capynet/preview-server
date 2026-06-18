@@ -374,8 +374,12 @@ async def get_disk_usage(
     user=Depends(require_superadmin()),
 ):
     """Get cached disk usage of key server directories."""
+    from app.valkey import get_disk_usage as get_shared_disk_usage
     from app.websockets import get_disk_usage_cache
-    return get_disk_usage_cache()
+    # Prefer the snapshot shared across workers; fall back to this worker's
+    # local mirror for the brief window before the first one is computed.
+    shared = await get_shared_disk_usage()
+    return shared or get_disk_usage_cache()
 
 
 # ---------------------------------------------------------------------------

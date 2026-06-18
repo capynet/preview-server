@@ -1,0 +1,142 @@
+---
+# Server hardening: bound the systemd journal and ban SSH brute-force.
+#
+# Context: /var/log grew to ~4 GB. The bulk was an unbounded persistent journal
+# (3.6 GB) plus btmp/auth.log noise from constant SSH brute-force scanning.
+
+# ---------------------------------------------------------------------------
+# journald: cap persistent journal size so it can never grow unbounded again
+# ---------------------------------------------------------------------------
+- name: Ensure journald drop-in directory exists
+  file:
+    path: /etc/systemd/journald.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  tags: [journald]
+
+- name: Cap journald disk usage
+  copy:
+    dest: /etc/systemd/journald.conf.d/00-druploy.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (hardening role)
+      [Journal]
+      SystemMaxUse={{ journald_system_max_use }}
+      SystemKeepFree={{ journald_system_keep_free }}
+      MaxRetentionSec={{ journald_max_retention }}
+  notify: Restart journald
+  tags: [journald]
+
+- name: Reclaim journal space now (vacuum to the configured cap)
+  command: "journalctl --vacuum-size={{ journald_system_max_use }}"
+  register: journal_vacuum
+  changed_when: "'Deleted' in journal_vacuum.stderr or 'vacuuming' in journal_vacuum.stderr"
+  tags: [journald]
+
+# ---------------------------------------------------------------------------
+# fail2ban: ban hosts that brute-force SSH (reads the systemd journal)
+# ---------------------------------------------------------------------------
+- name: Install fail2ban
+  apt:
+    name: fail2ban
+    state: present
+    update_cache: yes
+  tags: [fail2ban]
+
+- name: Configure fail2ban (sshd jail, systemd backend)
+  template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Restart fail2ban
+  tags: [fail2ban]
+
+- name: Enable and start fail2ban
+  systemd:
+    name: fail2ban
+    enabled: yes
+    state: started
+  tags: [fail2ban]
+
+# ---------------------------------------------------------------------------
+# SSH: disable password authentication (key-only access)
+# ---------------------------------------------------------------------------
+- name: Disable SSH password authentication
+  when: ssh_disable_password_auth | bool
+  copy:
+    dest: /etc/ssh/sshd_config.d/10-druploy-hardening.conf
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      # Managed by Ansible (hardening role)
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+  notify: Reload sshd
+  tags: [ssh]
+
+- name: Validate sshd config before reload
+  when: ssh_disable_password_auth | bool
+  command: sshd -t
+  changed_when: false
+  tags: [ssh]
+
+# ---------------------------------------------------------------------------
+# Host firewall: close internal host services to the internet (nftables)
+# ---------------------------------------------------------------------------
+- name: Ensure nftables is installed
+  apt:
+    name: nftables
+    state: present
+    update_cache: yes
+  tags: [firewall]
+
+- name: Deploy host firewall ruleset
+  template:
+    src: druploy-firewall.nft.j2
+    dest: /etc/druploy-firewall.nft
+    owner: root
+    group: root
+    mode: '0644'
+    validate: 'nft -c -f %s'
+  notify: Reload druploy-firewall
+  tags: [firewall]
+
+- name: Deploy host firewall systemd unit
+  template:
+    src: druploy-firewall.service.j2
+    dest: /etc/systemd/system/druploy-firewall.service
+    owner: root
+    group: root
+    mode: '0644'
+  notify: Reload druploy-firewall
+  tags: [firewall]
+
+- name: Enable and start host firewall
+  systemd:
+    name: druploy-firewall
+    enabled: yes
+    state: started
+    daemon_reload: yes
+  tags: [firewall]
+
+# ---------------------------------------------------------------------------
+# unattended-upgrades: automatic reboot for updates that require it
+# ---------------------------------------------------------------------------
+- name: Configure automatic reboot for unattended-upgrades
+  copy:
+    dest: /etc/apt/apt.conf.d/52druploy-auto-reboot
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      // Managed by Ansible (hardening role)
+      Unattended-Upgrade::Automatic-Reboot "{{ 'true' if unattended_auto_reboot | bool else 'false' }}";
+      Unattended-Upgrade::Automatic-Reboot-Time "{{ unattended_auto_reboot_time }}";
+  tags: [auto-reboot]

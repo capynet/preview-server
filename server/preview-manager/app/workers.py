@@ -298,6 +298,12 @@ async def task_purge_soft_deleted(ctx):
     await purge_soft_deleted()
 
 
+async def task_rotate_gitlab_tokens(ctx):
+    """Rotate org GitLab access tokens nearing expiry. Runs as cron job."""
+    from app.tasks.rotate_gitlab_tokens import rotate_gitlab_tokens
+    await rotate_gitlab_tokens()
+
+
 async def task_docker_prune(ctx):
     """Remove unused Docker images and build cache. Runs as cron job."""
     import asyncio
@@ -319,7 +325,7 @@ async def task_docker_prune(ctx):
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_purge_soft_deleted, task_docker_prune]
+    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_purge_soft_deleted, task_docker_prune, task_rotate_gitlab_tokens]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
@@ -334,4 +340,5 @@ class WorkerSettings:
         cron(task_replenish_warm_pool, hour=None, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),  # Every 5 min
         cron(task_docker_prune, hour={3}, minute=0),  # Daily at 3 AM
         cron(task_purge_soft_deleted, hour={3}, minute=30),  # Daily at 3:30 AM
+        cron(task_rotate_gitlab_tokens, hour={4}, minute=0),  # Daily at 4 AM
     ]

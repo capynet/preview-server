@@ -5,6 +5,51 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-06-10
+
+### Fixed
+
+- **`preview update` now accepts `[PROJECT/PREVIEW-NAME]`** like the rest of the remote commands (`rebuild`, `ssh`, `push`, `pull`). It was the only one left auto-detect-only after the 2.0.0 noun-verb restructuring. `druploy preview update soudal/mr-1584` now works from anywhere.
+
+## [2.5.0] - 2026-06-10
+
+### Added
+
+- **`preview pull files`**: rsync the preview's Drupal files dir down to your local one — the inverse of `preview push files`. Additive by default (nothing is deleted locally); `--replace` wipes your local files dir completely first. Same exclusions as push (`css/`, `js/`, `php/` always; `--no-image-styles`, `--strip-heavy-files SIZE`). Asks for confirmation in both modes (`-y` to skip). The preview is never modified.
+
+## [2.4.0] - 2026-06-10
+
+### Added
+
+- **`preview pull db`**: pull the database of a preview down to your local machine — the inverse of `preview push db`, using the same performant path (direct mysqldump on the preview built from `drush sql:connect` credentials, raw SQL over the SSH pipe, no PHP in the streaming path; cache tables structure-only; live progress against a remote size estimate; SSH keepalives).
+  - `druploy preview pull db` (no file) imports straight into your local ddev database: the local DB is **dropped completely** first (no table mixing), then the dump streams in, followed by a local `drush cr`. Asks for confirmation (`-y` to skip).
+  - `druploy preview pull db foo.sql` saves the dump to that path instead (relative or absolute), leaving your local database untouched; a `.gz` extension compresses on the fly with pigz/gzip. Existing files require confirmation before being overwritten; downloads write to a `.part` file and rename on success.
+
+## [2.3.1] - 2026-06-10
+
+### Changed
+
+- **`preview push db` ~4-5x faster**: bypass `drush sql:cli` (which adds heavy per-stream overhead on a large stdin import — the "slow stdin" warning) and feed the dump straight into the mysql client returned by `drush sql:connect`. Measured on a ~780 MB DB: ~1 MB/s → ~4-5 MB/s, matching the server's raw import speed. (The remaining floor is single-threaded InnoDB insert on the preview VM; not transport-bound.)
+
+## [2.3.0] - 2026-06-10
+
+### Changed
+
+- **`preview push db`**: no longer compresses the dump — for a direct remote import the transfer size is never the bottleneck (the import speed is), so compression only burned CPU and made progress unmeasurable. The raw SQL now streams straight into `drush sql:cli`.
+- **`preview push db` progress**: shows a real percentage against an estimate of the local DB size, e.g. `Imported: 340 MB / ~1.1 GB (31%, 5.2 MB/s)`. (`project push db` still compresses, since that dump is stored and re-downloaded per preview.)
+
+## [2.2.2] - 2026-06-10
+
+### Changed
+
+- **`preview push db`**: SSH keepalives (`ServerAliveInterval`) on the import connection so a slow, quiet stretch of a large import doesn't get dropped by an idle TCP path. (Note: a concurrent deploy/update that recreates the preview container will still interrupt an in-flight import — avoid pushing to the branch while importing.)
+
+## [2.2.1] - 2026-06-10
+
+### Changed
+
+- **`preview push db`**: live progress while importing — shows bytes sent and throughput (the SSH pipe backpressure makes this track the import's real progress). Cache rebuild (`drush cr`) now runs as a separate, clearly-labelled step, and drush's "slow stdin" warning is muted.
+
 ## [2.2.0] - 2026-06-10
 
 ### Added

@@ -1,0 +1,13 @@
+[Unit]
+Description=Druploy host firewall (restrict internal services to local/Docker)
+After=network-pre.target nftables.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/druploy-firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/druploy-firewall.nft
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

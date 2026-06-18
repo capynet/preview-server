@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     gitlab_url: str = "https://gitlab.com"
     gitlab_webhook_secret: str = ""
 
+    # GitLab access-token auto-rotation (Option A: rotate via GitLab API before expiry)
+    gitlab_token_rotation_enabled: bool = True
+    gitlab_token_rotation_threshold_days: int = 7  # rotate when expiry is within this window
+    gitlab_token_rotation_lifetime_days: int = 90  # expiry to request for the rotated token
+
     # Database
     database_url: str = "postgresql://preview_manager:preview_manager@localhost:5432/preview_manager"
     valkey_url: str = "redis://localhost:6379"

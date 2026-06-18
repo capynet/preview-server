@@ -272,12 +272,17 @@
 
 - name: Allow druploy to run du with sudo (for disk usage monitoring)
   copy:
-    content: "druploy ALL=(root) NOPASSWD: /usr/bin/du\n"
+    # !syslog stops sudo from logging every du invocation to the journal: the
+    # disk-usage monitor runs it periodically and otherwise floods journald.
+    content: |
+      Defaults!/usr/bin/du !syslog
+      druploy ALL=(root) NOPASSWD: /usr/bin/du
     dest: /etc/sudoers.d/druploy-du
     owner: root
     group: root
     mode: '0440'
     validate: 'visudo -cf %s'
+  tags: [code]
 
 - name: Enable and start druploy service
   systemd:

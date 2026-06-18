@@ -10,9 +10,63 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
+
+// progressReader wraps a reader and prints progress to stderr as the stream is
+// consumed. When total > 0 it shows a percentage; the byte count is the raw
+// (uncompressed) dump, so it can be compared against the size estimate. The
+// SSH pipe's backpressure makes the count track the remote import closely.
+type progressReader struct {
+	r        io.Reader
+	total    int64  // estimated total bytes; 0 = unknown
+	verb     string // progress label; defaults to "Imported"
+	read     int64
+	start    time.Time
+	lastShow time.Time
+}
+
+func (p *progressReader) label() string {
+	if p.verb != "" {
+		return p.verb
+	}
+	return "Imported"
+}
+
+func (p *progressReader) Read(b []byte) (int, error) {
+	if p.start.IsZero() {
+		p.start = time.Now()
+	}
+	n, err := p.r.Read(b)
+	p.read += int64(n)
+	if now := time.Now(); now.Sub(p.lastShow) > 500*time.Millisecond {
+		p.lastShow = now
+		elapsed := now.Sub(p.start).Seconds()
+		var speed int64
+		if elapsed > 0 {
+			speed = int64(float64(p.read) / elapsed)
+		}
+		if p.total > 0 {
+			pct := p.read * 100 / p.total
+			if pct > 99 {
+				pct = 99 // estimate; never claim 100% until done
+			}
+			fmt.Fprintf(os.Stderr, "\r  %s: %s / ~%s (%d%%, %s/s)        ",
+				p.label(), formatBytesShort(p.read), formatBytesShort(p.total), pct, formatBytesShort(speed))
+		} else {
+			fmt.Fprintf(os.Stderr, "\r  %s: %s (%s/s)        ", p.label(), formatBytesShort(p.read), formatBytesShort(speed))
+		}
+	}
+	return n, err
+}
+
+func (p *progressReader) finish() {
+	if p.read > 0 {
+		fmt.Fprintf(os.Stderr, "\r  %s: %s total.        \n", p.label(), formatBytesShort(p.read))
+	}
+}
 
 var stripHeavyFiles string
 var noImageStyles bool
@@ -332,7 +386,7 @@ func generateAndUploadDB(slug string) error {
 		return err
 	}
 
-	compressedOut, compressorName, wait, err := startLocalDBDump()
+	compressedOut, compressorName, wait, err := startLocalDBDump(0, true)
 	if err != nil {
 		return err
 	}
@@ -352,10 +406,38 @@ func generateAndUploadDB(slug string) error {
 	return nil
 }
 
+// getLocalDBSizeEstimate returns the approximate uncompressed size (in bytes)
+// of the data the dump will contain: data_length of non-cache tables. Cache
+// tables are dumped structure-only, so their data is excluded. Returns 0 if
+// the size can't be determined (progress then falls back to bytes-only).
+func getLocalDBSizeEstimate() int64 {
+	creds, err := getDrupalDBCredentials()
+	if err != nil {
+		return 0
+	}
+	shell := fmt.Sprintf(
+		"MYSQL_PWD=root mysql -uroot -N -D %s -e \"SELECT COALESCE(SUM(data_length),0) FROM information_schema.tables WHERE table_schema='%s' AND table_name NOT LIKE 'cache_%%'\"",
+		creds.Database, creds.Database,
+	)
+	out, err := exec.Command("ddev", "exec", "-s", "db", "bash", "-c", shell).Output()
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	return n
+}
+
 // startLocalDBDump starts the ddev dump + gzip pipeline and returns the
 // compressed stream, the compressor name, and a wait func that must be called
 // after the stream has been fully consumed.
-func startLocalDBDump() (io.Reader, string, func() error, error) {
+//
+// If progressTotal > 0, live progress is printed against the dump stream with
+// progressTotal as the estimated total. Pass 0 to disable progress printing.
+//
+// If compress is true the stream is gzip/pigz-compressed (for upload+storage);
+// if false the raw SQL stream is returned (for a direct remote import, where
+// transfer size is never the bottleneck).
+func startLocalDBDump(progressTotal int64, compress bool) (io.Reader, string, func() error, error) {
 	// Get database credentials from Drupal's configuration
 	creds, err := getDrupalDBCredentials()
 	if err != nil {
@@ -426,7 +508,38 @@ func startLocalDBDump() (io.Reader, string, func() error, error) {
 		return nil, "", nil, fmt.Errorf("failed to create pipe: %w", err)
 	}
 
-	// Use pigz if available, else gzip. Level 6 for good balance.
+	// Count progress on the dump stream. Used by the uncompressed path
+	// (preview push db), where sent bytes match the size estimate directly.
+	var progress *progressReader
+	var dumpStream io.Reader = dumperOut
+	if progressTotal > 0 {
+		progress = &progressReader{r: dumperOut, total: progressTotal}
+		dumpStream = progress
+	}
+
+	// Uncompressed path: stream raw SQL, no compressor stage. Used when the
+	// dump is piped straight into a remote import over SSH — compression would
+	// only burn CPU (the transfer size is never the bottleneck) and would make
+	// the progress count compressed bytes, which can't be compared to the size
+	// estimate.
+	if !compress {
+		if err := dumper.Start(); err != nil {
+			return nil, "", nil, fmt.Errorf("failed to start database dump: %w", err)
+		}
+		wait := func() error {
+			if err := dumper.Wait(); err != nil {
+				return fmt.Errorf("database dump failed: %w", err)
+			}
+			if progress != nil {
+				progress.finish()
+			}
+			return nil
+		}
+		return dumpStream, "uncompressed", wait, nil
+	}
+
+	// Compressed path: pipe through pigz (or gzip). Used by project push db,
+	// which uploads the dump to be stored and re-downloaded per preview.
 	var compressor *exec.Cmd
 	compressorName := "gzip"
 	if hasPigz() {
@@ -435,7 +548,7 @@ func startLocalDBDump() (io.Reader, string, func() error, error) {
 	} else {
 		compressor = exec.Command("gzip", "-6", "-c")
 	}
-	compressor.Stdin = dumperOut
+	compressor.Stdin = dumpStream
 	compressor.Stderr = os.Stderr
 
 	compressedOut, err := compressor.StdoutPipe()
@@ -456,6 +569,9 @@ func startLocalDBDump() (io.Reader, string, func() error, error) {
 		}
 		if err := dumper.Wait(); err != nil {
 			return fmt.Errorf("database dump failed: %w", err)
+		}
+		if progress != nil {
+			progress.finish()
 		}
 		return nil
 	}

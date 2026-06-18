@@ -1,0 +1,14 @@
+---
+# Server hardening: bound the systemd journal + fail2ban for SSH brute-force.
+#
+# Usage:
+#   ansible-playbook -i inventory/hosts.yml playbooks/harden-server.yml
+#   ansible-playbook -i inventory/hosts.yml playbooks/harden-server.yml --tags journald
+#   ansible-playbook -i inventory/hosts.yml playbooks/harden-server.yml --tags fail2ban
+
+- name: Harden Druploy server
+  hosts: druploy-server
+  become: yes
+
+  roles:
+    - hardening

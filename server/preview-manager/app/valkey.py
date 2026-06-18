@@ -130,3 +130,36 @@ async def clear_deploy_cancel(key: str):
     """Clear the cancellation flag."""
     v = get_valkey()
     await v.delete(f"deploy_cancel:{key}")
+
+
+# ---- Single-writer compute lock (shared across uvicorn workers) ----
+
+async def acquire_compute_lock(name: str, ttl: int) -> bool:
+    """Elect a single writer per ttl window.
+
+    Returns True for exactly one worker; the lock auto-expires after ttl so the
+    next cycle re-elects (and a dead writer is transparently replaced). Used to
+    stop every uvicorn worker from running the same periodic job independently.
+    """
+    v = get_valkey()
+    return bool(await v.set(f"compute_lock:{name}", "1", nx=True, ex=ttl))
+
+
+# ---- Disk usage snapshot (shared across uvicorn workers) ----
+
+async def set_disk_usage(data: dict):
+    """Store the disk-usage snapshot so every worker can serve it."""
+    v = get_valkey()
+    await v.set("disk_usage:cache", json.dumps(data))
+
+
+async def get_disk_usage() -> Optional[dict]:
+    """Read the shared disk-usage snapshot. None if not computed yet."""
+    v = get_valkey()
+    val = await v.get("disk_usage:cache")
+    if val is None:
+        return None
+    try:
+        return json.loads(val)
+    except (ValueError, TypeError):
+        return None

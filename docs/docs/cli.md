@@ -92,6 +92,8 @@ The base DB and files are **project-level resources**: every new preview of the 
 | `druploy preview rebuild` | Rebuild the preview from scratch — new VM, fresh deploy with DB and files import. Asks for confirmation before destroying the current VM.<br>**Usage:** `druploy preview rebuild [PROJECT/PREVIEW] [-y\|--yes]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview rebuild my-site/mr-1597`<br>• `-y`, `--yes` — skip the confirmation prompt. _Example:_ `druploy preview rebuild -y` |
 | `druploy preview push db` | Dump the local database (via ddev, cache tables structure-only) and import it into **this preview only**, replacing its current database. Rebuilds caches afterwards (`drush cr`). The project's base DB is not touched.<br>**Usage:** `druploy preview push db [PROJECT/PREVIEW] [-y\|--yes]`<br>**Options:**<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview push db my-site/mr-1597`<br>• `-y`, `--yes` — skip the confirmation prompt. |
 | `druploy preview push files` | Rsync the local Drupal files dir to **this preview only** (the project's base files are not touched). Additive by default — nothing is deleted on the preview. Same exclusions as `project push files`. Shows a payload summary before asking for confirmation.<br>**Usage:** `druploy preview push files [PROJECT/PREVIEW] [--dry-run] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `--dry-run` — compact local report (no connection, nothing sent): unfiltered dir size, payload after filters, and how much the filters save. _Example:_ `druploy preview push files --dry-run --strip-heavy-files 5mb`<br>• `--replace` — wipe the preview's files dir completely before sending, so it ends up containing exactly what you send.<br>• `--no-image-styles` — exclude `styles/`.<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`.<br>• `-y`, `--yes` — skip confirmation prompts. |
+| `druploy preview pull db` | Replace your local ddev database with the preview's one (cache tables structure-only), or download it as a local `.sql` file. The preview is never modified.<br>**Usage:** `druploy preview pull db [PROJECT/PREVIEW] [FILE] [-y\|--yes]`<br>**Options:**<br>• Without `FILE` — your local database is dropped completely, the preview's dump streams straight into it, and `drush cr` runs locally. Asks for confirmation. _Example:_ `druploy preview pull db`<br>• `FILE` — save the dump there instead (must end in `.sql` or `.gz`; relative or absolute; `.gz` compresses on the fly). Your local database is not touched. Asks before overwriting an existing file. _Example:_ `druploy preview pull db dumps/staging.sql.gz`<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected). _Example:_ `druploy preview pull db my-site/mr-1597 foo.sql`<br>• `-y`, `--yes` — skip confirmation prompts. |
+| `druploy preview pull files` | Rsync the preview's Drupal files dir down to your local one. Additive by default — nothing is deleted locally. Same exclusions as `preview push files`. Asks for confirmation. The preview is never modified.<br>**Usage:** `druploy preview pull files [PROJECT/PREVIEW] [--replace] [--no-image-styles] [--strip-heavy-files SIZE] [-y\|--yes]`<br>**Options:**<br>• `--replace` — wipe your local files dir completely before downloading, so it ends up containing exactly what the preview has. _Example:_ `druploy preview pull files --replace`<br>• `--no-image-styles` — exclude `styles/`.<br>• `--strip-heavy-files SIZE` — exclude files larger than `SIZE`.<br>• `PROJECT/PREVIEW` — explicit preview (otherwise auto-detected).<br>• `-y`, `--yes` — skip confirmation prompts. |
 
 !!! warning "Moved in v2.0"
     The old top-level forms (`druploy ssh`, `druploy update`, `druploy rebuild`, `druploy push`) were removed in v2.0. Running them prints an error pointing to the new location.
@@ -108,6 +110,18 @@ The base DB and files are **project-level resources**: every new preview of the 
 ---
 
 ## Changelog
+
+### v2.5 — 2026-06-10
+
+**Added**
+
+- `druploy preview pull files`: rsync a preview's Drupal files dir down to your local one. Additive by default; `--replace` wipes the local files dir first. Same exclusion flags as `preview push files`.
+
+### v2.4 — 2026-06-10
+
+**Added**
+
+- `druploy preview pull db`: replace your local ddev database with a preview's one (your local DB is dropped completely first; asks for confirmation), or download it to a local `.sql`/`.sql.gz` file by passing a path. Streams a direct mysqldump over SSH with live progress.
 
 ### v2.2 — 2026-06-10
 

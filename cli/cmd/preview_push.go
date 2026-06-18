@@ -69,19 +69,30 @@ func runPreviewPushDB(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintln(os.Stderr, "Generating database dump...")
-	dump, compressorName, wait, err := startLocalDBDump()
+	estimate := getLocalDBSizeEstimate()
+	dump, _, wait, err := startLocalDBDump(estimate, false)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Importing into %s/%s (compressor: %s -6)... this may take a while\n", r.Project, r.PreviewName, compressorName)
+	fmt.Fprintf(os.Stderr, "Importing into %s/%s. Large databases take a few minutes:\n", r.Project, r.PreviewName)
 
-	remoteCmd := "cd /var/www/html && vendor/bin/drush sql:drop -y && gzip -dc | vendor/bin/drush sql:cli && vendor/bin/drush cr"
+	// Raw SQL straight into the mysql client (no compression — transfer size is
+	// never the bottleneck). We bypass `drush sql:cli` and feed the client
+	// returned by `drush sql:connect` directly: sql:cli adds ~5x overhead on a
+	// large stdin stream (the "slow stdin" warning), while sql:connect just
+	// prints the mysql command, so the dump streams straight into mysql at the
+	// server's real import speed. drush cr runs separately afterwards.
+	remoteCmd := "cd /var/www/html && vendor/bin/drush sql:drop -y >/dev/null 2>&1 && eval \"$(vendor/bin/drush sql:connect)\" 2>/dev/null"
 	c := exec.Command(sshBin,
 		"-p", "2222",
 		"-o", "StrictHostKeyChecking=no",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
+		// Keep the session alive across slow, quiet stretches of a big import
+		// so an idle TCP path doesn't drop the connection mid-transfer.
+		"-o", "ServerAliveInterval=30",
+		"-o", "ServerAliveCountMax=20",
 		fmt.Sprintf("preview@%s", r.VmIP),
 		remoteCmd,
 	)
@@ -93,6 +104,11 @@ func runPreviewPushDB(cmd *cobra.Command, args []string) error {
 	}
 	if err := wait(); err != nil {
 		return err
+	}
+
+	fmt.Fprintln(os.Stderr, "Rebuilding caches (drush cr)...")
+	if code := runSSHCommand(r, "php", []string{"vendor/bin/drush", "cr"}); code != 0 {
+		fmt.Fprintln(os.Stderr, "Warning: drush cr failed — the database was imported, run it manually if needed.")
 	}
 
 	fmt.Fprintf(os.Stderr, "Done! Database of %s/%s replaced.\n", r.Project, r.PreviewName)

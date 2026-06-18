@@ -9,7 +9,10 @@ services:
       - "80:80"
       - "443:443"
       - "443:443/udp"
-      - "2019:2019"
+      # Admin API: bind to loopback only. The backend reaches it via
+      # localhost:2019 on the host; it must NOT be exposed to the internet
+      # (unauthenticated full reverse-proxy control).
+      - "127.0.0.1:2019:2019"
     volumes:
       - caddy_data:/data
       - caddy_config:/config

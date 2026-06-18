@@ -1,0 +1,24 @@
+#!/usr/sbin/nft -f
+# Managed by Ansible (hardening role).
+#
+# A self-contained table (independent of Docker's iptables/nft rules) that
+# restricts host-local services to loopback + Docker bridges. policy accept
+# means anything not explicitly dropped here stays open (SSH, 80/443, registry,
+# composer-proxy, API callback...), so this only narrows the listed ports.
+
+table inet druploy_fw
+delete table inet druploy_fw
+
+table inet druploy_fw {
+    chain input {
+        type filter hook input priority filter - 5; policy accept;
+
+        iif "lo" accept
+        ct state established,related accept
+
+        # Internal-only host services: reachable from Docker bridges (Caddy
+        # dials them via host.docker.internal) but dropped from the internet.
+        ip saddr {{ firewall_docker_subnets }} tcp dport { {{ firewall_internal_host_ports | join(', ') }} } accept
+        tcp dport { {{ firewall_internal_host_ports | join(', ') }} } drop
+    }
+}

@@ -37,6 +37,8 @@ Is the UI of preview manager ([server](server))
 - Post deploy sigue mostrando el tag "Deploying" aunque haya temrinado el deploy principal
 
 # TODO
+- ok podemos crear un banner en la ui avisando que el token ha expirado y/o no se pudo renovar y que solo se muestre a las personas con los permisos adecuados para resolverlo. Si se puede poner un link al area en la que hay que poner el nuevo token mejor.
+- Afinar la seguridad. solo tengo fail2ban pero necesito tener backups diarios que me permitan restaurar el servicio rapidamente y confirmar que con ansible puedo reconstruir el servidor desde cero si hiciera falta.
 - Todo el sistema de mails esta listo. Solo probe el de añadir a un usuario a un grupo o org sin que el user exista y cuando existe. Me queda probar los demas. No es urgente pero hace falta.
 - Voy a tener que auditar todoas las url y endpoint. no vaya que un ususario sin privilegios pueda acceder o realizar accioones get o post sin tener los permisos necesarios.
 - Cuando se haga un druplot push db deberia haber un flag que sanitize la db. de hecho por defecto la tiene que sanitizar. 

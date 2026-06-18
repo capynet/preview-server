@@ -150,7 +150,10 @@ func GenerateDockerCompose(job *DeployJob, cfg *PreviewConfig) map[string]interf
 			"db": map[string]interface{}{
 				"image":          dbImage,
 				"container_name": prefix + "-db",
-				"command":        "--innodb-flush-log-at-trx-commit=0",
+				// --skip-log-bin: previews don't need binlogs (no replication/PITR);
+				// with them on, each DB import writes ~1x the dump size to binlogs
+				// that never get purged within the preview's lifetime.
+				"command":        "--innodb-flush-log-at-trx-commit=0 --skip-log-bin",
 				"environment": map[string]string{
 					"MYSQL_ROOT_PASSWORD": "root",
 					"MYSQL_DATABASE":      "drupal",

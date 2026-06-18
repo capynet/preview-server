@@ -102,6 +102,15 @@ chown preview:www-data /var/www/preview/.ssh/authorized_keys
 # Create Docker network used by preview containers
 docker network create druploy-network 2>/dev/null || true
 
+# Cap journald disk usage — preview VMs don't need weeks of logs
+mkdir -p /etc/systemd/journald.conf.d
+printf '[Journal]\nSystemMaxUse=64M\n' > /etc/systemd/journald.conf.d/99-preview-cap.conf
+
+# Disable apt periodic update timers — VMs are ephemeral, and these
+# re-fill /var/cache/apt and /var/lib/apt/lists (~400MB) on every boot
+systemctl disable --now apt-daily.timer apt-daily-upgrade.timer 2>/dev/null || true
+systemctl mask apt-daily.service apt-daily-upgrade.service 2>/dev/null || true
+
 # Clean up apt cache
 apt-get clean
 rm -rf /var/lib/apt/lists/*

@@ -6,6 +6,7 @@
   roles:
     - docker
     - caddy
+    - hardening
 
   post_tasks:
     - name: Crear usuario druploy-user

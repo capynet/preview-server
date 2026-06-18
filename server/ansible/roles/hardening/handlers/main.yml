@@ -1,0 +1,27 @@
+---
+- name: Restart journald
+  systemd:
+    name: systemd-journald
+    state: restarted
+  become: yes
+
+- name: Restart fail2ban
+  systemd:
+    name: fail2ban
+    state: restarted
+  become: yes
+
+# Reload (not restart): applies new sshd config to NEW connections without
+# dropping existing sessions, so a mistake can't lock you out mid-deploy.
+- name: Reload sshd
+  systemd:
+    name: ssh
+    state: reloaded
+  become: yes
+
+- name: Reload druploy-firewall
+  systemd:
+    name: druploy-firewall
+    state: reloaded
+    daemon_reload: yes
+  become: yes

@@ -166,6 +166,7 @@ func (d *Deployer) deployNew() (bool, string) {
 		{"restart_webserver", d.stepRestartWebserver},
 		{"reload_cron", d.stepReloadCron},
 		{"post_deploy", func() error { return d.stepPostDeploy("new") }},
+		{"cleanup", d.stepCleanup},
 	}
 	return d.runSteps(steps)
 }
@@ -185,6 +186,7 @@ func (d *Deployer) deployUpdate() (bool, string) {
 		{"restart_webserver", d.stepRestartWebserver},
 		{"reload_cron", d.stepReloadCron},
 		{"post_deploy", func() error { return d.stepPostDeploy("update") }},
+		{"cleanup", d.stepCleanup},
 	}
 	return d.runSteps(steps)
 }
@@ -513,6 +515,31 @@ func (d *Deployer) stepPostDeploy(phase string) error {
 	return nil // always non-fatal
 }
 
+// stepCleanup reclaims disk space after a deploy. Best-effort: never fails
+// the deploy.
+func (d *Deployer) stepCleanup() error {
+	prefix := d.job.URLHash
+	dbContainer := prefix + "-db"
+
+	// Binary logging is disabled (--skip-log-bin), so binlogs left over from
+	// previous deploys are dead weight and safe to delete while mysqld runs.
+	d.log("Removing stale database binlogs...\n")
+	if err := d.runShell(fmt.Sprintf(
+		"docker exec %s bash -c 'rm -f /var/lib/mysql/binlog.* /var/lib/mysql/mysql-bin.*'",
+		dbContainer,
+	)); err != nil {
+		d.log(fmt.Sprintf("⚠ Binlog cleanup failed (non-fatal): %s\n", err))
+	}
+
+	// Each --pull always deploy can leave old image layers behind.
+	d.log("Pruning unused Docker images...\n")
+	if err := d.runShell("docker image prune -af"); err != nil {
+		d.log(fmt.Sprintf("⚠ Image prune failed (non-fatal): %s\n", err))
+	}
+
+	return nil
+}
+
 // --- Helpers ---
 
 func (d *Deployer) runCmd(dir string, name string, args ...string) error {
@@ -560,6 +587,7 @@ func (d *Deployer) stepStart(name string) {
 		"restart_webserver": "Restarting webserver",
 		"reload_cron":       "Reloading cron",
 		"post_deploy":       "Running post-deploy script",
+		"cleanup":           "Cleaning up disk space",
 	}
 	label := labels[name]
 	if label == "" {
@@ -580,6 +608,7 @@ func (d *Deployer) stepEnd(name string, elapsed float64, success bool, errMsg st
 		"restart_webserver": "Restarting webserver",
 		"reload_cron":       "Reloading cron",
 		"post_deploy":       "Running post-deploy script",
+		"cleanup":           "Cleaning up disk space",
 	}
 	label := labels[name]
 	if label == "" {

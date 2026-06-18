@@ -1,0 +1,34 @@
+---
+# journald cap
+journald_system_max_use: "500M"
+journald_system_keep_free: "1G"
+journald_max_retention: "2week"
+
+# fail2ban policy
+fail2ban_bantime: "1h"
+fail2ban_findtime: "10m"
+fail2ban_maxretry: 4
+# Escalate repeat offenders: each re-ban lasts longer, up to a cap.
+fail2ban_bantime_increment: "true"
+fail2ban_bantime_maxtime: "1w"
+# Never ban these (loopback by default; add trusted IPs/CIDRs as needed).
+fail2ban_ignoreip: "127.0.0.1/8 ::1"
+
+# SSH: disable password auth (key-only). Brute-force can't succeed with no
+# password to guess. Requires all real access to use SSH keys.
+ssh_disable_password_auth: true
+
+# Host firewall: TCP ports of host-local services that must NOT be reachable
+# from the internet — only from loopback and the Docker bridges (so Caddy can
+# still reverse-proxy them via host.docker.internal). Everything else (22, 80,
+# 443, 5000 registry, 3128 composer-proxy) stays open.
+#   NOTE: 8000 (API) is intentionally NOT here — preview VMs open the agent
+#   callback WebSocket to ws://<host>:8000. Closing it would break deploys.
+#   The clean follow-up is to route that callback through Caddy (wss/443).
+firewall_internal_host_ports: [3000]
+firewall_docker_subnets: "172.16.0.0/12"
+
+# Automatic reboot when a security update needs it (e.g. kernel), in a quiet
+# window. Without this, kernel fixes pile up unapplied (reboot-required).
+unattended_auto_reboot: true
+unattended_auto_reboot_time: "04:00"
