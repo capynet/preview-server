@@ -9,7 +9,7 @@
     - hardening
 
   post_tasks:
-    - name: Crear usuario druploy-user
+    - name: Create druploy-user user
       user:
         name: druploy-user
         shell: /bin/bash
@@ -17,7 +17,7 @@
         groups: docker
         append: yes
 
-    - name: Crear directorios de trabajo
+    - name: Create working directories
       file:
         path: "{{ item.path }}"
         state: directory
@@ -47,17 +47,17 @@
       args:
         creates: /usr/local/bin/hcloud
 
-    - name: Resumen de instalacion
+    - name: Installation summary
       debug:
         msg: |
           ==========================================
-          SERVIDOR CONFIGURADO CORRECTAMENTE
+          SERVER CONFIGURED SUCCESSFULLY
           ==========================================
 
-          Componentes instalados:
-            - Docker y Docker Compose
+          Components installed:
+            - Docker and Docker Compose
             - Caddy (caddy-docker-proxy + cloudflare DNS)
-            - druploy-network (red Docker compartida)
+            - druploy-network (shared Docker network)
             - jq (JSON parser)
 
           Druploy API:

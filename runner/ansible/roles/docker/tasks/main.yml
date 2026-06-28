@@ -1,5 +1,5 @@
 ---
-- name: Instalar dependencias
+- name: Install dependencies
   apt:
     name:
       - apt-transport-https
@@ -10,30 +10,30 @@
     state: present
     update_cache: yes
 
-- name: Crear directorio keyrings
+- name: Create keyrings directory
   file:
     path: /etc/apt/keyrings
     state: directory
     mode: '0755'
 
-- name: Descargar clave GPG de Docker
+- name: Download Docker GPG key
   get_url:
     url: https://download.docker.com/linux/ubuntu/gpg
     dest: /etc/apt/keyrings/docker.asc
     mode: '0644'
 
-- name: Obtener arquitectura
+- name: Get architecture
   command: dpkg --print-architecture
   register: dpkg_arch
   changed_when: false
 
-- name: Anadir repositorio Docker
+- name: Add Docker repository
   apt_repository:
     repo: "deb [arch={{ dpkg_arch.stdout }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
     state: present
     filename: docker
 
-- name: Instalar Docker
+- name: Install Docker
   apt:
     name:
       - docker-ce
@@ -44,7 +44,7 @@
     state: present
     update_cache: yes
 
-- name: Iniciar servicio Docker
+- name: Start Docker service
   systemd:
     name: docker
     state: started

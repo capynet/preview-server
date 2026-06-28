@@ -8,18 +8,18 @@
     - gitlab-runner
 
   post_tasks:
-    - name: Resumen de instalacion
+    - name: Installation summary
       debug:
         msg: |
           ==========================================
-          RUNNER SERVER CONFIGURADO
+          RUNNER SERVER CONFIGURED
           ==========================================
 
-          Componentes instalados:
+          Components installed:
             ✓ Docker
             ✓ GitLab Runner (executor: docker)
 
-          El runner ejecuta jobs en contenedores Docker
-          y despliega previews al druploy-server via SSH.
+          The runner executes jobs in Docker containers
+          and deploys previews to the druploy-server via SSH.
 
           ==========================================

@@ -1,5 +1,5 @@
 ---
-- name: Instalar dependencias para PostgreSQL APT repository
+- name: Install dependencies for PostgreSQL APT repository
   apt:
     name:
       - wget
@@ -8,25 +8,25 @@
     state: present
     update_cache: yes
 
-- name: Crear directorio keyrings
+- name: Create keyrings directory
   file:
     path: /etc/apt/keyrings
     state: directory
     mode: '0755'
 
-- name: Descargar clave GPG de PostgreSQL
+- name: Download PostgreSQL GPG key
   get_url:
     url: https://www.postgresql.org/media/keys/ACCC4CF8.asc
     dest: /etc/apt/keyrings/postgresql.asc
     mode: '0644'
 
-- name: Añadir repositorio PostgreSQL
+- name: Add PostgreSQL repository
   apt_repository:
     repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/postgresql.asc] http://apt.postgresql.org/pub/repos/apt {{ ansible_distribution_release }}-pgdg main"
     state: present
     filename: pgdg
 
-- name: Instalar PostgreSQL y dependencias
+- name: Install PostgreSQL and dependencies
   apt:
     name:
       - postgresql-{{ postgresql_version }}
@@ -35,13 +35,13 @@
     state: present
     update_cache: yes
 
-- name: Asegurar que PostgreSQL está corriendo
+- name: Ensure PostgreSQL is running
   systemd:
     name: postgresql
     state: started
     enabled: yes
 
-- name: Crear usuario de PostgreSQL
+- name: Create PostgreSQL user
   postgresql_user:
     name: "{{ postgresql_user }}"
     password: "{{ postgresql_password }}"
@@ -49,7 +49,7 @@
   become: yes
   become_user: postgres
 
-- name: Crear base de datos
+- name: Create database
   postgresql_db:
     name: "{{ postgresql_database }}"
     owner: "{{ postgresql_user }}"
@@ -60,7 +60,7 @@
   become: yes
   become_user: postgres
 
-- name: Configurar autenticación (pg_hba.conf)
+- name: Configure authentication (pg_hba.conf)
   template:
     src: pg_hba.conf.j2
     dest: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
@@ -69,7 +69,7 @@
     mode: '0640'
   notify: restart postgresql
 
-- name: Configurar PostgreSQL (postgresql.conf)
+- name: Configure PostgreSQL (postgresql.conf)
   template:
     src: postgresql.conf.j2
     dest: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
@@ -78,7 +78,7 @@
     mode: '0644'
   notify: restart postgresql
 
-- name: Crear directorio de backups
+- name: Create backups directory
   file:
     path: "{{ postgresql_backup_dir }}"
     state: directory
@@ -87,7 +87,7 @@
     mode: '0750'
   when: postgresql_backup_enabled
 
-- name: Configurar backup diario con cron
+- name: Configure daily backup with cron
   cron:
     name: "PostgreSQL backup {{ postgresql_database }}"
     hour: "2"
@@ -96,7 +96,7 @@
     job: "pg_dump {{ postgresql_database }} | gzip > {{ postgresql_backup_dir }}/{{ postgresql_database }}_$(date +\\%Y\\%m\\%d).sql.gz"
   when: postgresql_backup_enabled
 
-- name: Configurar limpieza de backups antiguos
+- name: Configure cleanup of old backups
   cron:
     name: "PostgreSQL backup cleanup"
     hour: "3"
@@ -105,7 +105,7 @@
     job: "find {{ postgresql_backup_dir }} -name '*.sql.gz' -mtime +{{ postgresql_backup_retention_days }} -delete"
   when: postgresql_backup_enabled
 
-- name: Verificar conexión a la base de datos
+- name: Verify database connection
   postgresql_query:
     db: "{{ postgresql_database }}"
     login_user: "{{ postgresql_user }}"
@@ -115,17 +115,17 @@
   become_user: postgres
   register: pg_version
 
-- name: Mostrar versión de PostgreSQL
+- name: Show PostgreSQL version
   debug:
-    msg: "PostgreSQL instalado correctamente: {{ pg_version.query_result[0].version }}"
+    msg: "PostgreSQL installed successfully: {{ pg_version.query_result[0].version }}"
 
-- name: Copiar schema SQL inicial
+- name: Copy initial SQL schema
   copy:
     src: "{{ playbook_dir }}/../preview-manager/migrations/001_initial_schema.sql"
     dest: /tmp/001_initial_schema.sql
     mode: '0644'
 
-- name: Aplicar schema inicial de la base de datos
+- name: Apply initial database schema
   postgresql_query:
     db: "{{ postgresql_database }}"
     login_user: "{{ postgresql_user }}"
@@ -134,14 +134,14 @@
   become: yes
   become_user: postgres
   register: schema_result
-  failed_when: false  # No fallar si las tablas ya existen
+  failed_when: false  # Don't fail if tables already exist
 
-- name: Limpiar archivo temporal de schema
+- name: Clean up temporary schema file
   file:
     path: /tmp/001_initial_schema.sql
     state: absent
 
-- name: Crear archivo .env para preview-manager
+- name: Create .env file for preview-manager
   template:
     src: preview-manager.env.j2
     dest: /home/capy/www/previews/preview-manager/.env
