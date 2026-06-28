@@ -1,215 +1,213 @@
-Servidor preview server: 91.99.157.66
+# Druploy Preview Server
 
-Para el desarrollo en local, tener las cli de gitlab, github, cloudflare suele ser una buena idea. 
+Production server: 91.99.157.66
 
-El encriptado del vault pass: **preview-mr**
-Para verlo:
+For local development, having the GitLab, GitHub, and Cloudflare CLIs installed is recommended.
+
+Ansible vault password: **preview-mr**
+To view:
+```
 ansible-vault view inventory/group_vars/all/vault.yml
-
-Para editarlo:
+```
+To edit:
+```
 ansible-vault edit inventory/group_vars/all/vault.yml
-
+```
 
 ## Server [server](server)
 
-This dir contains the server app itself
+This directory contains the server application itself:
 ```
 /www/previews/server/preview-manager
 ```
 
-#### Previews
+### Previews
 
-Cada preview corre en su propia VM (Hetzner Cloud). El código se clona y ejecuta directamente en la VM mediante el VM Agent.
+Each preview runs on its own VM (Hetzner Cloud). The code is cloned and executed directly on the VM by the VM Agent.
 
-#### Resources (base db and files)
+### Resources (base db and files)
 
-Almacenados en Hetzner Object Storage (S3).
+Stored in Hetzner Object Storage (S3).
 
-# UI [ui](ui)
-Is the UI of preview manager ([server](server))
+## UI [ui](ui)
 
+This is the UI of preview manager ([server](server)).
 
+---
 
-# TODO antes de prod. 
-- Esto va a los casos de uso para publicitar: Un caso de uso que me parece genial para ejemplificar el uso de preview en ramas es si hay dos diseños o funcinaildades distintas para un mismo asunto y hace falt decidir cual nos gusta mas. Al mismo tiempo se puede tener un preview de cada uno de ellos.
-- revisa la documentacion y añadir la documentacion de como configurar gitlab.
-- Es posible estar asignado a organizaciones de otros owner? por ejemplo marcelo.tosco.diodati@gmail.com parte de Druploy y Dropsolid ademas de ser owner de su propio org?
-- Post deploy sigue mostrando el tag "Deploying" aunque haya temrinado el deploy principal
+## TODO before production
 
-# TODO
-- ok podemos crear un banner en la ui avisando que el token ha expirado y/o no se pudo renovar y que solo se muestre a las personas con los permisos adecuados para resolverlo. Si se puede poner un link al area en la que hay que poner el nuevo token mejor.
-- Afinar la seguridad. solo tengo fail2ban pero necesito tener backups diarios que me permitan restaurar el servicio rapidamente y confirmar que con ansible puedo reconstruir el servidor desde cero si hiciera falta.
-- Todo el sistema de mails esta listo. Solo probe el de añadir a un usuario a un grupo o org sin que el user exista y cuando existe. Me queda probar los demas. No es urgente pero hace falta.
-- Voy a tener que auditar todoas las url y endpoint. no vaya que un ususario sin privilegios pueda acceder o realizar accioones get o post sin tener los permisos necesarios.
-- Cuando se haga un druplot push db deberia haber un flag que sanitize la db. de hecho por defecto la tiene que sanitizar. 
-- el usuario admin deberia ser reseteado? eso podria ser una opcion de druploy.yml o de la ui
-- El codigo de python ha ido creciendo a lo largo del tiempo y tengo la sensacion que archivos grandes dificultan a claude analizar y hacer cambios ya que consumen muchos token. Sio esto es asi estaria genial hacer algun refactor y separar los archivos en archivos mas pequeños. idealmete por funcionalidad? organization, user, account, emails, etc 
-- A veces queres mandar un preview a druploy incluso si las regla required_jobs no pasa. Estariab bueno poder marcar a nivel preview la desactivacion (o a nivel proyecto por lo menos podes espefificar que ramas o MR se bypasean asi se logra crear la primer preview) 
-- los preview estaria bueno que muestren la fecha de creacion de la VM, ultima actualizacion y tiempo rstante hasta que se elimine si no esta bloqueada.
-- Posibilidad de configurar un proyecot para que use VM mas grandes. Es necesario por si algun proyecto se considera muy pesado. 
-- Me gustaria poder ver si un cron esta corriendo. 
-- Cuando un mr se mergea o cierra el comentario con la info de druploy puede ser eliminada. 
-- Necesito mejorar los ocmentarios que se hacen en los MR. A veces por accidente se crea uno nuevo. Necesito tal vez añadir una comprobacion extra: a nivel hash (el que se usa en la url de los preview). buscar su precencia. A lo mejor ya esta hecho. la cuestion es que necesito evitar que acabe habiendo mas de un comentario en un MR.
-- Permitir que el auto erase sea a nivel horas en lugar de dias. 
-- arreglar la posibilidad de loguearme con la cuenta de gitlab.
-- Si un MR no contiene cambios a nivel de gitlab no se hace nada. simplemente me informa que no hay cambios. En ese tipo de MR deberiamos hacer lo mismo que se hace con los mr en dranf: nada.
-- Srupal tiene un scon que se podria configurar automaticamente como una configuracion inicial del proyecto. 
-- Hay logs dentor del container que estaria bien poder exponer mediante "preview logs (todos), preview logs cron" etc o incluso podes hacer preview logs pull para descargarlos localmente y rpocesarlos. 
-- Los env var no se pueden deshabilitar. deberia poder estar activo/inactivo por si en algun preview por ejemplo no la quiero porque tengo que hacer pruebas que necesitan ese valor ausente. 
-- Cuando un MR se cierre estaria bien borrar el comentario que hay de druplpy. 
-- Reemplazar PAT por oauth en la conexion de gitlab?
-- Cuando abrimos ssh a un preview (drush ssh) me gustaria tener una consola con colores.
-- El cli deberia servirse desde algun lugar estatico. Como empiecen a descargarlo de forma masica me va a colapsar el server
-- Gitlab tiene un nuevo tipo de token granular. hay que darle soporte. 
-- Necesito en la UI alguna forma de recibir feedback. Algun popup que permita rapidamente attachear un video o imagen y algun comentario. Es para que los usuarios puedan decirme qwue necesita ser mejorado o arreglado. 
-- Necesito que el cli tenga autoreport de errores. Antes de usarlo imagino que primero vamos a tener que agregar un mensaje que el usuario confirme permitiendonos enviar informacion anonimizada para mejorar la herramienta. Una vez que lo haya aprobado, si algun comando falla o crashea deberia enviarse informacion util que nos permita arreglar el error para el futuro. 
-- cada tenant u organizacion podria configurar sus propios dominios? la url de preview seguiria siendo funcionar. lo del dominio custom seria añadirlo encima. Ojo. solo puedo permitir subdominios de su dominio registrado en la organizacion. A lo sumo puedo permitir subdominios de un sitio alternativo pero nunca dominuios base apra que no lo usen como pagina web.
-- El backend ya tiene los endpoints (/api/config/cloud-resources y /api/config/cloud-costs), pero falta la UI en el frontend para mostrarlos
-- Deebria haber algun script que vaya reocrriendo en busca de previews huerfanas?
-- Voy a neceitar algun check que evite que el servidor colapse si el espacio en disco se acaba.
-- El dia uqe salgamos a prod necesito desactivar las herrmaientas de desarrollo de next. productionBrowserSourceMaps
-- Necesito estadisticas de cuantos preview se crean en un proyecto, cuantos rebuild y updates. Cualquier info que me permita hacer estadisticas de uso.
-- NEcesito poder correr toda la solucion en un servidor alternativo para desarrollar las nuevas funcionalidades. O por lo mejos poder correrlo integramente en local. 
-- Necesito que los mr aborten el build actual cuando llega un nuevo hook. 
-- Necesito un boton para abortar el build actual. Es util por ejemplo si necesito añadir una env var. en lugar de esperar a que acabe puedo abortarlo y lanzarlo.
-- 2fa necesario sobre todo para mi que soy superadmin y en realidad para cualquiera porque las DB son tema sensible.
-- NEcesito tener tier free y paid one. el free permite crear una sola preview por poryecto sin limites en nada mas. (ampliar mas la idea)  
-- Extraer toda la configuracion sensible (claves token etc) a lugar seguro y configurable para poder actualizarlos en el futuro sin tanto ptoblema. 
-- Voy a necesitar alguna sanitizacion para las db subidas o de eso se hace cargo el desarrolladdor?
-- creo que esto ya existe: Poder especificar un proceso de despliegue personalizado por rama! (Super útil cuando estás creando algo nuevo que requiera una configuración específica). Probablemente necesite ser especificado desde la conf de la rama ya que no se puede andar coniteando cambios para hacer pruebas.
-- Cuando este todo estable hay que quitar el debug "set -x"
-- soporte multisite. ya esta implementado pero soudal es un bicho raro. Necesito un multisite real.
-- Un caso de uso que me gustaria tener cubierto: si alguien tiene una plataofrma custom como la de DXP de dropsolid, si quieren dar opciones de link, uli y demas, con el cli me basta verdad? (hablo a nivel de integracion)
-- idea: descviar los logs a dodne podas mos accederlos vusuaoment.e Tal we no herramientas titanicas pero si visualizadoews que permitab ver y  uu un comando cli que permitea estrimeo de los y un linx de deecarga.
-- Voy a necesitar que los drupal almacenen sus logs junto a los de apache, php etc en un lugar centralizado facil de revisar. elk o algo mas simple?
-- Voy a necesitar ram, cpu y disco stats simples para tener un overview facil.
-- - necesito mailpit pero tambine una config por ui quepermita desactivarlo por cada preview (hay casos en lls que los email necesitan ser cofirmados).
-- Soporte Drupal decoupled (container Node.js adicional) — para competir con Upsun en ese nicho
-- Si quiero qeu esto funcione. Los usuarios freelance deberiantener esto gratis o por lo menos la opcion de hostearselo ellos mismos o un tier que sea 0€
-- preview autocompletion deberia hacerse automaticamente en lugar de necesitar lanzar el comando a mano.
-- Es posible permirir el uso de apache o OpenLiteSpeed indistintamente?
-- Alternativamente a varnish tenemos (LiteSpeed Cache) con algo de integracion en drupal. no se si hay un modulo sino hay que hacer uno.
-- En el modal "New Preview from Branch" quiero que las ramas esten listadas de mas nueva a mas vieja.
-- Usar github actions para compilar el cli, la ui
-- Deberia dar algun soporte para MCP para poder conectar con las previews desde local
-- voy a necesitar poder especificar en preview push db/files un db o dir files arbitrario y un .sql o .sql.hz o files.tgz o tar.gz
-- Cuando dse crea el cache de la db se hace a la hora de crear el primer preview. Me pregunto si es posible sacar ese caso a un proceso en backgrround para no bloquear la generacion del preview. Y si no es posible por lo menos dar un poco mas de info "creando cache de esta db apras er usadaen las siguientes preview." ademas si se puede informar el progreso mejor que mejor.
-- necesito integrar ia en lugares donde tenga sentido: "activa los proyectos que mas actividad tienen", "Si vas viendo previews que ninca se visitan despues de ser creadas en un proyeco en particular mejor no crees previews e informa al usuario que no se estan creando previews por falta de uso". Permite dejar un proment de lo que se espera a la hrtoa de hacer un erase automatico como por ejenmplo "en este proyecto por lo general revisamos las preview en un dia concreto aSI QUE NO TIENE SENTIDO QUE LAS CREES AUTOMATICAMENTE. MEJOR CREALAS CUANDO CREE UN mr A MASTER QUE SE LLAME "rELEASE XXX""""
-- Quiero poder marcar como favoritos algunso preview de rama o mr. Cuando se borre el preview esta desaparece silencionamente.
-- Visualizacion parent y sus hijos? por ejemplo todas las que apuntan a master se ven colgando de master, las de d11, colganod de d11, etc.
-- Tengo storage box medio imlementado. es un poco mas lento pero mucho mas barato que r2. claude tiene memoria: por ahora el output sale mal codigicado y prev server se satura al procesar el output.
-- el preview agent podria abrover cualquier cosa que suceda en la vm. por ejemplo el uso de cpu ram y disco que veo en la preview detail page.
--  "Usar estadísticas semanales de imágenes Docker más usadas para regenerar automáticamente el snapshot de VM con las imágenes con mayor probabilidad de uso, reduciendo el tiempo de pull en deploys."
-- Pre-cargar imágenes Docker en el snapshot de VM para eliminar el pull en la mayoría de deploys, manteniendo la phase 'Pulling Docker images' como fallback para imágenes no incluidas en el snapshot."
-- Necesito telemetria en los comandos de preview para saber si fallan y tener un output para poder arreglar.o. Evidntemente le tenemos que pedir permiso para recibitr estadisticas anonimas a los usuarios antes de hacerl. verdad?
-- Cuando creo un preview y nop hay un pool listo va a crear una vm para dicho preview y si lo borro en pocoos segundos la vm va a quedar huervada. Parece que es porque el vm_id no se ha guardado todavia en la db cuando se elimina el preview pero deberia quedar segurado tan pronto como se le asigne la vm.
-- los script de deploy tienen acceso a un toolkit TUI visual si se lo quisiera proporcionar desde fuera? me refiero a algun toolkit grafico para consolas que pueda simplemente usar porque   esta disponible en la vm o el docker (no se donde se ejecuta realmente.
-- Vamos a cambiar la numeracion de los build. Ahora mismo se comparte entre todas las vm de todos los orgs. necesito que sea a nivel org o user o project.
-- me gustaria poder hacer upload a las variables de entorno desde la ui para por ejemplo subir un json el lugar de copiarlo y pegarlo. Tiene sentido?
+- Use case for marketing: A great use case to exemplify preview usage on branches is when there are two different designs or functionalities for the same feature and a decision needs to be made on which one is better. You can have a preview of each at the same time.
+- Review the documentation and add docs on how to configure GitLab.
+- Is it possible to be assigned to organizations owned by others? For example, can a user be part of Druploy and Dropsolid while also being owner of their own org?
+- Post-deploy still shows the "Deploying" tag even after the main deploy has finished.
 
+## TODO
 
-- Para guiar al usuario hay documentar como conectar gitlab a la app de previews:
-   Ir a https://gitlab.com/oauth/applications
-   Añadir aplicacion
-   
-   "User login"
-   Callback: https://api.druploy.dev/api/gitlab/auth/callback
-   Scopes: read_user
-   
-   Luego crear una nueva app para conectar la api:
-   "Previews API"
-   Callback: https://api.druploy.dev/api/gitlab/connect/callback
-   Scopes: api
+- We can create a banner in the UI warning that the token has expired and/or could not be renewed, only shown to users with the appropriate permissions to resolve it. Ideally with a link to the area where the new token needs to be set.
+- Tighten security. Currently only have fail2ban but need daily backups that allow quick service restoration and confirm that Ansible can rebuild the server from scratch if needed.
+- The email system is ready. Only tested adding a user to a group or org when the user doesn't exist yet and when they do. Need to test the rest. Not urgent but needed.
+- Need to audit all URLs and endpoints. Make sure a user without privileges cannot access or perform GET or POST actions without the necessary permissions.
+- When doing `druploy push db`, there should be a flag to sanitize the DB. In fact, it should sanitize by default.
+- Should the admin user be reset? That could be an option in druploy.yml or the UI.
+- The Python code has grown over time and large files make it harder for Claude to analyze and make changes as they consume many tokens. If so, it would be great to do a refactor and split files into smaller ones, ideally by functionality: organization, user, account, emails, etc.
+- Sometimes you want to send a preview to Druploy even if the required_jobs rule doesn't pass. It would be good to be able to disable at the preview level (or at the project level at least specify which branches or MRs are bypassed so the first preview can be created).
+- Previews should show the VM creation date, last update, and time remaining until deletion if not pinned.
+- Ability to configure a project to use larger VMs. Needed for projects that are resource-heavy.
+- Would like to see if a cron job is currently running.
+- When an MR is merged or closed, the comment with Druploy info could be removed.
+- Need to improve the comments posted on MRs. Sometimes a new one is created by accident. Need to add an extra check: at the hash level (the one used in the preview URL). Search for its presence. Maybe it's already done. The point is to avoid having more than one comment on an MR.
+- Allow auto-erase to be configured in hours instead of days.
+- Fix the ability to log in with a GitLab account.
+- If an MR contains no changes at the GitLab level, nothing is done. It just informs that there are no changes. In that type of MR, we should do the same as with draft MRs: nothing.
+- Drupal has a scaffold that could be configured automatically as an initial project configuration.
+- There are logs inside the container that would be good to expose via `preview logs` (all), `preview logs cron`, etc., or even `preview logs pull` to download them locally and process them.
+- Env vars cannot be disabled. Should be able to toggle active/inactive in case a specific preview doesn't need one because testing requires that value to be absent.
+- When an MR is closed, it would be nice to delete the Druploy comment.
+- Replace PAT with OAuth for GitLab connection?
+- When opening SSH to a preview (drush ssh), would like a console with colors.
+- The CLI should be served from a static location. If downloads scale up, it will crash the server.
+- GitLab has a new granular token type. Need to support it.
+- Need some form of feedback in the UI. A popup that allows quickly attaching a video or image and a comment. So users can report what needs to be improved or fixed.
+- Need the CLI to have auto error reporting. Before using it, we'll need to add a message for the user to confirm allowing us to send anonymized information to improve the tool. Once approved, if a command fails or crashes, useful information should be sent so we can fix the error.
+- Could each tenant or organization configure their own domains? The preview URL would still work. The custom domain would be layered on top. Note: can only allow subdomains of their registered domain. At most, allow subdomains of an alternative site but never base domains so they don't use it as a website.
+- The backend already has the endpoints (`/api/config/cloud-resources` and `/api/config/cloud-costs`), but the frontend UI to display them is missing.
+- Should there be a script that scans for orphaned previews?
+- Need a check to prevent the server from crashing if disk space runs out.
+- When going to production, need to disable Next.js dev tools and `productionBrowserSourceMaps`.
+- Need statistics on how many previews are created per project, how many rebuilds and updates. Any info that allows usage statistics.
+- Need to run the entire solution on an alternative server for developing new features. Or at least be able to run it entirely locally.
+- Need MRs to abort the current build when a new hook arrives.
+- Need a button to abort the current build. Useful for example if you need to add an env var. Instead of waiting for it to finish, you can abort and relaunch.
+- 2FA needed, especially for the superadmin, but really for anyone since DBs are sensitive.
+- Need a free tier and a paid tier. The free tier allows creating only one preview per project with no other limits. (Expand on this idea.)
+- Extract all sensitive configuration (keys, tokens, etc.) to a secure and configurable location so they can be updated in the future without much hassle.
+- Need some sanitization for uploaded DBs, or does the developer handle that?
+- I think this already exists: Ability to specify a custom deployment process per branch! (Super useful when creating something new that requires specific configuration). Probably needs to be specified from the branch config since you can't be committing changes just for testing.
+- Once everything is stable, remove the `set -x` debug.
+- Multisite support. Already implemented but some projects are edge cases. Need real multisite support.
+- Use case to cover: if someone has a custom platform like Dropsolid's DXP, if they want to provide link, uli, and other options, the CLI suffices, right? (in terms of integration).
+- Idea: route logs to somewhere we can access visually. Maybe not titanic tools but visualizers that allow viewing, and a CLI command for log streaming and a download link.
+- Need Drupal to store its logs alongside Apache, PHP, etc. in a centralized, easy-to-review location. ELK or something simpler?
+- Need simple RAM, CPU, and disk stats for an easy overview.
+- Need mailpit but also a UI config to disable it per preview (there are cases where emails need to be confirmed).
+- Support Drupal decoupled (additional Node.js container) — to compete with Upsym in that niche.
+- For this to work, freelance users should have this for free, or at least the option to self-host, or a 0€ tier.
+- Preview autocompletion should happen automatically instead of needing to run the command manually.
+- Is it possible to support Apache or OpenLiteSpeed interchangeably?
+- As an alternative to Varnish, there's LiteSpeed Cache with some Drupal integration. Not sure if there's a module; if not, one needs to be made.
+- In the "New Preview from Branch" modal, want branches listed from newest to oldest.
+- Use GitHub Actions to compile the CLI and UI.
+- Should provide MCP support to connect to previews from local.
+- Need to support specifying an arbitrary DB or files dir in `preview push db/files`, and accept `.sql`, `.sql.gz`, `files.tgz`, or `tar.gz`.
+- When the DB cache is created, it happens during the first preview creation. Wonder if it's possible to move that to a background process so it doesn't block preview generation. If not possible, at least give more info: "Creating DB cache for use in subsequent previews." And if progress can be reported, even better.
+- Need AI integration where it makes sense: "enable the projects with most activity", "if you see previews that are never visited after being created in a particular project, better not create previews and inform the user that previews aren't being created due to lack of use." Allow setting an expectation for auto-erase timing, e.g. "in this project we usually review previews on a specific day, so it doesn't make sense to create them automatically. Better create them when an MR to master named 'Release XXX' is created."
+- Want to mark some branch or MR previews as favorites. When the preview is deleted, the favorite disappears silently.
+- Parent and child visualization? For example, all previews targeting master hang from master, those for d11 hang from d11, etc.
+- Storage Box is half-implemented. It's a bit slower but much cheaper than R2. Claude has memory: for now the output comes out badly encoded and the preview server gets saturated processing the output.
+- The preview agent could capture anything happening on the VM, e.g. CPU, RAM, and disk usage shown on the preview detail page.
+- "Use weekly statistics of most-used Docker images to automatically regenerate the VM snapshot with the images most likely to be used, reducing pull time during deploys."
+- "Pre-load Docker images in the VM snapshot to eliminate pull in most deploys, keeping the 'Pulling Docker images' phase as fallback for images not included in the snapshot."
+- Need telemetry in preview commands to know if they fail and have output to fix them. Obviously, we need to ask users for permission to receive anonymous statistics before doing so.
+- When creating a preview and there's no pool ready, a VM will be created for that preview, and if deleted within a few seconds, the VM will be orphaned. Seems like the vm_id isn't saved in the DB yet when the preview is deleted, but it should be saved as soon as the VM is assigned.
+- Do deploy scripts have access to a visual TUI toolkit if provided externally? I mean some console graphical toolkit that can simply be used because it's available on the VM or Docker (not sure where it actually runs).
+- Going to change build numbering. Currently shared across all VMs of all orgs. Need it to be per org, user, or project.
+- Would like to upload environment variables from the UI, e.g. upload a JSON file instead of copying and pasting. Makes sense?
 
-   "User login"
-   Application ID: 3a4c9a8e1626f825734902c265eda47787b56f1724f09d65419e88991ab228d4
-   Secret: gloas-85522b0b96f9a61bf169e10231a2422a6c59325dc324de1535cb0d4aecf8e0ee
-   Callback: https://api.druploy.dev/api/gitlab/auth/callback
-   Scopes: read_user
-   
-   "Previews API"
-   Application ID: b05e4ef0609f8e02eec1bbe36770d1c847a155da9176b80bc568ba4b87dfe7e4
-   Secret: gloas-4361304ca401bddf62cddac1cc37b3062b9c8e981fdada089765f44836d1acc6
-   Callback: https://api.druploy.dev/api/gitlab/connect/callback
-   Scopes: api
+## GitLab Setup
 
+To guide users, document how to connect GitLab to the preview app:
 
-Otro asunto para resolver:
-   Problema
-   Actualmente solo hay una DB base por proyecto. Se necesita poder tener previews con DBs distintas (ej: main con DB live, develop con DB sanitizada).
-   
-   Solución
-   Nuevo flag --target en preview push db que importa la DB directamente en una preview existente, en vez de subirla como base file del proyecto.
-   
-   Flujo
-   preview push db --target=branch-main
-   
-   1. CLI hace dump local (drush sql:dump, como ya hace)
-      2. CLI sube el gzip a POST /api/previews/{project}/{preview_name}/db/import
-      3. Backend recibe el gzip y ejecuta gunzip | docker exec -i {container}-db mysql -u drupal -pdrupal drupal
-   
-   Cambios necesarios
-   
-   CLI:
-   - Flag --target=<preview_name> en push db
-     - Si --target se pasa, enviar al endpoint de import en vez de al de base files
-   
-   Backend:
-   - Nuevo endpoint POST /api/previews/{project}/{preview_name}/db/import
-     - Recibe el gzip como body/multipart
-     - Ejecuta el import en el container de DB de esa preview
-     - Opcionalmente ejecuta drush cr después
-   
-   Ventajas
-   
-   - Sin config extra, sin variantes, sin aliases drush
-     - Reutiliza el dump que el CLI ya sabe hacer
-     - Cada preview puede tener la DB que quieras sin afectar las demás
-     - Retrocompatible: preview push db sin --target sigue funcionando como antes
+Go to https://gitlab.com/oauth/applications
+Add an application:
 
+**"User login"**
+- Callback: https://api.druploy.dev/api/gitlab/auth/callback
+- Scopes: read_user
 
-- pregunta: se podria tener un snapshot de una imagen de docker preparada para ser reutilizada en segundos? por ejemplo el docker de la db siempre es el mismo en cada rebuild hasta que se     
-  carga una nueva db. RESPUESTA:
-  -  Sí, hay varias opciones. Para el caso de la DB:
+Then create a new app to connect the API:
+**"Previews API"**
+- Callback: https://api.druploy.dev/api/gitlab/connect/callback
+- Scopes: api
 
-    1. Imagen pre-cargada con docker commit                                                                                                                                                       
-       Después de importar la base DB, hacer docker commit del container MySQL como imagen custom (preview-db-soudal:latest). Los nuevos previews usan esa imagen y arrancan con los datos ya
-       cargados. Problema: MySQL guarda datos en volumen, no en la capa del container, así que habría que ajustar eso.
+> **WARNING**: The GitLab OAuth application secrets were previously stored in plaintext in this README. They have been removed. Check the Ansible vault (`inventory/group_vars/all/vault.yml`) for current secrets.
 
-    2. Custom image con datos baked-in (más robusto)
-       Crear un Dockerfile que arranca MySQL, importa el dump, y guarda el datadir dentro de la imagen. Cada vez que se sube un nuevo base DB, se rebuilda la imagen. Los previews arrancan en
-       segundos con datos listos.
+---
 
-    3. Volume snapshots (más rápido, más complejo)
-       Con ZFS o btrfs podés hacer snapshots instantáneos del volumen de datos. Clonar un volumen de 500MB toma milisegundos. Pero requiere que el servidor use esos filesystems.
+## Feature: Import DB directly to a preview
 
-  La opción más práctica para tu caso sería la 2: cuando alguien sube un nuevo base DB via preview push db, el backend:
-    1. Levanta un container MySQL temporal
-    2. Importa el dump
-    3. Hace docker commit → preview-db:{project}:latest
-    4. Los nuevos previews usan esa imagen en vez de mysql:8.0 + import
+### Problem
+Currently there is only one base DB per project. Need to be able to have previews with different DBs (e.g. main with live DB, develop with sanitized DB).
 
-  Hardening del canal coordinador ↔ VM agent
+### Solution
+New `--target` flag in `preview push db` that imports the DB directly into an existing preview, instead of uploading it as a base file for the project.
 
-    - [ ] Firewall en las VMs (mayor impacto, menor riesgo). Agregar un Hetzner Cloud firewall al crear la VM en cloud.py que solo permita :8022
-      (agent) y :2222 (SSH container) desde la IP del coordinador. Hoy las VMs tienen IP pública con todos los puertos abiertos (iptables ACCEPT, ufw
-      inactivo).
-    - [ ] Token en el endpoint /deploy del agent. Hoy solo /terminal valida el HMAC (validateToken); /deploy, /deploy/status, /deploy/logs, /info,
-      /containers, /ssh-keys están sin auth. Cualquiera que alcance :8022 puede disparar deploys o leer info.
-    - [ ] Token de GitLab en texto plano sobre HTTP. El payload de /deploy incluye GitCloneURL = https://oauth2:{gitlab_token}@.../repo.git y viaja
-      por HTTP sin cifrar (http://{vm_ip}:8022/deploy). Mitigado parcialmente porque es tráfico intra-datacenter (Hetzner Falkenstein), pero el token
-      queda expuesto.
-    - [ ] Cifrar el canal coordinador → agent. Pasar :8022 de HTTP plano a HTTPS (TLS, aunque sea self-signed con pinning) o tunelizarlo. Resuelve de
-      raíz los dos puntos anteriores.
+### Flow
+```
+preview push db --target=branch-main
+```
 
-  Hardening del canal CLI ↔ preview (menor prioridad)
+1. CLI does local dump (drush sql:dump, as it already does)
+2. CLI uploads the gzip to `POST /api/previews/{project}/{preview_name}/db/import`
+3. Backend receives the gzip and runs `gunzip | docker exec -i {container}-db mysql -u drupal -pdrupal drupal`
 
-    - [ ] Sin verificación de host en SSH. El CLI usa StrictHostKeyChecking=no + UserKnownHostsFile=/dev/null en ssh/push files/push db. El tráfico va
-      cifrado, pero no hay TOFU: un MITM activo podría suplantar el preview. Evaluar pinning del host key de la VM (el coordinador ya conoce su
-      fingerprint).
+### Required changes
 
+**CLI:**
+- `--target=<preview_name>` flag in `push db`
+  - If `--target` is passed, send to the import endpoint instead of the base files endpoint
 
-Si un preview se borra (por ejemplo por autoerase) necesitaria que la url en lugar de dar 404 lance un build inicial para reconstruir la imagen si el MR o la rama todavia existe. 
-Idealmenete con un splash screen "La preview a la que quieres acceder actualmente no existe. Si la queres crear confirma este mensaje y en unos minutos la tendras disponible. 
-No hace falta que cierres esta pestaña, tan pronto como acabe el build la pagina se va a mostrar"
-Crees que es posible?
+**Backend:**
+- New endpoint `POST /api/previews/{project}/{preview_name}/db/import`
+  - Receives the gzip as body/multipart
+  - Runs the import in the DB container of that preview
+  - Optionally runs `drush cr` afterwards
+
+### Advantages
+- No extra config, no variants, no drush aliases
+- Reuses the dump the CLI already knows how to make
+- Each preview can have whatever DB you want without affecting others
+- Backward compatible: `preview push db` without `--target` still works as before
+
+---
+
+## Docker image snapshot for DB
+
+Question: Could you have a snapshot of a prepared Docker image to be reused in seconds? For example, the DB docker image is always the same on each rebuild until a new DB is loaded.
+
+### Options for the DB case:
+
+1. **Pre-loaded image with docker commit**
+   After importing the base DB, do `docker commit` of the MySQL container as a custom image (e.g. `preview-db-soudal:latest`). New previews use that image and start with data already loaded. Problem: MySQL stores data in a volume, not in the container layer, so that would need adjusting.
+
+2. **Custom image with baked-in data (more robust)**
+   Create a Dockerfile that starts MySQL, imports the dump, and saves the datadir inside the image. Each time a new base DB is uploaded, the image is rebuilt. Previews start in seconds with data ready.
+
+3. **Volume snapshots (faster, more complex)**
+   With ZFS or btrfs you can do instantaneous snapshots of the data volume. Cloning a 500MB volume takes milliseconds. But requires the server to use those filesystems.
+
+The most practical option would be #2: when someone uploads a new base DB via `preview push db`, the backend:
+1. Spins up a temporary MySQL container
+2. Imports the dump
+3. Does `docker commit` -> `preview-db:{project}:latest`
+4. New previews use that image instead of `mysql:8.0` + import
+
+---
+
+## Hardening: Coordinator <-> VM Agent channel
+
+- [ ] **Firewall on VMs** (highest impact, lowest risk). Add a Hetzner Cloud firewall when creating the VM in `cloud.py` that only allows :8022 (agent) and :2222 (SSH container) from the coordinator's IP. Currently VMs have public IP with all ports open (iptables ACCEPT, ufw inactive).
+- [ ] **Token on /deploy endpoint**. Currently only `/terminal` validates the HMAC (validateToken); `/deploy`, `/deploy/status`, `/deploy/logs`, `/info`, `/containers`, `/ssh-keys` have no auth. Anyone reaching :8022 can trigger deploys or read info.
+- [ ] **GitLab token in plaintext over HTTP**. The `/deploy` payload includes `GitCloneURL = https://oauth2:{gitlab_token}@.../repo.git` and travels unencrypted over HTTP (`http://{vm_ip}:8022/deploy`). Partially mitigated because it's intra-datacenter traffic (Hetzner Falkenstein), but the token is exposed.
+- [ ] **Encrypt coordinator -> agent channel**. Switch :8022 from plain HTTP to HTTPS (TLS, even self-signed with pinning) or tunnel it. This resolves the two issues above at the root.
+
+## Hardening: CLI <-> Preview channel (lower priority)
+
+- [ ] **No host verification in SSH**. The CLI uses `StrictHostKeyChecking=no` + `UserKnownHostsFile=/dev/null` in ssh/push files/push db. Traffic is encrypted, but there's no TOFU: an active MITM could impersonate the preview. Evaluate pinning the VM host key (the coordinator already knows its fingerprint).
+
+---
+
+## Preview resurrection
+
+If a preview is deleted (e.g. by auto-erase), the URL should trigger an initial build to reconstruct the image if the MR or branch still exists.
+Ideally with a splash screen: "The preview you are trying to access does not currently exist. If you want to create it, confirm this message and in a few minutes it will be available. You don't need to close this tab, as soon as the build finishes the page will be displayed."
