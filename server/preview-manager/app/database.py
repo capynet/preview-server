@@ -631,6 +631,75 @@ async def finish_deployment(
     )
 
 
+async def fail_running_deployments(project_id: int, preview_name: str, error: str) -> int:
+    """Mark every 'running' deployment of a preview as failed, by deployment id.
+
+    Unlike the previous recovery path, this does NOT require the preview row to
+    still exist (it may be soft-deleted): it matches deployments directly, so an
+    interrupted deploy can never leave its row stuck in 'running' just because
+    the preview was deleted out from under it. Preserves log_output/phases.
+    Returns the number of rows closed.
+    """
+    pool = await get_pool()
+    result = await pool.execute(
+        """UPDATE deployments
+           SET status = 'failed', completed_at = $4,
+               error = CASE WHEN coalesce(error,'') = '' THEN $3
+                            ELSE error || ' | ' || $3 END
+           WHERE status = 'running'
+             AND preview_id IN (
+                 SELECT id FROM previews WHERE project_id = $1 AND preview_name = $2
+             )""",
+        project_id, preview_name, error, _now(),
+    )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+async def reap_stale_running_deployments(max_age_seconds: int) -> int:
+    """Safety-net reaper: close any deployment stuck in 'running' beyond
+    ``max_age_seconds``, so a hard-killed/OOM'd job never leaves a permanent
+    zombie. Casts the TEXT-stored ``started_at`` to timestamptz for a reliable
+    age comparison. Preserves log_output/phases. Returns rows closed.
+    """
+    note = "Reaped: deployment stuck in 'running' beyond max runtime"
+    pool = await get_pool()
+    result = await pool.execute(
+        """UPDATE deployments
+           SET status = 'failed', completed_at = $2,
+               error = CASE WHEN coalesce(error,'') = '' THEN $3
+                            ELSE error || ' | ' || $3 END
+           WHERE status = 'running'
+             AND started_at::timestamptz < now() - make_interval(secs => $1)""",
+        max_age_seconds, _now(), note,
+    )
+    try:
+        return int(result.split()[-1])
+    except (ValueError, IndexError):
+        return 0
+
+
+async def get_long_running_deployments(min_age_seconds: int) -> list[dict]:
+    """Return 'running' deployments older than ``min_age_seconds`` for early-warning
+    logging (before the reaper hard-closes them). Read-only. Each row carries the
+    age in whole minutes as ``minutes``.
+    """
+    pool = await get_pool()
+    rows = await pool.fetch(
+        """SELECT d.id, d.preview_id, pr.preview_name,
+                  floor(extract(epoch FROM (now() - d.started_at::timestamptz)) / 60)::int AS minutes
+           FROM deployments d
+           LEFT JOIN previews pr ON pr.id = d.preview_id
+           WHERE d.status = 'running'
+             AND d.started_at::timestamptz < now() - make_interval(secs => $1)
+           ORDER BY d.started_at""",
+        min_age_seconds,
+    )
+    return [_row_to_dict(r) for r in rows]
+
+
 async def get_all_running_deployments(min_age_seconds: int = 30) -> list[dict]:
     """Get deployments stuck in 'running' status, joined with preview/project/org data.
 

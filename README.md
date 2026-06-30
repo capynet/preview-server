@@ -44,6 +44,7 @@ This is the UI of preview manager ([server](server)).
 
 ## TODO
 
+- El codigo fue creciendo con el tiemo y tal vez se podrian refactorizar algunos para achicarlos ya que consumen muchos token de claude cuando hayq ue leer algo.
 - We can create a banner in the UI warning that the token has expired and/or could not be renewed, only shown to users with the appropriate permissions to resolve it. Ideally with a link to the area where the new token needs to be set.
 - Tighten security. Currently only have fail2ban but need daily backups that allow quick service restoration and confirm that Ansible can rebuild the server from scratch if needed.
 - The email system is ready. Only tested adding a user to a group or org when the user doesn't exist yet and when they do. Need to test the rest. Not urgent but needed.

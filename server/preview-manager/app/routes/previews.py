@@ -632,9 +632,36 @@ async def delete_preview_internal(
     org_slug: str, project_slug: str, project_id: int, preview_name: str,
 ):
     """Core delete logic: destroy VM, remove from DB."""
+    # Signal any in-flight deploy to stop cooperatively BEFORE we pull the VM out
+    # from under it, so it aborts in seconds instead of polling a dead VM until
+    # the job timeout. The deploy clears this flag before its next run.
+    from app.valkey import request_deploy_cancel
+    deploy_key = f"{project_slug}/{preview_name}"
+    try:
+        await request_deploy_cancel(deploy_key)
+    except Exception as e:
+        logger.warning(f"Could not request deploy cancel for {deploy_key}: {e}")
+
     # Clear any in-flight deploy lock so a recreated preview won't be blocked
     from app.routes.webhooks import clear_deploy_lock
     await clear_deploy_lock(project_slug, preview_name)
+
+    # Close any still-running deployment for this preview, so the cancelled
+    # deploy can never linger as a 'running' zombie.
+    from app.database import fail_running_deployments
+    raced_deploy = False
+    try:
+        closed = await fail_running_deployments(
+            project_id, preview_name, error="Preview deleted during deploy",
+        )
+        if closed:
+            raced_deploy = True
+            logger.warning(
+                f"Delete raced an in-flight deploy for {deploy_key}: requested "
+                f"cooperative cancel and closed {closed} running deployment(s)"
+            )
+    except Exception as e:
+        logger.warning(f"Could not close running deployments for {deploy_key}: {e}")
 
     preview = await get_preview(project_id, preview_name)
 
@@ -645,8 +672,12 @@ async def delete_preview_internal(
     # Destroy VM if exists
     if preview and preview.get("vm_id"):
         try:
+            logger.info(
+                f"Destroying VM {preview['vm_id']} for {org_slug}/{project_slug}/"
+                f"{preview_name} (had_running_deploy={raced_deploy})"
+            )
             await cloud_manager.destroy_vm(preview["vm_id"])
-            logger.info(f"Destroyed VM for {org_slug}/{project_slug}/{preview_name}")
+            logger.info(f"Destroyed VM {preview['vm_id']} for {org_slug}/{project_slug}/{preview_name}")
         except Exception as e:
             logger.warning(f"Error destroying VM for {org_slug}/{project_slug}/{preview_name}: {e}")
 

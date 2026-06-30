@@ -29,30 +29,30 @@ async def _handle_interrupted_deploy(
     reason: str = "Interrupted by worker shutdown",
 ):
     """Mark current deployment as failed, release lock, and re-enqueue for recovery."""
-    from app.database import get_preview, get_running_deployment, finish_deployment
+    from app.database import get_preview, fail_running_deployments
     from app.state import PreviewStateManager
     from app.valkey import release_deploy_lock
 
     deploy_key = f"{project_slug}/{preview_name}"
 
-    # Mark running deployment as failed and reset preview status
+    # Close any running deployment row BY ITS OWN ID — this must not depend on
+    # the preview still existing (a racing delete may have removed it), otherwise
+    # the deployment is left stuck in 'running' forever (a "zombie").
     try:
-        preview = await get_preview(project_id, preview_name)
-        if preview:
-            running = await get_running_deployment(preview["id"])
-            if running:
-                await finish_deployment(
-                    running["id"], "failed",
-                    error=f"{reason} — will retry",
-                )
-                logger.info(f"Marked deployment #{running['id']} as failed for {deploy_key}")
-
-        await PreviewStateManager.save_state(
-            project_id, preview_name,
-            status="failed",
-            last_deployment_status="failed",
-            last_deployment_error=f"{reason} — re-deploying",
+        closed = await fail_running_deployments(
+            project_id, preview_name, error=f"{reason} — will retry",
         )
+        if closed:
+            logger.info(f"Closed {closed} running deployment(s) for {deploy_key} ({reason})")
+
+        # Best-effort: reset preview status only if it still exists.
+        if await get_preview(project_id, preview_name):
+            await PreviewStateManager.save_state(
+                project_id, preview_name,
+                status="failed",
+                last_deployment_status="failed",
+                last_deployment_error=f"{reason} — re-deploying",
+            )
     except Exception as e:
         logger.error(f"Error marking deployment failed for {deploy_key}: {e}")
 
@@ -168,6 +168,8 @@ async def task_deploy_preview(
             logger.info(f"Skipping retry for deleted preview {project_slug}/{preview_name} (try={job_try})")
             return
 
+    import time
+    t0 = time.monotonic()
     try:
         await _clone_and_deploy(
             org_id, org_slug, project_id, project_slug, project_path,
@@ -175,13 +177,28 @@ async def task_deploy_preview(
             mr_iid, force_new, mr_title, target_branch,
         )
     except asyncio.CancelledError:
-        logger.warning(f"Deploy {project_slug}/{preview_name} cancelled (worker shutdown)")
+        # CancelledError can mean a graceful SIGTERM shutdown OR arq killing the
+        # job at job_timeout (a hung poll). Distinguish by elapsed time so the
+        # log points at the real cause instead of always blaming "shutdown".
+        elapsed = int(time.monotonic() - t0)
+        if elapsed >= WorkerSettings.job_timeout - 30:
+            reason = "Interrupted by job_timeout"
+            logger.error(
+                f"Deploy {project_slug}/{preview_name} hit job_timeout after "
+                f"{elapsed}s (~{elapsed // 3600}h) — likely a hung poll, NOT a worker shutdown"
+            )
+        else:
+            reason = "Interrupted by worker shutdown"
+            logger.warning(
+                f"Deploy {project_slug}/{preview_name} cancelled after {elapsed}s "
+                f"(worker shutdown or cooperative cancel)"
+            )
         try:
             await asyncio.shield(_handle_interrupted_deploy(
                 org_id, org_slug, project_id, project_slug, project_path,
                 preview_name, source_branch, commit_sha,
                 mr_iid, force_new, mr_title,
-                reason="Interrupted by worker shutdown",
+                reason=reason,
             ))
         except asyncio.CancelledError:
             pass
@@ -258,9 +275,23 @@ async def task_delete_preview(
     project_id: int,
     preview_name: str,
 ):
-    """Delete a preview. Runs in arq worker."""
+    """Delete a preview. Runs in arq worker.
+
+    This task is the automatic deletion path (enqueued by the MR close/merge
+    webhook), so it honours the 'prevent auto erase' (pinned) guard as a
+    safety net even if the enqueuer didn't check.
+    """
     from app.routes.previews import delete_preview_internal
+    from app.database import get_preview
+    from app.preview_rules import is_protected_from_auto_delete
     try:
+        preview = await get_preview(project_id, preview_name)
+        if is_protected_from_auto_delete(preview):
+            logger.info(
+                f"Skipping auto-delete for {org_slug}/{project_slug}/{preview_name}: "
+                f"preview is pinned (prevent auto erase)"
+            )
+            return
         await delete_preview_internal(org_slug, project_slug, project_id, preview_name)
     except Exception as e:
         logger.error(f"Failed to delete preview {org_slug}/{project_slug}/{preview_name}: {e}")
@@ -304,6 +335,29 @@ async def task_rotate_gitlab_tokens(ctx):
     await rotate_gitlab_tokens()
 
 
+async def task_reap_stale_deployments(ctx):
+    """Safety net: close any deployment stuck in 'running' beyond the job
+    timeout (plus margin). Catches zombies left by kill -9 / OOM / a finalize
+    that never ran, without waiting for a worker restart. Runs as cron job.
+    """
+    from app.database import reap_stale_running_deployments, get_long_running_deployments
+
+    # Early warning: surface deploys running unusually long BEFORE they become
+    # zombies (normal deploys take ~2 min). This is the canary the incident lacked.
+    try:
+        for d in await get_long_running_deployments(1800):  # > 30 min
+            logger.warning(
+                f"dep#{d['id']} ({d.get('preview_name')}) has been running for "
+                f"{d['minutes']} min — investigate (normal deploys take ~2 min)"
+            )
+    except Exception as e:
+        logger.warning(f"Long-running deployment check failed: {e}")
+
+    n = await reap_stale_running_deployments(WorkerSettings.job_timeout + 1800)
+    if n:
+        logger.warning(f"Reaper closed {n} stale 'running' deployment(s)")
+
+
 async def task_docker_prune(ctx):
     """Remove unused Docker images and build cache. Runs as cron job."""
     import asyncio
@@ -325,7 +379,7 @@ async def task_docker_prune(ctx):
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_purge_soft_deleted, task_docker_prune, task_rotate_gitlab_tokens]
+    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_purge_soft_deleted, task_docker_prune, task_rotate_gitlab_tokens, task_reap_stale_deployments]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
@@ -337,6 +391,7 @@ class WorkerSettings:
         cron(task_auto_erase, hour=None, minute=0),  # Every hour
         cron(task_check_vms, hour=None, minute={0, 15, 30, 45}),  # Every 15 min
         cron(task_cleanup_orphan_vms, hour=None, minute={10, 40}),  # Every 30 min
+        cron(task_reap_stale_deployments, hour=None, minute={5, 20, 35, 50}),  # Every 15 min
         cron(task_replenish_warm_pool, hour=None, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),  # Every 5 min
         cron(task_docker_prune, hour={3}, minute=0),  # Daily at 3 AM
         cron(task_purge_soft_deleted, hour={3}, minute=30),  # Daily at 3:30 AM

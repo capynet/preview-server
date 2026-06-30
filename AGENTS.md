@@ -142,9 +142,20 @@ make all            # all platforms
 
 ### Ansible deployment — workdir: `server/ansible/`
 
+**Ansible is the preferred (canonical) way to deploy.** Do not hand-roll deploys
+(manual `rsync` + `systemctl restart`, etc.) — they skip steps the playbook owns
+(`.env` templating from vault, venv/pip, ownership, service files, docker infra)
+and leave prod drifted from a clean run. Always go through the playbook.
+
 ```bash
 ansible-playbook -i inventory/hosts.yml playbooks/deploy-preview-manager.yml
 ```
+
+- Code-only change? Scope it with `--tags code` (still re-templates `.env`, so the
+  Ansible vault password — `preview-mr` — is required).
+- Preview what a run would change first with `--check` (dry-run) before applying.
+- The vault holds production secrets; pass it via `--ask-vault-pass` or a vault
+  password file.
 
 Playbooks: `setup-preview-server.yml`, `deploy-landing.yml`, `deploy-preview-ui.yml`, `harden-server.yml`, `setup-caddy.yml`, etc.
 

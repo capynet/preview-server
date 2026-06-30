@@ -84,6 +84,20 @@ def matches_any(value: str, patterns: list[str]) -> str | None:
     return None
 
 
+def is_protected_from_auto_delete(preview: dict | None) -> bool:
+    """Return True if a preview must NOT be deleted by any automatic path.
+
+    A ``pinned`` preview ("prevent auto erase" in the UI) is protected from
+    *every* automatic deletion path — the idle auto-erase cron AND the MR
+    close/merge webhook. Manual deletes from the UI (and org/project cascade
+    deletes) deliberately bypass this guard.
+
+    This is the single source of truth for the rule; all automatic deletion
+    paths must consult it rather than re-checking ``pinned`` themselves.
+    """
+    return bool(preview and preview.get("pinned"))
+
+
 def should_skip_auto_creation(
     project: dict,
     source_branch: str,

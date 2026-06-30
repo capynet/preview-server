@@ -32,6 +32,9 @@ class DeployCancelled(Exception):
 # Timeouts per step (seconds)
 TIMEOUT_DEPLOY_SCRIPT = 36000
 TIMEOUT_POST_DEPLOY = 18000  # 5 hours — post-deploy can run heavy tasks (indexing, etc.)
+# If the VM agent is unreachable for this long while polling, fail fast instead
+# of waiting out the full deploy timeout (e.g. the VM was destroyed mid-deploy).
+AGENT_UNREACHABLE_TIMEOUT = 180  # 3 minutes
 
 # Preview working directory inside the VM
 VM_PREVIEW_DIR = "/var/www/preview"
@@ -903,6 +906,8 @@ class PreviewDeployer:
         current_step = ""
         deadline = time.monotonic() + timeout
         poll_interval = 2  # seconds
+        last_contact = time.monotonic()  # last time the agent answered a poll
+        unreachable_logged = False  # avoid spamming a warning per failed poll
         poll_url = f"http://{self._vm_ip}:8022/deploy/logs/{self._deployment_id}"
         status_url = f"http://{self._vm_ip}:8022/deploy/status"
         info_url = f"http://{self._vm_ip}:8022/info"
@@ -925,6 +930,53 @@ class PreviewDeployer:
         while time.monotonic() < deadline:
             await self._check_cancelled()
             data = await asyncio.to_thread(_poll, log_offset)
+
+            if data is None:
+                # Agent unreachable this poll. If it has been unreachable too long,
+                # fail fast rather than wait out the full deploy timeout — most
+                # commonly because the VM was destroyed by a concurrent delete.
+                gap = int(time.monotonic() - last_contact)
+                if not unreachable_logged and gap > 10:
+                    logger.warning(
+                        f"dep#{self._deployment_id}: agent {self._vm_ip}:8022 not "
+                        f"responding — {gap}s since last contact (will abort at "
+                        f"{AGENT_UNREACHABLE_TIMEOUT}s)"
+                    )
+                    unreachable_logged = True
+                if time.monotonic() - last_contact > AGENT_UNREACHABLE_TIMEOUT:
+                    unreachable_for = int(time.monotonic() - last_contact)
+                    vm_gone = False
+                    if self._vm_id:
+                        try:
+                            vm_gone = await cloud_manager.get_vm(self._vm_id) is None
+                        except Exception:
+                            vm_gone = False
+                    if vm_gone:
+                        logger.error(
+                            f"dep#{self._deployment_id}: VM {self._vm_id} no longer "
+                            f"exists (agent unreachable {unreachable_for}s) — aborting; "
+                            f"likely destroyed by a concurrent delete"
+                        )
+                        raise RuntimeError(
+                            f"VM {self._vm_id} no longer exists — aborting deploy "
+                            f"(agent unreachable for {unreachable_for}s)"
+                        )
+                    logger.error(
+                        f"dep#{self._deployment_id}: agent at {self._vm_ip}:8022 "
+                        f"unreachable for {unreachable_for}s (VM still exists) — aborting"
+                    )
+                    raise RuntimeError(
+                        f"Agent at {self._vm_ip}:8022 unreachable for {unreachable_for}s "
+                        f"— aborting deploy"
+                    )
+            else:
+                if unreachable_logged:
+                    logger.info(
+                        f"dep#{self._deployment_id}: agent {self._vm_ip}:8022 "
+                        f"reachable again"
+                    )
+                    unreachable_logged = False
+                last_contact = time.monotonic()
 
             if data:
                 content = data.get("content", "")

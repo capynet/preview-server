@@ -34,8 +34,9 @@ async def check_and_erase():
             org_slug = p.get("org_slug", org["slug"])
             project_id = p.get("project_id")
 
-            # Skip pinned previews
-            if p.get("pinned"):
+            # Skip previews protected from auto-deletion (pinned / prevent auto erase)
+            from app.preview_rules import is_protected_from_auto_delete
+            if is_protected_from_auto_delete(p):
                 continue
 
             # Use last_accessed_at, fallback to created_at for never-accessed previews

@@ -425,6 +425,17 @@ async def _handle_mr_event(
     state = attrs.get("state")
 
     if action in ("close", "merge") or state in ("closed", "merged"):
+        # 'prevent auto erase' (pinned) protects the preview from automatic
+        # deletion — including this MR close/merge path, not just the idle cron.
+        from app.database import get_preview
+        from app.preview_rules import is_protected_from_auto_delete
+        existing = await get_preview(project_id, preview_name)
+        if is_protected_from_auto_delete(existing):
+            logger.info(
+                f"Skipping auto-delete for {project_slug}/{preview_name} "
+                f"(action={action}): preview is pinned (prevent auto erase)"
+            )
+            return
         logger.info(f"Enqueued task_delete_preview: {project_slug}/{preview_name} action={action}")
         await request.app.state.arq.enqueue_job(
             "task_delete_preview",
