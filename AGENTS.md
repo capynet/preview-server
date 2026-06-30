@@ -140,6 +140,29 @@ make all            # all platforms
 ./build.sh    # → bin/vm-agent (linux/amd64)
 ```
 
+### Local toolchain / requirements (control machine)
+
+To work with and **deploy** this project from a control machine you need:
+
+| Tool | Version | Why |
+|------|---------|-----|
+| **Python** | 3.12+ (with `pip`) | `preview-manager` backend (`requirements.txt`, ~24 deps) |
+| **Go** | **1.26.1+** | Ansible builds the Go binaries **locally** during deploy. Highest requirement wins: `vm-agent` needs 1.26.1, `vm-terminal-server` 1.22, `cli` 1.21. Installing 1.26.1 covers all three. |
+| **Node.js** | LTS | `preview-ui` (Next.js frontend) |
+| **Ansible** | `ansible-core` 2.18+ | Deploys (see below) |
+| **rsync + ssh + git** | any recent | Ansible `synchronize` uses rsync; agent build stamps a version from `git rev-parse` |
+
+**Ansible collections** (not bundled with `ansible-core` — install with `ansible-galaxy collection install ...`):
+`community.docker`, `ansible.posix`, `community.general`, `community.crypto`.
+
+**Ansible vault:** secrets live in `inventory/group_vars/all/vault.yml` (encrypted).
+`ansible.cfg` reads the password from `~/.vault_pass` (password: `preview-mr`).
+Create it once: `printf 'preview-mr' > ~/.vault_pass && chmod 600 ~/.vault_pass`.
+
+> Gotcha: even `--tags code` runs the **local Go build** of `vm-agent` (task
+> `Build VM agent binary (local)`, `delegate_to: localhost`). Without Go on the
+> control machine that task fails and the play stops before restarting services.
+
 ### Ansible deployment — workdir: `server/ansible/`
 
 **Ansible is the preferred (canonical) way to deploy.** Do not hand-roll deploys

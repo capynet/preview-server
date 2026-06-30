@@ -37,6 +37,7 @@ This is the UI of preview manager ([server](server)).
 
 ## TODO before production
 
+- NEcesito un modo mantenimiento que me permita desplagr sin romper deploys activos. que prevenga que los webhooks se pierdan el el limbo y que desactive la ui parcial o completamente hasta que todo acabe para evitar erorres de consistencia.
 - Use case for marketing: A great use case to exemplify preview usage on branches is when there are two different designs or functionalities for the same feature and a decision needs to be made on which one is better. You can have a preview of each at the same time.
 - Review the documentation and add docs on how to configure GitLab.
 - Is it possible to be assigned to organizations owned by others? For example, can a user be part of Druploy and Dropsolid while also being owner of their own org?
@@ -44,6 +45,8 @@ This is the UI of preview manager ([server](server)).
 
 ## TODO
 
+
+- https://wterm.dev/
 - El codigo fue creciendo con el tiemo y tal vez se podrian refactorizar algunos para achicarlos ya que consumen muchos token de claude cuando hayq ue leer algo.
 - We can create a banner in the UI warning that the token has expired and/or could not be renewed, only shown to users with the appropriate permissions to resolve it. Ideally with a link to the area where the new token needs to be set.
 - Tighten security. Currently only have fail2ban but need daily backups that allow quick service restoration and confirm that Ansible can rebuild the server from scratch if needed.

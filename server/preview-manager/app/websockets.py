@@ -1209,6 +1209,7 @@ async def websocket_agent_callback(websocket: WebSocket):
                 project_id = data.get("project_id")
                 if preview_name and project_id and pd_status:
                     try:
+                        from app.state import PreviewStateManager
                         await PreviewStateManager.save_state(
                             int(project_id), preview_name,
                             post_deploy_status=pd_status,
