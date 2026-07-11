@@ -575,6 +575,61 @@ Los proveedores del Tier 2 requieren además cambios específicos:
 
 ---
 
+## Plan: selección de proveedor por organización y por proyecto
+
+> Decisión: el proveedor de VMs se selecciona **a nivel organización** (default para todos sus proyectos) con **override opcional a nivel proyecto**. Se empieza con **Hetzner** (actual) + **Scaleway** (el Tier 1 más fácil de implementar según este análisis), y se amplía después.
+
+### Modelo de configuración
+
+Se sigue el mismo patrón ya existente para `require_ci_success` (columna en `organizations` + columna nullable en `projects`, resolución "project overrides org if not null" en `app/database/cloud.py`):
+
+| Nivel | Campo | Semántica |
+|---|---|---|
+| `organizations.cloud_provider` | `TEXT NOT NULL DEFAULT 'hetzner'` | Proveedor por defecto de la organización |
+| `projects.cloud_provider` | `TEXT NULL` | `NULL` = heredar de la org; valor = override para ese proyecto |
+| `previews.cloud_provider` | `TEXT NOT NULL` | **Proveedor con el que se creó la VM del preview** (ver "punto delicado" abajo) |
+
+Resolución al crear un preview: `project.cloud_provider ?? org.cloud_provider ?? 'hetzner'`.
+
+**Punto delicado — el preview recuerda su proveedor:** los previews ya guardan `vm_id`/`vm_ip`. Todas las operaciones de ciclo de vida posteriores (delete, stop/start, wake, `task_check_vms`, cleanup de huérfanas) deben usar el proveedor **con el que se creó la VM**, no el configurado actualmente en org/proyecto. Cambiar el proveedor en org/proyecto solo afecta a previews **nuevos** (o a un rebuild, que crea VM nueva); los existentes viven y mueren en su proveedor original. Sin esta columna, un cambio de config dejaría VMs huérfanas imposibles de borrar.
+
+### Refactor del código (resumen de fases)
+
+**Fase 1 — Extraer interfaz `CloudManager`** (sin cambio funcional):
+- `app/cloud.py` pasa a definir una clase abstracta `CloudManager` con los métodos actuales: `create_vm`, `destroy_vm`, `shutdown_vm`, `power_on_vm`, `get_vm`, `wait_for_vm_ready`, `get_active_vms`, `get_pool_vms`, `create_pool_vm`, `claim_pool_vm`, `is_pool_vm`, más lectura de precios.
+- `HetznerCloudManager` se convierte en la primera implementación (código actual movido, comportamiento idéntico).
+- Factory `get_cloud_manager(provider: str) -> CloudManager` usada por todos los call sites (`deployment.py`, `routes/previews.py`, `wake_preview.py`, `tasks/warm_pool.py`, `tasks/orphan_vms.py`, `tasks/docker_events.py`, `websockets.py`).
+- Normalizar el modelo de retorno: hoy los call sites tocan objetos `hcloud.Server` (`server.data_model.public_net.ipv4.ip`, etc.) → definir un dataclass propio `CloudVM` (id, name, ip, status, created, provider) que cada backend traduce desde su SDK.
+
+**Fase 2 — Config org/proyecto + migración Alembic:**
+- Migración: columnas `cloud_provider` en `organizations` (default `'hetzner'`), `projects` (nullable) y `previews` (backfill `'hetzner'` para las existentes).
+- Helper `get_effective_cloud_provider(org_id, project_slug)` en `app/database/cloud.py` (mismo patrón que `require_ci_success`).
+- Endpoints: exponer el campo en settings de org (admin) y en config de proyecto (`PATCH`, manager+), validando contra la lista de providers registrados en la factory.
+- UI: dropdown en settings de organización + dropdown en config de proyecto con opción "Heredar de la organización" (default).
+
+**Fase 3 — Segunda implementación: `ScalewayCloudManager`:**
+- SDK `scaleway-sdk-python` oficial. Cumple todo sin matices: snapshots/imágenes custom, SSH keys por API, rename (`PATCH /servers/{id}`), precios por API, facturación por hora/minuto.
+- Requiere su propia imagen pre-horneada: adaptar `build-snapshot.sh` (o crear equivalente `build-snapshot-scaleway.sh`) para generar la imagen con Docker + usuario preview UID 33 en Scaleway.
+- Config nueva en settings: `scaleway_api_token`, `scaleway_project_id`, `scaleway_zone` (ej. `fr-par-1`), `scaleway_instance_type` (equivalente a cx23: DEV1-M o PLAY2-NANO según precio/RAM), `scaleway_image_id`, claves SSH.
+
+**Fase 4 — Warm pool y cron jobs multi-provider:**
+- El warm pool es **por proveedor**: el cron de reposición mantiene un pool solo para los providers realmente en uso (consultar providers efectivos distintos entre orgs/proyectos activos; si nadie usa Scaleway, pool Scaleway = 0).
+- `task_check_vms` y limpieza de huérfanas iteran todos los providers registrados con credenciales configuradas.
+- Tamaño de pool configurable por provider.
+
+### Decisiones abiertas (resolver antes de implementar)
+
+1. **Credenciales: ¿de la plataforma o de cada org?** Empezar con credenciales **de plataforma** (un token por provider en `.env`, como hoy) — simple y suficiente para elegir región/proveedor. El modo "bring your own account" (cada org con su token, previews facturados en su cuenta — el caso hyperscaler del veredicto de arriba) queda como fase futura: implica guardar secretos por org (cifrados), validación de tokens y aislamiento del warm pool por org.
+2. **Precios/billing:** Scaleway expone precios por API igual que Hetzner, pero con formato distinto → normalizar en la interfaz (`get_instance_price() -> hourly/monthly` en EUR). Para futuros providers sin precios en API (Tier 2), fallback a tabla de precios en config.
+3. **Restricción de datacenter por org:** de momento la zona es global por provider (config de plataforma). Si más adelante se quiere elegir región por org (ej. "quiero París, no Falkenstein"), es un campo adicional org-level sobre la misma estructura — no bloquear el diseño inicial por esto.
+4. **Naming del pool:** el prefijo `prev-pool-` pasa a incluir provider implícitamente (cada provider solo ve sus propias VMs, no hace falta cambiar el naming — pero verificar que `is_pool_vm` se evalúa siempre dentro del manager correcto).
+
+### Orden de ampliación posterior
+
+Tras Hetzner + Scaleway, el siguiente según este análisis sería **DigitalOcean o Linode** (USA, API casi drop-in, `pydo`/`linode_api4`). Cada provider nuevo = una clase + una imagen pre-horneada + credenciales en config. Los Tier 2 (UpCloud, OVH…) requieren además rediseñar el claim del warm pool (sin rename → marcar claimed en DB), que puede hacerse genérico en Fase 4 si se quiere abrir esa puerta.
+
+---
+
 ## Resumen global
 
 | Proveedor | País | API/SDK | Snapshots | SSH keys | Rename VM | Precios API | Billing/h | Storage S3 | Arranque | Tier |
