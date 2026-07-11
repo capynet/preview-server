@@ -161,6 +161,24 @@ async def task_deploy_preview(
         f"triggered_by={triggered_by} branch={source_branch} commit={commit_sha[:8]}{enqueue_info}"
     )
 
+    # Maintenance drain: park NEW deploys so the worker can be restarted with a
+    # quiet queue. In-flight deploys (they hold the lock) and recovery retries
+    # (job_try>=2) are allowed through; a fresh deploy is re-enqueued with a delay
+    # and resumes automatically once maintenance clears.
+    from app.valkey import is_maintenance_active, is_deploy_locked
+    deploy_key = f"{project_slug}/{preview_name}"
+    if job_try < 2 and await is_maintenance_active() and not await is_deploy_locked(deploy_key):
+        from datetime import timedelta
+        logger.info(f"Maintenance active — parking deploy {deploy_key} (defer 30s)")
+        await ctx["redis"].enqueue_job(
+            "task_deploy_preview",
+            org_id, org_slug, project_id, project_slug, project_path,
+            preview_name, source_branch, commit_sha, triggered_by,
+            mr_iid, force_new, mr_title, target_branch,
+            _defer_by=timedelta(seconds=30), _expires=timedelta(hours=6),
+        )
+        return
+
     # On retry (worker restart), skip if the preview was deleted while queued
     if job_try >= 2:
         preview = await get_preview(project_id, preview_name)
@@ -284,6 +302,18 @@ async def task_delete_preview(
     from app.routes.previews import delete_preview_internal
     from app.database import get_preview
     from app.preview_rules import is_protected_from_auto_delete
+
+    # Maintenance drain: park deletes too, so no infra mutation happens mid-deploy.
+    from app.valkey import is_maintenance_active
+    if await is_maintenance_active():
+        from datetime import timedelta
+        logger.info(f"Maintenance active — parking delete {project_slug}/{preview_name} (defer 30s)")
+        await ctx["redis"].enqueue_job(
+            "task_delete_preview", org_slug, project_slug, project_id, preview_name,
+            _defer_by=timedelta(seconds=30), _expires=timedelta(hours=6),
+        )
+        return
+
     try:
         preview = await get_preview(project_id, preview_name)
         if is_protected_from_auto_delete(preview):
@@ -297,40 +327,121 @@ async def task_delete_preview(
         logger.error(f"Failed to delete preview {org_slug}/{project_slug}/{preview_name}: {e}")
 
 
+# ---- Webhook inbox processing ----
+
+async def task_process_webhook(ctx, inbox_id: int):
+    """Route a single stored webhook (see webhooks.dispatch_webhook).
+
+    Never re-raises: on failure the row is reset to 'pending' (or 'failed' after
+    repeated attempts) and the safety-net cron re-enqueues it. Deploy/delete jobs
+    it enqueues are idempotent (deploy lock + dedup), so at-least-once is safe.
+    """
+    from app.routes.webhooks import dispatch_webhook
+    from app.database import (
+        get_webhook, mark_webhook_processing, mark_webhook_done, mark_webhook_pending,
+    )
+
+    row = await get_webhook(inbox_id)
+    if not row:
+        return
+    if row["status"] in ("done", "ignored"):
+        return  # already handled (duplicate enqueue)
+
+    await mark_webhook_processing(inbox_id)
+    try:
+        result = await dispatch_webhook(inbox_id, ctx["redis"])
+        status = "ignored" if (result or {}).get("status") == "ignored" else "done"
+        await mark_webhook_done(inbox_id, status)
+    except Exception as e:
+        logger.error(f"Webhook #{inbox_id} processing failed: {e}", exc_info=True)
+        cur = await get_webhook(inbox_id)
+        if cur and cur.get("attempts", 0) >= 5:
+            await mark_webhook_done(inbox_id, "failed", error=str(e))
+        else:
+            await mark_webhook_pending(inbox_id)  # cron will retry
+
+
+async def task_dispatch_webhook_inbox(ctx):
+    """Safety net: re-enqueue webhooks left pending, or stuck 'processing' (a
+    worker died mid-flight). Guarantees no webhook is lost even if the direct
+    enqueue in the HTTP handler failed. Runs as cron job.
+    """
+    from datetime import timedelta
+    from app.database import get_stuck_webhooks
+
+    stuck = await get_stuck_webhooks(stuck_seconds=300, limit=200)
+    if not stuck:
+        return
+    logger.info(f"Re-enqueuing {len(stuck)} stuck webhook(s)")
+    for row in stuck:
+        await ctx["redis"].enqueue_job(
+            "task_process_webhook", row["id"], _expires=timedelta(hours=3),
+        )
+
+
 # ---- Cron task functions ----
+
+async def _skip_for_maintenance(name: str) -> bool:
+    """Return True (and log) if a mutating cron should be skipped during maintenance."""
+    from app.valkey import is_maintenance_active
+    if await is_maintenance_active():
+        logger.info(f"Maintenance active — skipping cron {name}")
+        return True
+    return False
+
 
 async def task_auto_erase(ctx):
     """Auto-erase previews after prolonged inactivity. Runs as cron job."""
+    if await _skip_for_maintenance("task_auto_erase"):
+        return
     from app.tasks.auto_erase import check_and_erase
     await check_and_erase()
 
 
 async def task_check_vms(ctx):
     """Check cloud VM status and clean up stale entries. Runs as cron job."""
+    if await _skip_for_maintenance("task_check_vms"):
+        return
     from app.tasks.docker_events import check_vm_status
     await check_vm_status()
 
 
 async def task_cleanup_orphan_vms(ctx):
     """Destroy Hetzner VMs that have no matching preview in the DB. Runs as cron job."""
+    if await _skip_for_maintenance("task_cleanup_orphan_vms"):
+        return
     from app.tasks.orphan_vms import cleanup_orphan_vms
     await cleanup_orphan_vms()
 
 
 async def task_replenish_warm_pool(ctx):
     """Ensure warm pool has enough pre-created VMs ready. Runs as cron job."""
+    if await _skip_for_maintenance("task_replenish_warm_pool"):
+        return
     from app.tasks.warm_pool import replenish_warm_pool
     await replenish_warm_pool()
 
 
 async def task_purge_soft_deleted(ctx):
-    """Permanently delete soft-deleted previews past the retention window."""
+    """Permanently delete soft-deleted previews past the retention window.
+    Also purges old processed webhook_inbox rows."""
+    if await _skip_for_maintenance("task_purge_soft_deleted"):
+        return
     from app.tasks.purge_soft_deleted import purge_soft_deleted
     await purge_soft_deleted()
+    try:
+        from app.database import purge_processed_webhooks
+        n = await purge_processed_webhooks(older_than_days=7)
+        if n:
+            logger.info(f"Purged {n} processed webhook_inbox row(s)")
+    except Exception as e:
+        logger.warning(f"Webhook inbox purge failed: {e}")
 
 
 async def task_rotate_gitlab_tokens(ctx):
     """Rotate org GitLab access tokens nearing expiry. Runs as cron job."""
+    if await _skip_for_maintenance("task_rotate_gitlab_tokens"):
+        return
     from app.tasks.rotate_gitlab_tokens import rotate_gitlab_tokens
     await rotate_gitlab_tokens()
 
@@ -360,6 +471,8 @@ async def task_reap_stale_deployments(ctx):
 
 async def task_docker_prune(ctx):
     """Remove unused Docker images and build cache. Runs as cron job."""
+    if await _skip_for_maintenance("task_docker_prune"):
+        return
     import asyncio
 
     logger.info("Running docker system prune...")
@@ -379,7 +492,7 @@ async def task_docker_prune(ctx):
 # ---- Worker settings ----
 
 class WorkerSettings:
-    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_purge_soft_deleted, task_docker_prune, task_rotate_gitlab_tokens, task_reap_stale_deployments]
+    functions = [task_deploy_preview, task_run_post_deploy, task_delete_preview, task_process_webhook, task_dispatch_webhook_inbox, task_auto_erase, task_check_vms, task_cleanup_orphan_vms, task_replenish_warm_pool, task_purge_soft_deleted, task_docker_prune, task_rotate_gitlab_tokens, task_reap_stale_deployments]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = RedisSettings.from_dsn(settings.valkey_url)
@@ -392,6 +505,7 @@ class WorkerSettings:
         cron(task_check_vms, hour=None, minute={0, 15, 30, 45}),  # Every 15 min
         cron(task_cleanup_orphan_vms, hour=None, minute={10, 40}),  # Every 30 min
         cron(task_reap_stale_deployments, hour=None, minute={5, 20, 35, 50}),  # Every 15 min
+        cron(task_dispatch_webhook_inbox, second=0),  # Every minute — webhook inbox safety net
         cron(task_replenish_warm_pool, hour=None, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),  # Every 5 min
         cron(task_docker_prune, hour={3}, minute=0),  # Daily at 3 AM
         cron(task_purge_soft_deleted, hour={3}, minute=30),  # Daily at 3:30 AM

@@ -1,0 +1,19 @@
+# Disable maintenance mode. Parked deploys/deletes resume automatically.
+- name: Disable maintenance mode
+  uri:
+    url: "http://localhost:8000/api/admin/maintenance"
+    method: POST
+    body_format: json
+    headers:
+      X-Admin-Token: "{{ admin_api_token }}"
+    body:
+      active: false
+    status_code: 200
+  register: maint_clear
+  failed_when: false   # never fail the deploy just because the clear call errored
+
+- name: Confirm maintenance cleared
+  debug:
+    msg: >-
+      Maintenance clear returned {{ maint_clear.status | default('n/a') }}
+      {{ maint_clear.json | default('') }}

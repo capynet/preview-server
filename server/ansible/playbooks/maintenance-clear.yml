@@ -1,0 +1,12 @@
+---
+# Disable maintenance mode (resume parked deploys, re-enable the UI).
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance-clear.yml
+
+- name: Clear maintenance
+  hosts: druploy-server
+  become: yes
+  gather_facts: no
+  tasks:
+    - import_tasks: tasks/maintenance_clear.yml

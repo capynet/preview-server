@@ -29,3 +29,4 @@ from app.database.previews import *  # noqa: F401,F403
 from app.database.deployments import *  # noqa: F401,F403
 from app.database.projects import *  # noqa: F401,F403
 from app.database.cloud import *  # noqa: F401,F403
+from app.database.webhook_inbox import *  # noqa: F401,F403

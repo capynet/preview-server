@@ -163,3 +163,72 @@ async def get_disk_usage() -> Optional[dict]:
         return json.loads(val)
     except (ValueError, TypeError):
         return None
+
+
+# ---- Maintenance mode (control-plane drain) ----
+
+MAINTENANCE_KEY = "maintenance:state"
+
+
+async def set_maintenance(active: bool, reason: str = "", by: str = "", level: str = "drain"):
+    """Set (or clear) the global maintenance flag.
+
+    Stored as a hash so API, worker and UI share a single source of truth.
+    level: "drain" (UI read-only + banner, deploys parked) or "full" (UI blocked).
+    """
+    v = get_valkey()
+    if not active:
+        await v.delete(MAINTENANCE_KEY)
+        return
+    from datetime import datetime, timezone
+    await v.hset(MAINTENANCE_KEY, mapping={
+        "active": "1",
+        "reason": reason or "",
+        "by": by or "",
+        "level": level if level in ("drain", "full") else "drain",
+        "started_at": datetime.now(timezone.utc).isoformat(),
+    })
+
+
+async def get_maintenance() -> dict:
+    """Return the current maintenance state. Always safe to call.
+
+    Returns {"active": False} when the flag is unset or Valkey is unavailable,
+    so callers never crash on a maintenance check.
+    """
+    try:
+        v = get_valkey()
+        data = await v.hgetall(MAINTENANCE_KEY)
+    except Exception:
+        return {"active": False}
+    if not data or data.get("active") != "1":
+        return {"active": False}
+    return {
+        "active": True,
+        "reason": data.get("reason", ""),
+        "by": data.get("by", ""),
+        "level": data.get("level", "drain"),
+        "started_at": data.get("started_at", ""),
+    }
+
+
+async def is_maintenance_active() -> bool:
+    """Fast boolean check for the maintenance flag (fail-open to False)."""
+    try:
+        v = get_valkey()
+        return await v.hget(MAINTENANCE_KEY, "active") == "1"
+    except Exception:
+        return False
+
+
+async def list_active_deploy_locks() -> list[str]:
+    """Return the deploy keys that currently hold a lock (deploys in flight).
+
+    Uses SCAN (never KEYS) so it is safe on a live Valkey. Used by the drain
+    step to know when it is safe to restart the worker.
+    """
+    v = get_valkey()
+    keys: list[str] = []
+    async for key in v.scan_iter(match="deploy_lock:*", count=100):
+        keys.append(key.removeprefix("deploy_lock:"))
+    return keys

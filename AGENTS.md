@@ -243,6 +243,25 @@ All config centralized in `config/settings.py` via Pydantic `BaseSettings` (env 
 
 Base DB/files (shared across previews of a project) stored in Hetzner Object Storage (S3) or Storage Box (SFTP), abstracted by `StorageBackend`.
 
+## Maintenance Mode (control-plane drain)
+
+Lets the control-plane (`druploy` API + `druploy-worker`) be redeployed **without breaking active preview deploys, without losing webhooks, and with the UI put read-only** — so writes can't race an in-flight deploy and corrupt state.
+
+**Single source of truth:** a Valkey hash `maintenance:state` (`active`, `level`, `reason`, `by`, `started_at`). `level` ∈ `{drain, full}`. Helpers in `app/valkey.py`: `set_maintenance` / `get_maintenance` / `is_maintenance_active` / `list_active_deploy_locks` (SCAN over `deploy_lock:*`, never KEYS). `get_maintenance`/`is_maintenance_active` **fail open to inactive** so a Valkey blip never locks the system.
+
+**How each layer reacts while active:**
+- **Worker** (`app/workers.py`): `task_deploy_preview` and `task_delete_preview` **park** a *new* job — re-enqueue it with `_defer_by=30s`, `_expires=6h`, and return. In-flight deploys (they already hold `deploy_lock:<project>/<preview>`) and recovery retries (`job_try>=2`) run through. Parked jobs resume automatically when the flag clears. Mutating cron jobs skip via `_skip_for_maintenance(...)`; the reaper and webhook-inbox dispatcher keep running.
+- **API** (`app/maintenance_middleware.py`, `MaintenanceMiddleware`): rejects mutating methods (POST/PUT/PATCH/DELETE) to `/api/**` with **503** while active. Exempt prefixes: `/api/webhooks` (durable receiver must keep accepting), `/api/admin/maintenance` (the toggle), `/api/auth` (admin must be able to log in). **Scoped to `/api/` only** — preview-app traffic on hash subdomains is never blocked. This is the real barrier; the UI disable is only UX.
+- **UI** (frontend repo): a `MaintenanceProvider` polls `/api/health` (which reports `maintenance` + `active_deploys`) and also listens to a `druploy:maintenance` window event pushed over the previews websocket. `level=drain` → sticky banner + management surface read-only; `level=full` → blocking overlay (except `/admin`, so a superadmin can still toggle it off).
+
+**Admin control:** `GET/POST /api/admin/maintenance` (`app/routes/config.py`). Auth via `require_admin`: a **superadmin** session/bearer **OR** the machine secret header `X-Admin-Token` matching `settings.admin_api_token` (this is how Ansible toggles it headlessly, and how the `/admin` UI `MaintenanceControl` toggles it as a superadmin). `/api/health` is extended to report `{maintenance: {active, level, active_deploys}}` for the drain poll.
+
+**Ansible drain** (`server/ansible/`): `playbooks/tasks/maintenance_enable.yml` sets the flag then polls `GET /api/admin/maintenance` until `active_deploys == 0` (default 60×15s = 15 min) — turning the worker restart into a **drain** rather than a SIGKILL of a long deploy (worker `TimeoutStopSec=900` vs `job_timeout=36000`=10h). `maintenance_clear.yml` lifts it. Both are wired into `deploy-preview-manager.yml` (`pre_tasks` drain, `post_tasks` clear), **guarded by `admin_api_token | length > 0`** so deploys behave normally until the token is set. Standalone: `playbooks/maintenance-drain.yml` / `maintenance-clear.yml`. Token: `vault_admin_api_token` in the Ansible vault → `admin_api_token` (hosts.yml) → `ADMIN_API_TOKEN` (env.j2) → `settings.admin_api_token`. On the *first* deploy that ships this feature the enable call may 404 (old API lacks the endpoint); the task tolerates it (`failed_when: false`) and skips the drain.
+
+**Webhook durability (the "no limbo" half):** the GitLab webhook receiver (`app/routes/webhooks.py` `gitlab_webhook`) is **thin** — it validates the token, persists the raw body to the `webhook_inbox` table (Postgres) and returns 200. All routing (org/project resolution, `druploy.yml` fetch, CI gating, deploy/delete decisions) runs later in the worker via `dispatch_webhook` → enqueued as `task_process_webhook`. Idempotent on GitLab's `X-Gitlab-Event-UUID` (partial unique index). A per-minute cron `task_dispatch_webhook_inbox` re-enqueues rows left `pending`/stuck `processing` (safety net if the direct enqueue failed). `task_purge_soft_deleted` also purges processed inbox rows after 7 days. So a webhook is only lost if Postgres is lost — and during maintenance webhooks are still accepted; the resulting deploy simply parks. Migration: `alembic/versions/023_webhook_inbox.py` (timestamps are `TEXT` ISO-8601, consistent with the rest of the schema — not `TIMESTAMPTZ`).
+
+**Rollout note:** DB migrations run in `main()` before the uvicorn fork, so during a drain window an old worker coexists with the new schema — keep migrations **expand/contract** (additive first, drops in a later release).
+
 ## API Endpoints
 
 All routes aggregated in `app/api.py`. Auth via session cookie or `Authorization: Bearer <token>`.

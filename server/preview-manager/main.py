@@ -134,6 +134,9 @@ app.add_middleware(
 from app.wake_preview import WakePreviewMiddleware
 app.add_middleware(WakePreviewMiddleware)
 
+from app.maintenance_middleware import MaintenanceMiddleware
+app.add_middleware(MaintenanceMiddleware)
+
 from app.api import router
 app.include_router(router)
 

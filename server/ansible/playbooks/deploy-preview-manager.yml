@@ -8,6 +8,18 @@
   hosts: druploy-server
   become: yes
 
+  pre_tasks:
+    # Put the control-plane into maintenance and wait for in-flight preview
+    # deploys to finish BEFORE the role restarts the worker. Skipped (no-op)
+    # until admin_api_token is set in the vault, so existing deploys are
+    # unaffected. Disable explicitly with -e drain=false.
+    - name: Drain deploys before restart (maintenance mode)
+      import_tasks: tasks/maintenance_enable.yml
+      when:
+        - (drain | default(true)) | bool
+        - (admin_api_token | default('')) | length > 0
+      tags: [code, worker]
+
   roles:
     - preview-manager
 
@@ -44,3 +56,12 @@
             - Service:      sudo systemctl status druploy
 
           ================================================
+
+    # Lift maintenance last, after the service is verified healthy. Parked
+    # deploys/deletes resume automatically. Mirrors the pre_tasks guard.
+    - name: Clear maintenance mode
+      import_tasks: tasks/maintenance_clear.yml
+      when:
+        - (drain | default(true)) | bool
+        - (admin_api_token | default('')) | length > 0
+      tags: [code, worker]
