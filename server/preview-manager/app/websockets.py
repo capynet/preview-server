@@ -255,8 +255,10 @@ class PreviewListManager:
 
         from app.routes.previews import get_previews_for_user
         from app.auth import database as auth_db
+        from app.valkey import get_maintenance
 
         now = datetime.utcnow().isoformat()
+        maintenance = await get_maintenance()
         disconnected: list[WebSocket] = []
 
         for ws, user_id in list(self.active_connections):
@@ -275,6 +277,7 @@ class PreviewListManager:
                     "previews": result["previews"],
                     "total": result["total"],
                     "checked_at": now,
+                    "maintenance": maintenance,
                 })
             except Exception as e:
                 logger.warning(f"Error sending filtered preview list to client (user_id={user_id}): {e}")
@@ -298,6 +301,22 @@ class PreviewListManager:
             await self._push_filtered("update", include_docker_status=False)
         except Exception as e:
             logger.error(f"Force broadcast error: {e}", exc_info=True)
+
+    async def broadcast_maintenance(self):
+        """Push only the maintenance state to every connected client (used when
+        the flag is toggled, for instant UI reaction without a full list refresh)."""
+        if not self.active_connections:
+            return
+        from app.valkey import get_maintenance
+        maintenance = await get_maintenance()
+        disconnected: list[WebSocket] = []
+        for ws, _uid in list(self.active_connections):
+            try:
+                await ws.send_json({"type": "maintenance", "maintenance": maintenance})
+            except Exception:
+                disconnected.append(ws)
+        for ws in disconnected:
+            self.disconnect(ws)
 
     async def check_and_broadcast_loop(self):
         """Listen for Valkey pub/sub events and push per-user filtered updates."""
@@ -625,7 +644,9 @@ async def websocket_previews(websocket: WebSocket):
     await preview_list_manager.connect(websocket, user_id)
 
     async def send_two_phase(msg_type: str):
+        from app.valkey import get_maintenance
         t_ws = time.monotonic()
+        maintenance = await get_maintenance()
 
         # Phase 1: filesystem only (fast), already filtered per user
         result = await get_previews_for_user(user_id, is_superadmin, include_docker_status=False)
@@ -634,7 +655,8 @@ async def websocket_previews(websocket: WebSocket):
             "type": msg_type,
             "previews": result["previews"],
             "total": result["total"],
-            "checked_at": datetime.utcnow().isoformat()
+            "checked_at": datetime.utcnow().isoformat(),
+            "maintenance": maintenance,
         })
         logger.info(f"[TIMING] WS phase 1 ({msg_type}): {t_phase1 - t_ws:.3f}s")
 
@@ -648,7 +670,8 @@ async def websocket_previews(websocket: WebSocket):
             "type": "update",
             "previews": result["previews"],
             "total": result["total"],
-            "checked_at": datetime.utcnow().isoformat()
+            "checked_at": datetime.utcnow().isoformat(),
+            "maintenance": maintenance,
         })
         logger.info(f"[TIMING] WS phase 2 (update): {t_phase2 - t_phase1:.3f}s, total={time.monotonic() - t_ws:.3f}s")
 

@@ -1,0 +1,14 @@
+---
+# Enable maintenance and drain in-flight deploys (does NOT deploy code).
+# Use to put the control-plane in a safe state before a manual operation.
+#
+# Usage:
+#   ansible-playbook playbooks/maintenance-drain.yml
+#   ansible-playbook playbooks/maintenance-drain.yml -e maintenance_level=full
+
+- name: Maintenance drain
+  hosts: druploy-server
+  become: yes
+  gather_facts: yes
+  tasks:
+    - import_tasks: tasks/maintenance_enable.yml

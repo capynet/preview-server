@@ -37,7 +37,7 @@ This is the UI of preview manager ([server](server)).
 
 ## TODO before production
 
-- NEcesito un modo mantenimiento que me permita desplagr sin romper deploys activos. que prevenga que los webhooks se pierdan el el limbo y que desactive la ui parcial o completamente hasta que todo acabe para evitar erorres de consistencia.
+- ~~Necesito un modo mantenimiento que me permita desplegar sin romper deploys activos, que prevenga que los webhooks se pierdan en el limbo y que desactive la UI parcial o completamente hasta que todo acabe.~~ **DONE** — see [Maintenance Mode](#maintenance-mode).
 - Use case for marketing: A great use case to exemplify preview usage on branches is when there are two different designs or functionalities for the same feature and a decision needs to be made on which one is better. You can have a preview of each at the same time.
 - Review the documentation and add docs on how to configure GitLab.
 - Is it possible to be assigned to organizations owned by others? For example, can a user be part of Druploy and Dropsolid while also being owner of their own org?
@@ -117,6 +117,66 @@ This is the UI of preview manager ([server](server)).
 - Do deploy scripts have access to a visual TUI toolkit if provided externally? I mean some console graphical toolkit that can simply be used because it's available on the VM or Docker (not sure where it actually runs).
 - Going to change build numbering. Currently shared across all VMs of all orgs. Need it to be per org, user, or project.
 - Would like to upload environment variables from the UI, e.g. upload a JSON file instead of copying and pasting. Makes sense?
+
+## Maintenance Mode
+
+Lets you redeploy the control-plane (`druploy` API + `druploy-worker`) **without breaking active preview deploys, without losing webhooks, and with the UI read-only**. It works by *draining*: park new deploys, let in-flight ones finish, restart, resume.
+
+### One-time setup
+
+The drain is driven by a machine token. Add it to the vault (already done in this repo, but for a fresh environment):
+
+```bash
+cd server/ansible
+ansible-vault edit inventory/group_vars/all/vault.yml    # add: vault_admin_api_token: "<long-random-secret>"
+```
+
+It flows through: `vault_admin_api_token` → `admin_api_token` (hosts.yml) → `ADMIN_API_TOKEN` (env) → API. **Until it is set, deploys skip the drain** (guarded by a length check), so nothing breaks. The token only reaches the server's `.env` after a deploy that regenerates it from `env.j2`.
+
+### Normal deploys (automatic)
+
+Once the token is set, the normal deploy drains automatically — no extra steps:
+
+```bash
+ansible-playbook playbooks/deploy-preview-manager.yml
+```
+
+It runs: **enable maintenance → poll until `active_deploys == 0` (up to 15 min) → restart worker/API → clear maintenance**. Parked deploys resume on their own. To skip the drain for a one-off: `-e drain=false`. To wait longer for a slow deploy: `-e maintenance_drain_retries=120` (×15s).
+
+### Manual control
+
+```bash
+# Enter maintenance and drain (does NOT deploy) — e.g. before a manual op
+ansible-playbook playbooks/maintenance-drain.yml
+ansible-playbook playbooks/maintenance-drain.yml -e maintenance_level=full   # also block the UI
+
+# Lift maintenance (resume parked deploys, re-enable UI)
+ansible-playbook playbooks/maintenance-clear.yml
+```
+
+Or from the **`/admin`** page in the dashboard (superadmin): the *Maintenance mode* card toggles it (reason + `drain`/`full`).
+
+Or via the API directly:
+
+```bash
+curl -X POST https://api.druploy.dev/api/admin/maintenance \
+  -H "X-Admin-Token: <admin_api_token>" -H "Content-Type: application/json" \
+  -d '{"active": true, "level": "drain", "reason": "hotfix"}'
+
+curl https://api.druploy.dev/api/health | jq .maintenance   # {active, level, active_deploys}
+```
+
+### Behavior while active
+
+- **Deploys/deletes**: new ones are *parked* (re-enqueued every 30s, durable up to 6h) and resume when maintenance clears; in-flight deploys finish normally.
+- **Webhooks**: still accepted and stored durably in the `webhook_inbox` table (never lost); the resulting deploy just parks. A per-minute cron re-drives anything stuck.
+- **UI**: `drain` → banner + management read-only; `full` → full-screen block (except `/admin`, so you can still turn it off). The API also returns **503** for mutating `/api/**` calls.
+- **`level`**: use `drain` for a normal deploy; use `full` only if a migration is destructive and you need the UI fully frozen.
+
+### Notes
+
+- Keep Alembic migrations **expand/contract** (additive first): during the drain window the old worker runs against the new schema.
+- On the very first deploy that ships this feature, the enable call may 404 (old API without the endpoint) — the playbook tolerates it and just skips the drain that once.
 
 ## GitLab Setup
 

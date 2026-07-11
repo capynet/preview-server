@@ -1,6 +1,7 @@
 """GitLab webhook receiver for merge request events (multi-tenant)."""
 
 import asyncio
+import json
 import logging
 from datetime import timedelta
 from pathlib import Path
@@ -274,8 +275,16 @@ async def gitlab_webhook(
     org_slug: str,
     x_gitlab_token: str = Header(None),
     x_gitlab_event: str = Header(None),
+    x_gitlab_event_uuid: str = Header(None),
 ):
-    """Receive GitLab webhook events for merge requests."""
+    """Receive GitLab webhook events.
+
+    Thin, durable receiver: validate the token, persist the raw webhook to the
+    inbox (Postgres), enqueue processing, and return 200 immediately. ALL routing
+    work (org/project resolution, druploy.yml fetch, CI gating, deploy/delete
+    decisions) happens in the worker via ``dispatch_webhook`` — so a restart or a
+    Valkey blip can never drop a webhook in the limbo between receive and enqueue.
+    """
     if not settings.gitlab_webhook_secret:
         logger.error("Webhook received but GITLAB_WEBHOOK_SECRET is not configured")
         raise HTTPException(status_code=500, detail="Webhook secret not configured")
@@ -284,18 +293,61 @@ async def gitlab_webhook(
         logger.warning("Webhook received with invalid token")
         raise HTTPException(status_code=403, detail="Invalid webhook token")
 
-    # Resolve organization from URL path
+    raw = await request.body()
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Invalid JSON payload")
+
+    gitlab_project_id = payload.get("project", {}).get("id")
+
+    from app.database import insert_webhook
+    inbox_id = await insert_webhook(
+        org_slug, x_gitlab_event, gitlab_project_id, x_gitlab_event_uuid, raw.decode("utf-8"),
+    )
+    if inbox_id is None:
+        # Duplicate delivery (GitLab retried) — already stored/handled.
+        logger.info(f"Duplicate webhook delivery {x_gitlab_event_uuid} for {org_slug} — ignored")
+        return {"status": "duplicate"}
+
+    # Best-effort enqueue; the safety-net cron (task_dispatch_webhook_inbox) will
+    # pick this row up regardless if the enqueue fails (e.g. Valkey momentarily down).
+    try:
+        await request.app.state.arq.enqueue_job(
+            "task_process_webhook", inbox_id, _expires=timedelta(hours=3),
+        )
+    except Exception as e:
+        logger.warning(f"Failed to enqueue webhook {inbox_id}: {e} — cron will retry")
+
+    return {"status": "queued", "id": inbox_id}
+
+
+async def dispatch_webhook(inbox_id: int, arq) -> dict:
+    """Route a stored webhook. Runs in the arq worker (never in the request).
+
+    Resolves org/project, then delegates to the per-kind handlers, which enqueue
+    deploy/delete jobs via ``arq``. Returns a small status dict for logging.
+    """
+    from app.database import (
+        get_webhook, get_organization_by_slug, get_project_by_gitlab_id,
+    )
+
+    row = await get_webhook(inbox_id)
+    if not row:
+        return {"status": "ignored", "reason": "inbox row gone"}
+
+    payload = row["payload"]
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    org_slug = row["org_slug"]
+    object_kind = payload.get("object_kind")
+
     org = await get_organization_by_slug(org_slug)
     if not org:
         logger.warning(f"Webhook for unknown organization: {org_slug}")
-        raise HTTPException(status_code=404, detail="Organization not found")
-
+        return {"status": "ignored", "reason": "unknown organization"}
     org_id = org["id"]
 
-    payload = await request.json()
-    object_kind = payload.get("object_kind")
-
-    # Look up the project in our DB by GitLab project ID
     gitlab_project_id = payload.get("project", {}).get("id")
     project = await get_project_by_gitlab_id(org_id, gitlab_project_id)
     if not project:
@@ -310,7 +362,7 @@ async def gitlab_webhook(
     if object_kind == "merge_request":
         attrs = payload.get("object_attributes", {})
         logger.info(
-            f"Webhook received: kind=merge_request action={attrs.get('action')} "
+            f"Webhook processing: kind=merge_request action={attrs.get('action')} "
             f"mr_iid={attrs.get('iid')} branch={attrs.get('source_branch')} "
             f"project={project_slug} state={attrs.get('state')}"
         )
@@ -318,46 +370,46 @@ async def gitlab_webhook(
         ref = payload.get("ref", "")
         branch = ref.removeprefix("refs/heads/") if ref.startswith("refs/heads/") else ref
         logger.info(
-            f"Webhook received: kind=push branch={branch} "
+            f"Webhook processing: kind=push branch={branch} "
             f"commit={payload.get('after', '')[:8]} project={project_slug}"
         )
     elif object_kind == "pipeline":
         p_attrs = payload.get("object_attributes", {})
         logger.info(
-            f"Webhook received: kind=pipeline status={p_attrs.get('status')} "
+            f"Webhook processing: kind=pipeline status={p_attrs.get('status')} "
             f"ref={p_attrs.get('ref')} sha={p_attrs.get('sha', '')[:8]} project={project_slug}"
         )
     else:
-        logger.info(f"Webhook received: kind={object_kind} project={project_slug}")
+        logger.info(f"Webhook processing: kind={object_kind} project={project_slug}")
 
     if object_kind == "push":
         return await _handle_push_event(
-            payload, request,
+            payload, arq,
             org_id=org_id, org_slug=org_slug,
             project_id=project_id, project_slug=project_slug,
             project_path=project_path,
-        )
+        ) or {"status": "ok"}
     elif object_kind == "merge_request":
         return await _handle_mr_event(
-            payload, request,
+            payload, arq,
             org_id=org_id, org_slug=org_slug,
             project_id=project_id, project_slug=project_slug,
             project_path=project_path,
-        )
+        ) or {"status": "ok"}
     elif object_kind == "pipeline":
         return await _handle_pipeline_event(
-            payload, request,
+            payload, arq,
             org_id=org_id, org_slug=org_slug,
             project_id=project_id, project_slug=project_slug,
             project_path=project_path,
-        )
+        ) or {"status": "ok"}
     else:
         return {"status": "ignored", "reason": f"unhandled event: {object_kind}"}
 
 
 async def _handle_push_event(
     payload: dict,
-    request: Request,
+    arq,
     *,
     org_id: int,
     org_slug: str,
@@ -388,7 +440,7 @@ async def _handle_push_event(
         f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
         f"triggered_by=webhook-push branch={branch} commit={commit_sha[:8]}"
     )
-    await request.app.state.arq.enqueue_job(
+    await arq.enqueue_job(
         "task_deploy_preview",
         org_id, org_slug, project_id, project_slug, project_path,
         preview_name, branch, commit_sha, "webhook-push",
@@ -399,7 +451,7 @@ async def _handle_push_event(
 
 async def _handle_mr_event(
     payload: dict,
-    request: Request,
+    arq,
     *,
     org_id: int,
     org_slug: str,
@@ -437,7 +489,7 @@ async def _handle_mr_event(
             )
             return
         logger.info(f"Enqueued task_delete_preview: {project_slug}/{preview_name} action={action}")
-        await request.app.state.arq.enqueue_job(
+        await arq.enqueue_job(
             "task_delete_preview",
             org_slug, project_slug, project_id, preview_name,
         )
@@ -503,7 +555,7 @@ async def _handle_mr_event(
                 f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
                 f"triggered_by=webhook action={action} branch={source_branch} commit={commit_sha[:8] if commit_sha else '?'}"
             )
-            await request.app.state.arq.enqueue_job(
+            await arq.enqueue_job(
                 "task_deploy_preview",
                 org_id, org_slug, project_id, project_slug, project_path,
                 preview_name, source_branch, commit_sha, "webhook", mr_iid,
@@ -518,7 +570,7 @@ async def _handle_mr_event(
 
 async def _handle_pipeline_event(
     payload: dict,
-    request: Request,
+    arq,
     *,
     org_id: int,
     org_slug: str,
@@ -590,7 +642,7 @@ async def _handle_pipeline_event(
             f"Enqueued task_deploy_preview: {project_slug}/{preview_name} "
             f"triggered_by=webhook-ci branch={preview.get('branch', ref)} commit={preview.get('commit_sha', sha)[:8]}"
         )
-        await request.app.state.arq.enqueue_job(
+        await arq.enqueue_job(
             "task_deploy_preview",
             org_id, org_slug, project_id, project_slug, project_path,
             preview_name, preview.get("branch", ref), preview.get("commit_sha", sha),

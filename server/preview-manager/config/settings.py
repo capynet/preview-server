@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     database_url: str = "postgresql://preview_manager:preview_manager@localhost:5432/preview_manager"
     valkey_url: str = "redis://localhost:6379"
 
+    # Maintenance mode (control-plane drain during deploys)
+    admin_api_token: str = ""  # shared secret for machine callers (Ansible) to toggle maintenance
+    maintenance_drain_timeout_seconds: int = 900  # informational; Ansible enforces its own poll window
+
     secret_key: str = "change-me-in-production"
     gitlab_oauth_client_id: str = ""
     gitlab_oauth_client_secret: str = ""

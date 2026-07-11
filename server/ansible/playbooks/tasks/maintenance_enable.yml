@@ -1,0 +1,63 @@
+# Enable maintenance mode and drain in-flight deploys.
+#
+# Sets the maintenance flag (parks NEW deploys, puts the UI read-only) and then
+# polls until no preview deploy holds a lock — i.e. the worker can be restarted
+# without interrupting an active deploy. Never hard-fails on an elapsed drain
+# window: it surfaces the remaining deploys and lets the operator decide.
+#
+# Requires: admin_api_token set (from vault). Callers should guard with a
+# length check so deploys still work before the token is configured.
+
+- name: Enable maintenance mode (drain)
+  uri:
+    url: "http://localhost:8000/api/admin/maintenance"
+    method: POST
+    body_format: json
+    headers:
+      X-Admin-Token: "{{ admin_api_token }}"
+    body:
+      active: true
+      level: "{{ maintenance_level | default('drain') }}"
+      reason: "{{ maintenance_reason | default('Ansible deploy ' ~ ansible_date_time.iso8601) }}"
+    status_code: 200
+  register: maint_enable
+  failed_when: false   # tolerate the first deploy where the old API lacks this endpoint
+
+- name: Note maintenance endpoint not available (skipping drain)
+  debug:
+    msg: >-
+      Maintenance endpoint returned {{ maint_enable.status }} (feature not yet deployed?).
+      Skipping drain — this deploy will proceed without it.
+  when: (maint_enable.status | default(0)) != 200
+
+- name: Show in-flight deploys
+  debug:
+    msg: >-
+      Maintenance ON — {{ maint_enable.json.active_deploys }} deploy(s) in flight:
+      {{ maint_enable.json.deploy_keys }}
+  when: (maint_enable.status | default(0)) == 200
+
+- name: Drain — wait for in-flight deploys to finish
+  uri:
+    url: "http://localhost:8000/api/admin/maintenance"
+    method: GET
+    headers:
+      X-Admin-Token: "{{ admin_api_token }}"
+    return_content: yes
+  register: maint_poll
+  until: (maint_poll.json.active_deploys | default(1) | int) == 0
+  retries: "{{ maintenance_drain_retries | default(60) }}"   # 60 * 15s = 15 min
+  delay: "{{ maintenance_drain_delay | default(15) }}"
+  failed_when: false   # do not abort the play if the window elapses
+  when: (maint_enable.status | default(0)) == 200
+
+- name: Warn if drain did not fully complete
+  debug:
+    msg: >-
+      WARNING: {{ maint_poll.json.active_deploys }} deploy(s) still running after the
+      drain window. Restarting now will interrupt them (they are recovered/retried
+      automatically). Raise maintenance_drain_retries to wait longer.
+  when:
+    - (maint_enable.status | default(0)) == 200
+    - not (maint_poll.skipped | default(false))
+    - (maint_poll.json.active_deploys | default(0) | int) > 0

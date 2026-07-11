@@ -2,9 +2,11 @@
 
 import json
 import logging
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request
 
+from config.settings import settings
 from app.auth.dependencies import require_org_role, require_project_role, get_org_context, require_superadmin
 from app.auth.models import OrgRole, UserWithContext
 from app.database import (
@@ -389,8 +391,88 @@ async def get_disk_usage(
 
 @router.get("/api/health")
 async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+    """Health check endpoint. Reports maintenance state + in-flight deploy count
+    so the Ansible drain step can poll for a quiet worker before restarting."""
+    from app.valkey import get_maintenance, list_active_deploy_locks
+    m = await get_maintenance()
+    if m.get("active"):
+        try:
+            m = {**m, "active_deploys": len(await list_active_deploy_locks())}
+        except Exception:
+            m = {**m, "active_deploys": None}
+    return {"status": "healthy", "maintenance": m}
+
+
+# ---------------------------------------------------------------------------
+# Maintenance mode (control-plane drain)
+# ---------------------------------------------------------------------------
+
+async def require_admin(
+    pm_session: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
+    x_admin_token: Optional[str] = Header(None),
+) -> dict:
+    """Allow a superadmin (session cookie / bearer token) OR a machine caller
+    presenting the shared X-Admin-Token (used by the Ansible drain playbook)."""
+    if settings.admin_api_token and x_admin_token and x_admin_token == settings.admin_api_token:
+        return {"kind": "token", "by": "machine-token"}
+
+    from app.auth import database as auth_db
+    user_id: Optional[int] = None
+    if pm_session:
+        session = await auth_db.get_session(pm_session)
+        if session:
+            user_id = session["user_id"]
+    if user_id is None and authorization and authorization.startswith("Bearer "):
+        token = await auth_db.validate_api_token(authorization[7:])
+        if token:
+            user_id = token["user_id"]
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = await auth_db.get_user_by_id(user_id)
+    if not user or not user.get("is_superadmin"):
+        raise HTTPException(status_code=403, detail="Superadmin access required")
+    return {"kind": "user", "by": user.get("email", f"user:{user_id}")}
+
+
+async def _maintenance_snapshot() -> dict:
+    """Current maintenance state plus the in-flight deploy count/keys."""
+    from app.valkey import get_maintenance, list_active_deploy_locks
+    state = await get_maintenance()
+    try:
+        keys = await list_active_deploy_locks()
+    except Exception:
+        keys = []
+    return {**state, "active_deploys": len(keys), "deploy_keys": keys}
+
+
+@router.get("/api/admin/maintenance")
+async def get_maintenance_status(admin: dict = Depends(require_admin)):
+    """Read maintenance state + in-flight deploys (used by the drain poll)."""
+    return await _maintenance_snapshot()
+
+
+@router.post("/api/admin/maintenance")
+async def set_maintenance_mode(request: Request, admin: dict = Depends(require_admin)):
+    """Enable/disable maintenance. Body: {active: bool, reason?, level?}."""
+    body = await request.json()
+    active = bool(body.get("active"))
+    reason = str(body.get("reason", ""))
+    level = str(body.get("level", "drain"))
+
+    from app.valkey import set_maintenance
+    await set_maintenance(active, reason=reason, by=admin.get("by", ""), level=level)
+    logger.info(f"Maintenance {'ENABLED' if active else 'disabled'} by {admin.get('by')} "
+                f"(level={level}, reason={reason!r})")
+
+    # Push the new state to every connected UI client immediately.
+    try:
+        from app.websockets import preview_list_manager
+        await preview_list_manager.broadcast_maintenance()
+    except Exception as e:
+        logger.warning(f"Failed to broadcast maintenance state: {e}")
+
+    return await _maintenance_snapshot()
 
 
 @router.get("/")
