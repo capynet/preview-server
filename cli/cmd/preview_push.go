@@ -182,7 +182,7 @@ func runPreviewPushFiles(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("could not detect files directory: %w", err)
 	}
 	if _, err := os.Stat(localDir); os.IsNotExist(err) {
-		return fmt.Errorf("files directory %q not found — are you in the project root?", localDir)
+		return fmt.Errorf("files directory %q not found", localDir)
 	}
 
 	// Dry run: purely local payload report, no connection needed

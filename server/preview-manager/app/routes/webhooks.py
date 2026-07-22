@@ -479,7 +479,6 @@ async def _handle_mr_event(
     if action in ("close", "merge") or state in ("closed", "merged"):
         # 'prevent auto erase' (pinned) protects the preview from automatic
         # deletion — including this MR close/merge path, not just the idle cron.
-        from app.database import get_preview
         from app.preview_rules import is_protected_from_auto_delete
         existing = await get_preview(project_id, preview_name)
         if is_protected_from_auto_delete(existing):

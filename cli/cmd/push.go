@@ -325,9 +325,34 @@ func getDrupalDBCredentials() (*dbCredentials, error) {
 	return creds, nil
 }
 
+// ddevApproot returns the absolute path to the ddev project root (as ddev itself
+// resolves it, regardless of which subdirectory the CLI was invoked from).
+func ddevApproot() (string, error) {
+	out, err := exec.Command("ddev", "describe", "-j").Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to run ddev describe: %w", err)
+	}
+
+	var result struct {
+		Raw struct {
+			Approot string `json:"approot"`
+		} `json:"raw"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return "", fmt.Errorf("failed to parse ddev describe output: %w", err)
+	}
+	if result.Raw.Approot == "" {
+		return "", fmt.Errorf("ddev describe did not return an approot")
+	}
+	return result.Raw.Approot, nil
+}
+
 // getDrupalFilesDir uses ddev drush status to detect the public files directory.
-// Returns the path relative to the project root (e.g. "docroot/sites/default/files")
-// and the path relative to the Drupal root (e.g. "sites/default/files").
+// Returns the absolute path to the files directory on the host (e.g.
+// "/home/user/project/docroot/sites/default/files") and the path relative to the
+// Drupal root (e.g. "sites/default/files"). The absolute path is anchored to the
+// ddev project root, not the CLI's current working directory, so this works when
+// invoked from any subdirectory of the project.
 func getDrupalFilesDir() (string, string, error) {
 	out, err := exec.Command("ddev", "drush", "status", "--format=json").Output()
 	if err != nil {
@@ -366,13 +391,13 @@ func getDrupalFilesDir() (string, string, error) {
 		docroot = strings.TrimPrefix(docroot, "/")
 	}
 
-	// Build the local path: docroot + files
-	var filesDir string
-	if docroot != "" {
-		filesDir = filepath.Join(docroot, files)
-	} else {
-		filesDir = files
+	approot, err := ddevApproot()
+	if err != nil {
+		return "", "", err
 	}
+
+	// Build the absolute local path: approot + docroot + files
+	filesDir := filepath.Join(approot, docroot, files)
 
 	return filesDir, files, nil
 }
@@ -637,7 +662,7 @@ func generateAndUploadFiles(slug string) error {
 		return fmt.Errorf("could not detect files directory: %w", err)
 	}
 	if _, err := os.Stat(filesDir); os.IsNotExist(err) {
-		return fmt.Errorf("files directory %q not found — are you in the project root?", filesDir)
+		return fmt.Errorf("files directory %q not found", filesDir)
 	}
 
 	// Calculate source size

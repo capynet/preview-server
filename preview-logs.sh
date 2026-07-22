@@ -19,8 +19,8 @@
 set -euo pipefail
 
 MAIN_SERVER="91.99.157.66"
-SSH_KEY="/home/preview-manager/.ssh/preview-vm"
-DB_CONTAINER="preview-postgres"
+SSH_KEY="/home/druploy/.ssh/druploy-vm"
+DB_CONTAINER="druploy-postgres"
 DB_USER="preview_manager"
 SCRIPTS_DIR="$(cd "$(dirname "$0")/server/preview-manager/scripts" && pwd)"
 
@@ -98,9 +98,9 @@ cmd_server() {
         esac
     done
     if [[ -n "$follow" ]]; then
-        ssh_main "journalctl -u preview-manager -f --no-pager -o cat"
+        ssh_main "journalctl -u druploy -f --no-pager -o cat"
     else
-        ssh_main "journalctl -u preview-manager -n ${lines} --no-pager -o cat"
+        ssh_main "journalctl -u druploy -n ${lines} --no-pager -o cat"
     fi
 }
 
@@ -114,9 +114,9 @@ cmd_worker() {
         esac
     done
     if [[ -n "$follow" ]]; then
-        ssh_main "journalctl -u preview-worker -f --no-pager -o cat"
+        ssh_main "journalctl -u druploy-worker -f --no-pager -o cat"
     else
-        ssh_main "journalctl -u preview-worker -n ${lines} --no-pager -o cat"
+        ssh_main "journalctl -u druploy-worker -n ${lines} --no-pager -o cat"
     fi
 }
 
@@ -132,7 +132,7 @@ cmd_deploy() {
         extra_args="$extra_args $arg"
     done
     cat "${SCRIPTS_DIR}/get-deploy-logs.py" | \
-        ssh_main "cd /home/preview-manager/www/previews/server/preview-manager && source venv/bin/activate && python3 - --id ${deploy_id} ${extra_args}"
+        ssh_main "cd /home/druploy/www/previews/server/preview-manager && source venv/bin/activate && python3 - --id ${deploy_id} ${extra_args}"
 }
 
 cmd_vm() {

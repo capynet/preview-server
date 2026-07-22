@@ -5,6 +5,12 @@ All notable changes to the Preview CLI will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.2] - 2026-07-21
+
+### Fixed
+
+- **`project push files` / `preview push files`**: files directory detection was resolved relative to the CLI's current working directory instead of the ddev project root, so running either command from a subdirectory of the project (e.g. `tests/`) failed with `files directory "docroot/sites/default/files" not found`. The local files path is now anchored to ddev's own project root (`ddev describe`'s `approot`), matching the auto-detection already used for the project slug — works from any subdirectory now.
+
 ## [2.5.1] - 2026-06-10
 
 ### Fixed
