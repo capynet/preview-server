@@ -2,6 +2,7 @@
 
 import json
 import logging
+import secrets
 from typing import Optional
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request
@@ -414,7 +415,9 @@ async def require_admin(
 ) -> dict:
     """Allow a superadmin (session cookie / bearer token) OR a machine caller
     presenting the shared X-Admin-Token (used by the Ansible drain playbook)."""
-    if settings.admin_api_token and x_admin_token and x_admin_token == settings.admin_api_token:
+    if settings.admin_api_token and x_admin_token and secrets.compare_digest(
+        x_admin_token, settings.admin_api_token
+    ):
         return {"kind": "token", "by": "machine-token"}
 
     from app.auth import database as auth_db
@@ -465,10 +468,11 @@ async def set_maintenance_mode(request: Request, admin: dict = Depends(require_a
     logger.info(f"Maintenance {'ENABLED' if active else 'disabled'} by {admin.get('by')} "
                 f"(level={level}, reason={reason!r})")
 
-    # Push the new state to every connected UI client immediately.
+    # Push the new state to every connected UI client immediately. Published via
+    # Valkey so clients on ALL uvicorn workers get it, not just this process.
     try:
-        from app.websockets import preview_list_manager
-        await preview_list_manager.broadcast_maintenance()
+        from app.valkey import publish_event
+        await publish_event("previews:global", {"action": "maintenance"})
     except Exception as e:
         logger.warning(f"Failed to broadcast maintenance state: {e}")
 

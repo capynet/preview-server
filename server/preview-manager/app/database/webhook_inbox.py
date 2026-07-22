@@ -73,23 +73,29 @@ async def mark_webhook_pending(inbox_id: int):
     )
 
 
-async def get_stuck_webhooks(stuck_seconds: int, limit: int = 100) -> list[dict]:
-    """Return webhooks still 'pending', or 'processing' for longer than
+async def get_stuck_webhooks(stuck_seconds: int, pending_seconds: int = 60, limit: int = 100) -> list[dict]:
+    """Return webhooks 'pending' for longer than pending_seconds (the direct
+    enqueue failed or was never picked up), or 'processing' for longer than
     stuck_seconds (a worker died mid-processing). Used by the safety-net cron.
 
-    received_at is a TEXT ISO-8601 UTC string; the threshold is computed in
+    Fresh 'pending' rows are excluded: they normally have a job already queued
+    from the HTTP handler, and re-enqueuing them immediately would race it.
+
+    received_at is a TEXT ISO-8601 UTC string; the thresholds are computed in
     Python and compared lexicographically (valid because the format is fixed).
     """
     from datetime import datetime, timezone, timedelta
-    threshold = (datetime.now(timezone.utc) - timedelta(seconds=stuck_seconds)).isoformat()
+    now = datetime.now(timezone.utc)
+    pending_threshold = (now - timedelta(seconds=pending_seconds)).isoformat()
+    processing_threshold = (now - timedelta(seconds=stuck_seconds)).isoformat()
     pool = await get_pool()
     rows = await pool.fetch(
         """SELECT id FROM webhook_inbox
-           WHERE status = 'pending'
-              OR (status = 'processing' AND received_at < $1)
+           WHERE (status = 'pending' AND received_at < $1)
+              OR (status = 'processing' AND received_at < $2)
            ORDER BY id ASC
-           LIMIT $2""",
-        threshold, limit,
+           LIMIT $3""",
+        pending_threshold, processing_threshold, limit,
     )
     return [_row_to_dict(r) for r in rows]
 

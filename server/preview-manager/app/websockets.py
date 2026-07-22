@@ -342,6 +342,15 @@ class PreviewListManager:
                     )
                     if msg and msg.get("type") == "message":
                         got_event = True
+                        try:
+                            event = json.loads(msg.get("data") or "{}")
+                        except (ValueError, TypeError):
+                            event = {}
+                        if event.get("action") == "maintenance":
+                            # Maintenance toggle: push just the flag to this
+                            # process's clients; it doesn't change the list.
+                            await self.broadcast_maintenance()
+                            continue
                 else:
                     await asyncio.sleep(self.check_interval)
 
